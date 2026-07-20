@@ -43,8 +43,8 @@ def get_passive_simulation(
     :type core_medium: td.Medium
     :param sub_medium: Description
     :type sub_medium: td.Medium
-    :param wl_0: Description
-    :type wl_0: float
+    :param wavelength_um: Description
+    :type wavelength_um: float
     :param fine_min_steps_per_wvl: Description
     :type fine_min_steps_per_wvl: int
     :param coarse_min_steps_per_wvl: Description
@@ -92,12 +92,12 @@ def get_passive_simulation(
     buffer_z = 0.5 
 
     # Computing the fine mesh geometry
-    freq0 = td.C_0 / wl_0
+    freq0 = td.C_0 / wavelength_um
     eps_core = core_medium.eps_model(freq0)
     n_core = float(np.real(np.sqrt(eps_core)))
     
     # Calculate explicit spatial step size (dl) required for the fine mesh region
-    fine_dl = wl_0 / (n_core * fine_min_steps_per_wvl)
+    fine_dl = wavelength_um / (n_core * fine_min_steps_per_wvl)
                    
 
     override_geo = td.Box(
@@ -113,7 +113,7 @@ def get_passive_simulation(
     
     # -- Simulation Setup -- #
     grid_spec = td.GridSpec.auto(
-        wavelength=wl_0, 
+        wavelength=wavelength_um, 
         min_steps_per_wvl=coarse_min_steps_per_wvl,
         override_structures=[mesh_override]
     )
@@ -168,8 +168,8 @@ def get_active_simulation(
     :type core_medium: td.Medium
     :param sub_medium: Description
     :type sub_medium: td.Medium
-    :param wl_0: Description
-    :type wl_0: float
+    :param wavelength_um: Description
+    :type wavelength_um: float
     :param num_modes: Description
     :type num_modes: int
     :param target_mode_index: Description
@@ -215,10 +215,10 @@ def get_active_simulation(
     substrate = td.Structure(geometry=substrate_geo, medium=sub_medium)
     
     # Dynamic Fine Mesh Math
-    freq0 = td.C_0 / wl_0
+    freq0 = td.C_0 / wavelength_um
     eps_core = core_medium.eps_model(freq0)
     n_core = float(np.real(np.sqrt(eps_core)))
-    fine_dl = wl_0 / (n_core * fine_min_steps_per_wvl)
+    fine_dl = wavelength_um / (n_core * fine_min_steps_per_wvl)
                    
     buffer_y = 0.5
     buffer_z = 0.5 
@@ -273,7 +273,7 @@ def get_active_simulation(
     
     # Final Setup Assembly
     grid_spec = td.GridSpec.auto(
-        wavelength=wl_0, 
+        wavelength=wavelength_um, 
         min_steps_per_wvl=coarse_min_steps_per_wvl,
         override_structures=[mesh_override]
     )
