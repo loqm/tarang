@@ -22,7 +22,8 @@ def save_simulation_layout_2d(
     title: str = "2D Structural Layout Verification",
     slice_axis: str = "y",
     slice_coord: float = 0.0,
-    show : bool = False
+    show : bool = False,
+    save : bool = True
 ) -> None:
     """
     Docstring for save_simulation_layout_2d
@@ -66,7 +67,8 @@ def save_simulation_layout_2d(
     ax.grid(True, alpha=0.2, linestyle="--")
     
     fig.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    if save:
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
     if show:
         plt.show()
     plt.close()
@@ -78,7 +80,8 @@ def save_simulation_layout_3d(
     output_path: Path,
     title: str = "3D Structural Layout Verification",
     coordinates : tuple = (0.0, 0.0, 0.0),
-    show : bool = False
+    show : bool = False,
+    save : bool = True
 ) -> None:
     """
     Docstring for save_simulation_layout_3d
@@ -125,7 +128,8 @@ def save_simulation_layout_3d(
     ax_yz.grid(True, alpha=0.2, linestyle="--")
     
     fig.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    if save:
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
     if show:
         plt.show()
     plt.close()
