@@ -1,5 +1,5 @@
 """
-mode_sweep.py
+waveguide.mode_sweep.py
 
 Carries out modal analysis on specified geometries of specific materials.
 Saves plots into a specified results directory.
@@ -37,6 +37,32 @@ def modes_in_geometry(
         preview_geometry : bool = False,
         display_results : bool = True
 ) -> None :
+    """
+    Docstring for modes_in_geometry
+    
+    :param sweep_heights: Description
+    :type sweep_heights: list[float]
+    :param sweep_widths: Description
+    :type sweep_widths: list[float]
+    :param core_medium: Description
+    :type core_medium: td.Medium
+    :param sub_medium: Description
+    :type sub_medium: td.Medium
+    :param output_dir_name: Description
+    :type output_dir_name: Path
+    :param wavelength_um: Description
+    :type wavelength_um: float
+    :param num_modes: Description
+    :type num_modes: int
+    :param preview_geometry: Description
+    :type preview_geometry: bool
+    :param display_results: Description
+    :type display_results: bool
+
+    Generates width vs effective index plots at every
+    width sweep point, with a figure for every height sweep
+    point.
+    """
     
     # Check the output directory
     output_dir = Path(output_dir_name)
@@ -48,13 +74,6 @@ def modes_in_geometry(
     n_sub = float(np.real(sub_medium.eps_model(freq0))**0.5)
     n_core = float(np.real(core_medium.eps_model(freq0))**0.5)
     wl_nm = int(wavelength_um * 1000)
-
-    # --- Preview Geometry --- #
-    geom_dir = output_dir / "geometries"
-    geom_dir.mkdir(parents=True, exist_ok=True)
-
-    mean_height = float(np.mean(sweep_heights))
-    mean_width = float(np.mean(sweep_widths))
 
     # If requested, generate a dummy simulation
     if preview_geometry:
@@ -81,7 +100,7 @@ def modes_in_geometry(
         utilities.sim_plotter.display_3d(
             sim = preview_sim,
             output_path = output_dir_name / Path("example_geometry.png"),
-            title = "Ridge Waveguide Sweep Example Geometry",
+            title = "Ridge Waveguide Mode Sweep Example Geometry",
             show = True,
             save = True
         )
