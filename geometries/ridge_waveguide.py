@@ -20,7 +20,7 @@ def get_passive_simulation(
     core_medium: td.Medium,
     sub_medium: td.Medium,
 
-    wl_0: float,
+    wavelength_um: float,
 
     fine_min_steps_per_wvl: int = 20,
     coarse_min_steps_per_wvl : int = 10,
@@ -142,7 +142,7 @@ def get_active_simulation(
     core_medium: td.Medium,
     sub_medium: td.Medium,
 
-    wl_0: float,
+    wavelength_um: float,
 
     num_modes: int = 2,
     target_mode_index: int = 0,
