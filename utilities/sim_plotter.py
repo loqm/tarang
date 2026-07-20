@@ -16,14 +16,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def save_simulation_layout_2d(
+def display_2d(
     sim: td.Simulation,
-    output_path: Path,
+    output_path: Path = None,
     title: str = "2D Structural Layout Verification",
     slice_axis: str = "y",
     slice_coord: float = 0.0,
-    show : bool = False,
-    save : bool = True
+    show : bool = True,
+    save : bool = False
 ) -> None:
     """
     Docstring for save_simulation_layout_2d
@@ -68,6 +68,7 @@ def save_simulation_layout_2d(
     
     fig.tight_layout()
     if save:
+        if (output_path == None): output_path = "example_2d_simulation.png"
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
     if show:
         plt.show()
@@ -75,13 +76,13 @@ def save_simulation_layout_2d(
     logger.info(f"[Visualizer] 2D geometry layout map saved to: {output_path}")
 
 
-def save_simulation_layout_3d(
+def display_3d(
     sim: td.Simulation,
     output_path: Path,
     title: str = "3D Structural Layout Verification",
     coordinates : tuple = (0.0, 0.0, 0.0),
-    show : bool = False,
-    save : bool = True
+    show : bool = True,
+    save : bool = False
 ) -> None:
     """
     Docstring for save_simulation_layout_3d
@@ -129,6 +130,7 @@ def save_simulation_layout_3d(
     
     fig.tight_layout()
     if save:
+        if (output_path == None): output_path = "example_2d_simulation.png"
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
     if show:
         plt.show()
