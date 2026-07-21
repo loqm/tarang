@@ -7,9 +7,12 @@ This script allows us to evaluate and visualize spatial mode confinement metrics
 Author: Divyanshu Tiwari, Esraaj Sarkar Gupta
 Date: 2026
 """
+from __future__ import annotations
 import os
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, Tuple, List
@@ -20,20 +23,15 @@ from tidy3d.plugins.mode import ModeSolver
 import geometries
 import utilities
 
+if TYPE_CHECKING:
+    from .waveguide import RidgeWaveguide
+
 logger = logging.getLogger(__name__)
 ConfinementSweepResult = Dict[float, Tuple[List[float], List[float], List[float]]]
 
 
 def get_te_fraction(mode_data, m_idx: int) -> float:
     """
-    Docstring for get_te_fraction
-    
-    :param mode_data: Description
-    :param m_idx: Description
-    :type m_idx: int
-    :return: Description
-    :rtype: float
-
     Computes the TE polarization fraction for a
     waveguide propagating along X. TE dominance is
     determined by the horizontal transverse field
@@ -62,27 +60,6 @@ def confinement_in_geometry(
         display_results : bool = True
 ) -> ConfinementSweepResult :
     """
-    Docstring for confinement_in_geometry
-    
-    :param sweep_heights: Description
-    :type sweep_heights: list[float]
-    :param sweep_widths: Description
-    :type sweep_widths: list[float]
-    :param core_medium: Description
-    :type core_medium: td.Medium
-    :param sub_medium: Description
-    :type sub_medium: td.Medium
-    :param output_dir_name: Description
-    :type output_dir_name: Path
-    :param wavelength_um: Description
-    :type wavelength_um: float
-    :param preview_geometry: Description
-    :type preview_geometry: bool
-    :param display_results: Description
-    :type display_results: bool
-    :return: Description
-    :rtype: ConfinementSweepResult
-
     Evaluates and visualizes TE00 mode confinement metrics
     across a combined height and width sweep. Generates a unique
     width-sweep summary figure for each individual height in
@@ -105,7 +82,7 @@ def confinement_in_geometry(
 
         logger.info(f"     [Confinement] Plotting mean geometry (Width: {mean_width:.2f} μm, Height: {mean_height:.2f} μm)...")
 
-        preview_sim = geometries.ridge_waveguide.get_passive_simulation(
+        preview_waveguide : RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
             width = mean_width,
             height = mean_height,
             length = (5*mean_width + 5*mean_height)/2,
@@ -115,7 +92,7 @@ def confinement_in_geometry(
         )
 
         utilities.sim_plotter.display_3d(
-            sim = preview_sim,
+            device = preview_waveguide,
             output_path = geom_dir / Path("example_geometry.png"),
             title = "Ridge Waveguide Confinement Sweep Example Geometry",
             show = display_results,
@@ -134,7 +111,7 @@ def confinement_in_geometry(
         print(f"    [Confinement] Running geometric width sweep for fixed H = {h:.3f} μm at λ = {wavelength_um:.3f} μm...")
 
         for w in sweep_widths:
-            sim = geometries.ridge_waveguide.get_passive_simulation(
+            waveguide_obj : RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
                 width = w,
                 height = h,
                 length = 2,
@@ -142,6 +119,8 @@ def confinement_in_geometry(
                 sub_medium = sub_medium,
                 wavelength_um = wavelength_um
             )
+
+            sim : td.Simulation = waveguide_obj.sim
 
             mode_spec = td.ModeSpec(num_modes=6, target_neff=n_core_guess)
             plane = td.Box(center=(0, 0, h/2), size=(0, sim.size[1], sim.size[2]))

@@ -2,14 +2,21 @@
 geometries.ridge_waveguide.py
 
 This file defines and returns Tidy3D simulations of ridge waveguides on a
-Bottom Oxide Layer.
+Bottom Oxide Layer, wrapped inside RidgeWaveguide objects.
 
 Author: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: July 2026
 """
 
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from waveguide.waveguide import RidgeWaveguide
+
 import tidy3d as td
 import numpy as np
+
 
 def get_passive_simulation(
     width: float,
@@ -23,43 +30,16 @@ def get_passive_simulation(
     wavelength_um: float,
 
     fine_min_steps_per_wvl: int = 20,
-    coarse_min_steps_per_wvl : int = 10,
+    coarse_min_steps_per_wvl: int = 10,
 
     margin_y: float = 2.0,  # Buffer space on each side of the core in Y
     margin_z: float = 2.0,  # Buffer space above/below the core in Z
 
-    run_time : float = 1e-12
-) -> td.Simulation:
+    run_time: float = 1e-12
+) -> RidgeWaveguide:
     """
-    Docstring for get_simulation
-    
-    :param width: Description
-    :type width: float
-    :param height: Description
-    :type height: float
-    :param length: Description
-    :type length: float
-    :param core_medium: Description
-    :type core_medium: td.Medium
-    :param sub_medium: Description
-    :type sub_medium: td.Medium
-    :param wavelength_um: Description
-    :type wavelength_um: float
-    :param fine_min_steps_per_wvl: Description
-    :type fine_min_steps_per_wvl: int
-    :param coarse_min_steps_per_wvl: Description
-    :type coarse_min_steps_per_wvl: int
-    :param margin_y: Description
-    :type margin_y: float
-    :param margin_z: Description
-    :type margin_z: float
-    :param run_time: Description
-    :type run_time: float
-    :return: Description
-    :rtype: Any
-
     Generates a Tidy3D simulation with a fully dynamic domain size 
-    calculated from the waveguide geometry.
+    calculated from the waveguide geometry, returning a wrapped RidgeWaveguide.
     """
     
     # Dynamically calculate simulation dimensions
@@ -79,7 +59,7 @@ def get_passive_simulation(
     core = td.Structure(geometry=core_geo, medium=core_medium)
     
     # Dynamic Substrate
-    # It starts at the core interface (z=0) and extends all the way down past the PML boundary
+    # Starts at core interface (z=0) and extends down past PML boundary
     sub_thickness = sim_z 
     substrate_geo = td.Box(
         center=(0, 0, -sub_thickness / 2), 
@@ -87,7 +67,7 @@ def get_passive_simulation(
     )
     substrate = td.Structure(geometry=substrate_geo, medium=sub_medium)
     
-    # Mesh Override Region (stays locked to core geometry)
+    # Mesh Override Region
     buffer_y = 0.5
     buffer_z = 0.5 
 
@@ -96,9 +76,7 @@ def get_passive_simulation(
     eps_core = core_medium.eps_model(freq0)
     n_core = float(np.real(np.sqrt(eps_core)))
     
-    # Calculate explicit spatial step size (dl) required for the fine mesh region
     fine_dl = wavelength_um / (n_core * fine_min_steps_per_wvl)
-                   
 
     override_geo = td.Box(
         center=(0, 0, height / 2),
@@ -107,11 +85,11 @@ def get_passive_simulation(
     
     mesh_override = td.MeshOverrideStructure(
         geometry=override_geo,
-        dl=[fine_dl, fine_dl, fine_dl],  # Dynamically computed fine grid
+        dl=[fine_dl, fine_dl, fine_dl],
         enforce=True 
     )
     
-    # -- Simulation Setup -- #
+    # Simulation Setup
     grid_spec = td.GridSpec.auto(
         wavelength=wavelength_um, 
         min_steps_per_wvl=coarse_min_steps_per_wvl,
@@ -124,12 +102,30 @@ def get_passive_simulation(
         z=td.Boundary.pml()
     )
     
-    return td.Simulation(
+    sim = td.Simulation(
         center=sim_center,
         size=sim_size,
         grid_spec=grid_spec,
         structures=[substrate, core],
         boundary_spec=boundary_spec,
+        run_time=run_time
+    )
+
+    # Lazy import at runtime to eliminate circular import issues
+    from waveguide.waveguide import RidgeWaveguide
+
+    return RidgeWaveguide(
+        sim=sim,
+        width=width,
+        height=height,
+        length=length,
+        core_medium=core_medium,
+        sub_medium=sub_medium,
+        wavelength_um=wavelength_um,
+        fine_min_steps_per_wvl=fine_min_steps_per_wvl,
+        coarse_min_steps_per_wvl=coarse_min_steps_per_wvl,
+        margin_y=margin_y,
+        margin_z=margin_z,
         run_time=run_time
     )
 
@@ -154,41 +150,10 @@ def get_active_simulation(
     margin_z: float = 2.0,
 
     run_time: float = 1e-12
-) -> td.Simulation:
+) -> RidgeWaveguide:
     """
-    Docstring for get_active_simulation
-    
-    :param width: Description
-    :type width: float
-    :param height: Description
-    :type height: float
-    :param length: Description
-    :type length: float
-    :param core_medium: Description
-    :type core_medium: td.Medium
-    :param sub_medium: Description
-    :type sub_medium: td.Medium
-    :param wavelength_um: Description
-    :type wavelength_um: float
-    :param num_modes: Description
-    :type num_modes: int
-    :param target_mode_index: Description
-    :type target_mode_index: int
-    :param fine_min_steps_per_wvl: Description
-    :type fine_min_steps_per_wvl: int
-    :param coarse_min_steps_per_wvl: Description
-    :type coarse_min_steps_per_wvl: int
-    :param margin_y: Description
-    :type margin_y: float
-    :param margin_z: Description
-    :type margin_z: float
-    :param run_time: Description
-    :type run_time: float
-    :return: Description
-    :rtype: Simulation
-
-    Generates an active Tidy3D simulation with a Mode Source injected at the input 
-    and a Mode Monitor recording at the output.
+    Generates an active Tidy3D simulation with a Mode Source injected at input 
+    and a Mode Monitor recording at output, returning a wrapped RidgeWaveguide.
     """
     
     # Dynamically calculate simulation dimensions
@@ -197,10 +162,9 @@ def get_active_simulation(
     sim_z = height + 2 * margin_z
     sim_size = (sim_x, sim_y, sim_z)
     
-    # Center the entire simulation box perfectly around the core waveguide
     sim_center = (0, 0, height / 2)
 
-    # Define Structures (Core & Substrate)
+    # Define Structures
     core_geo = td.Box(
         center=(0, 0, height / 2),
         size=(td.inf, width, height)
@@ -214,7 +178,7 @@ def get_active_simulation(
     )
     substrate = td.Structure(geometry=substrate_geo, medium=sub_medium)
     
-    # Dynamic Fine Mesh Math
+    # Mesh Math
     freq0 = td.C_0 / wavelength_um
     eps_core = core_medium.eps_model(freq0)
     n_core = float(np.real(np.sqrt(eps_core)))
@@ -234,44 +198,35 @@ def get_active_simulation(
     )
     
     # Active Elements: Source and Monitor Positions
-    # Place them offset from the PML edges along the X-axis (e.g., 0.5 µm inwards)
     pml_offset = 0.5 
     source_x = -length / 2 + pml_offset
     monitor_x = length / 2 - pml_offset
     
-    # The source/monitor planes should span the entire Y-Z cross-section of the domain
     plane_size = (0, sim_y, sim_z)
     
-    # Define a clean Gaussian pulse for the source time profile
-    fwidth = freq0 / 10  # 10% bandwidth is standard for clean data
+    fwidth = freq0 / 10 
     source_time = td.GaussianPulse(freq0=freq0, fwidth=fwidth)
     
-    # The mode specification blueprint
     mode_spec = td.ModeSpec(num_modes=num_modes)
     
-    # Add the Mode Source at the input
     mode_source = td.ModeSource(
         center=(source_x, 0, height / 2),
         size=plane_size,
-
         source_time=source_time,
         direction="+",
-
         mode_spec=mode_spec,
         mode_index=target_mode_index
     )
     
-    # Add the Mode Monitor at the output
     mode_monitor = td.ModeMonitor(
         center=(monitor_x, 0, height / 2),
         size=plane_size,
-
-        freqs=[freq0],  # Track our target frequency
+        freqs=[freq0],
         mode_spec=mode_spec,
         name="output_mode_monitor"
     )
     
-    # Final Setup Assembly
+    # Setup Assembly
     grid_spec = td.GridSpec.auto(
         wavelength=wavelength_um, 
         min_steps_per_wvl=coarse_min_steps_per_wvl,
@@ -284,15 +239,31 @@ def get_active_simulation(
         z=td.Boundary.pml()
     )
     
-    return td.Simulation(
+    sim = td.Simulation(
         center=sim_center,
         size=sim_size,
         grid_spec=grid_spec,
-
         structures=[substrate, core],
         sources=[mode_source],
         monitors=[mode_monitor],
-        
         boundary_spec=boundary_spec,
+        run_time=run_time
+    )
+
+    # Lazy import at runtime
+    from waveguide.waveguide import RidgeWaveguide
+
+    return RidgeWaveguide(
+        sim=sim,
+        width=width,
+        height=height,
+        length=length,
+        core_medium=core_medium,
+        sub_medium=sub_medium,
+        wavelength_um=wavelength_um,
+        fine_min_steps_per_wvl=fine_min_steps_per_wvl,
+        coarse_min_steps_per_wvl=coarse_min_steps_per_wvl,
+        margin_y=margin_y,
+        margin_z=margin_z,
         run_time=run_time
     )

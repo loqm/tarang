@@ -15,9 +15,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# TODO: Error handling for non-device objects passed to this function
+# The stupidity of a programmer should be no surprise to me,
+# I'm an idiot too!
 
 def display_2d(
-    sim: td.Simulation,
+    device,
     output_path: Path = None,
     title: str = "2D Structural Layout Verification",
     slice_axis: str = "y",
@@ -26,24 +29,20 @@ def display_2d(
     save : bool = False
 ) -> None:
     """
-    Docstring for save_simulation_layout_2d
-    
-    :param sim: Description
-    :type sim: td.Simulation
-    :param output_path: Description
-    :type output_path: Path
-    :param title: Description
-    :type title: str
-    :param slice_axis: Description
-    :type slice_axis: str
-    :param slice_coord: Description
-    :type slice_coord: float
-
     Extracts a pristine 2D cross-sectional layout map of a simulation object 
     along a single specified axis and saves it to the designated disk path.
     """
+    try:
+        sim = device.sim
+    except NameError:
+        raise NameError("The object you have passed does not contain a Tidy3D simulation! Are you sure\
+you gave us the right object to plot?")
+    
     # Ensure parent directories exist
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    except AttributeError:
+        raise AttributeError("The object you have passed doesn't seem to be a ")
     
     fig, ax = plt.subplots(figsize=(11, 4), dpi=300)
     
@@ -77,7 +76,7 @@ def display_2d(
 
 
 def display_3d(
-    sim: td.Simulation,
+    device,
     output_path: Path = None,
     title: str = "3D Structural Layout Verification",
     coordinates : tuple = (0.0, 0.0, 0.0),
@@ -85,24 +84,20 @@ def display_3d(
     save : bool = False
 ) -> None:
     """
-    Docstring for save_simulation_layout_3d
-    
-    :param sim: Description
-    :type sim: td.Simulation
-    :param output_path: Description
-    :type output_path: Path
-    :param title: Description
-    :type title: str
-    :param coordinates: Description
-    :type coordinates: list[float]
-
     Generates a comprehensive three-pane orthogonal projection sheet (XY, XZ, YZ slices)
     to visually audit the internal layout of a full 3D simulation volume.
     """ 
+    try:
+        sim = device.sim
+    except AttributeError:
+        raise AttributeError("The object you have passed does not contain a Tidy3D simulation! Are you sure\
+you gave us the right object to plot?")
+    
     # Ensure parent directories exist
     output_path.parent.mkdir(parents=True, exist_ok=True)
     x_coord = coordinates[0]; y_coord = coordinates[1]; z_coord = coordinates[2]
     
+
     # Create a 3-column canvas for the three primary planes
     fig, (ax_xy, ax_xz, ax_yz) = plt.subplots(1, 3, figsize=(18, 5), dpi=300)
     fig.suptitle(title, fontsize=14, fontweight="bold", y=1.02)

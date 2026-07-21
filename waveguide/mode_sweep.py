@@ -7,11 +7,13 @@ Saves plots into a specified results directory.
 Author: Divyanshu Tiwari, Esraaj Sarkar Gupta
 Date: 2026
 """
+from __future__ import annotations
+from pathlib import Path
+import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
-import logging
 
 import tidy3d as td
 from tidy3d.plugins.mode import ModeSolver
@@ -20,6 +22,8 @@ from tidy3d.constants import C_0
 import geometries
 import utilities
 
+if TYPE_CHECKING:
+    from .waveguide import RidgeWaveguide
 logger = logging.getLogger(__name__)
 
 def modes_in_geometry(
@@ -38,27 +42,6 @@ def modes_in_geometry(
         display_results : bool = True
 ) -> None :
     """
-    Docstring for modes_in_geometry
-    
-    :param sweep_heights: Description
-    :type sweep_heights: list[float]
-    :param sweep_widths: Description
-    :type sweep_widths: list[float]
-    :param core_medium: Description
-    :type core_medium: td.Medium
-    :param sub_medium: Description
-    :type sub_medium: td.Medium
-    :param output_dir_name: Description
-    :type output_dir_name: Path
-    :param wavelength_um: Description
-    :type wavelength_um: float
-    :param num_modes: Description
-    :type num_modes: int
-    :param preview_geometry: Description
-    :type preview_geometry: bool
-    :param display_results: Description
-    :type display_results: bool
-
     Generates width vs effective index plots at every
     width sweep point, with a figure for every height sweep
     point.
@@ -85,7 +68,7 @@ def modes_in_geometry(
 
         logging.info(f"\n[Mode Analysis] Plotting mean geometry (Width: {mean_width:.2f} um, Height: {mean_height:.2f} um)...")
 
-        preview_sim = geometries.ridge_waveguide.get_passive_simulation(
+        preview_waveguide : RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
             width = mean_width,
             height = mean_height,
 
@@ -98,7 +81,7 @@ def modes_in_geometry(
         )
 
         utilities.sim_plotter.display_3d(
-            sim = preview_sim,
+            device = preview_waveguide,
             output_path = output_dir_name / Path("example_geometry.png"),
             title = "Ridge Waveguide Mode Sweep Example Geometry",
             show = True,
@@ -118,7 +101,7 @@ def modes_in_geometry(
             sim_z_size = float(height + 4.0)
             
             # Pull pre-built geometry from the geometry module
-            geometry_sim = geometries.ridge_waveguide.get_passive_simulation(
+            waveguide_obj : RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
                 width = width,
                 height = height,
 
@@ -143,7 +126,7 @@ def modes_in_geometry(
             )
 
             solver = ModeSolver(
-                simulation=geometry_sim,
+                simulation=waveguide_obj.sim,
                 plane=mode_plane,
                 mode_spec=mode_spec,
                 freqs=[freq0]
