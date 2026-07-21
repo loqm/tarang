@@ -4,3 +4,7 @@
 pipeline.log
 
 results/*
+*example_results/*
+
+*.pyc
+*.toml
