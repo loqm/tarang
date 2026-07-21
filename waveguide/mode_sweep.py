@@ -24,7 +24,9 @@ import utilities
 
 if TYPE_CHECKING:
     from .waveguide import RidgeWaveguide
+
 logger = logging.getLogger(__name__)
+
 
 def modes_in_geometry(
         sweep_heights : list[float],
@@ -36,29 +38,26 @@ def modes_in_geometry(
         output_dir_name : Path,
         
         wavelength_um: float,
+        substrate_height: float,
         num_modes : int = 8,
 
         preview_geometry : bool = False,
         display_results : bool = True
 ) -> None :
     """
-    Generates width vs effective index plots at every
-    width sweep point, with a figure for every height sweep
-    point.
+    Generates width vs effective index plots at every width sweep point, 
+    with a figure for every height sweep point.
     """
     
-    # Check the output directory
     output_dir = Path(output_dir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     freq0 = C_0 / wavelength_um
 
-    # Establish substrate indexing for boundary lines
     n_sub = float(np.real(sub_medium.eps_model(freq0))**0.5)
     n_core = float(np.real(core_medium.eps_model(freq0))**0.5)
     wl_nm = int(wavelength_um * 1000)
 
-    # If requested, generate a dummy simulation
     if preview_geometry:
         geom_dir = output_dir / "geometries"
         geom_dir.mkdir(parents=True, exist_ok=True)
@@ -71,13 +70,11 @@ def modes_in_geometry(
         preview_waveguide : RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
             width = mean_width,
             height = mean_height,
-
             length = (5*mean_width + 5*mean_height)/2,
-
             core_medium = core_medium,
             sub_medium = sub_medium,
-
             wavelength_um = wavelength_um,
+            substrate_height = substrate_height
         )
 
         utilities.sim_plotter.display_3d(
@@ -91,30 +88,20 @@ def modes_in_geometry(
     for height in sweep_heights:
         logging.info(f"\n[Mode Analysis] | Height: {height:.2f} um at {wl_nm} nm")
         
-        # Separate tracking dictionaries for the modes
         te_tracks : dict = {i: {"widths": [], "neffs": []} for i in range(num_modes)}
         tm_tracks : dict = {i: {"widths": [], "neffs": []} for i in range(num_modes)}
 
         for width in sweep_widths:
-            # Dynamically resize the simulation box boundary
-            sim_y_size = float(width + 3.0)
-            sim_z_size = float(height + 4.0)
-            
-            # Pull pre-built geometry from the geometry module
             waveguide_obj : RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
                 width = width,
                 height = height,
-
-                length = 2,     # This doesn't really matter
-
-                core_medium=core_medium,
-                sub_medium=sub_medium,
-                
-                wavelength_um=wavelength_um,
+                length = 2,
+                core_medium = core_medium,
+                sub_medium = sub_medium,
+                wavelength_um = wavelength_um,
+                substrate_height = substrate_height
             )
 
-            # -- Setup the Mode Solver -- #
-            # YZ cross-section (X size = 0)
             mode_plane = td.Box(
                 center=(0, 0, height/2),
                 size=(0, width + 2.0, height + 2.0) 
@@ -137,7 +124,6 @@ def modes_in_geometry(
             current_te_neffs : list = []
             current_tm_neffs : list = []
 
-            # Sort the messy modal output into neat polarization baskets
             for i in range(mode_spec.num_modes):
                 n_eff = np.real(mode_data.n_eff[0, i])
                 te_frac = mode_data.pol_fraction['te'][0, i]
@@ -160,7 +146,7 @@ def modes_in_geometry(
         # ---- Plotting ---- #
         plt.figure(figsize=(12, 6))
 
-        plt.axhline(y=n_core, color='black', linestyle='-', linewidth=1.5, label=f'Core')
+        plt.axhline(y=n_core, color='black', linestyle='-', linewidth=1.5, label='Core')
         plt.axhline(y=n_sub, color='black', linestyle='--', linewidth=1.5, label='Substrate')
         plt.fill_between(sweep_widths, n_sub, n_core, color='purple', alpha=0.03, label='Guided Domain')
 
@@ -188,19 +174,11 @@ def modes_in_geometry(
 
         plt.tight_layout()
         
-        # Formatted name emphasizing substrate height and wavelength
         file_name = f"{wl_nm}nm_wgW_{width:.2f}_wgH_{height:.2f}um.png"
-        
         plt.savefig(output_dir / file_name, dpi=150)
+        
         if display_results:
             plt.show()
         plt.close()
         
         logging.info(f"[Mode Analysis] Visualized distribution out to {file_name}")
-        
-
-    
-
-
-
-

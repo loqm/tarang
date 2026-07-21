@@ -1,7 +1,7 @@
 """
 waveguide.waveguide
 
-Defines the RidgeWavguide Class
+Defines the RidgeWaveguide Class.
 
 Author: Esraaj Sarkar Gupta
 Date: July, 2026
@@ -10,10 +10,11 @@ Date: July, 2026
 from __future__ import annotations
 import tidy3d as td
 
+
 class RidgeWaveguide:
     def __init__(
             self,
-            sim : td.Simulation,
+            sim: td.Simulation,
 
             width: float,
             height: float,
@@ -25,13 +26,15 @@ class RidgeWaveguide:
 
             wavelength_um: float,
 
+            substrate_height: float = 4.0,
+
             fine_min_steps_per_wvl: int = 20,
-            coarse_min_steps_per_wvl : int = 10,
+            coarse_min_steps_per_wvl: int = 10,
 
             margin_y: float = 2.0,  # Buffer space on each side of the core in Y
-            margin_z: float = 2.0,  # Buffer space above/below the core in Z
+            margin_z: float = 2.0,  # Air buffer space above the core in Z
 
-            run_time : float = 1e-12
+            run_time: float = 1e-12
     ):
         self.sim = sim
         
@@ -44,6 +47,7 @@ class RidgeWaveguide:
         self.sub_medium = sub_medium
 
         self.wavelength_um = wavelength_um
+        self.substrate_height = substrate_height
 
         self.fine_min_steps_per_wvl = fine_min_steps_per_wvl
         self.coarse_min_steps_per_wvl = coarse_min_steps_per_wvl

@@ -11,11 +11,10 @@ from __future__ import annotations
 import os
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Tuple, List
 
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, Tuple, List
 
 import tidy3d as td
 from tidy3d.plugins.mode import ModeSolver
@@ -32,12 +31,9 @@ ConfinementSweepResult = Dict[float, Tuple[List[float], List[float], List[float]
 
 def get_te_fraction(mode_data, m_idx: int) -> float:
     """
-    Computes the TE polarization fraction for a
-    waveguide propagating along X. TE dominance is
-    determined by the horizontal transverse field
-    component (Ey).
+    Computes the TE polarization fraction for a waveguide propagating along X.
+    TE dominance is determined by the horizontal transverse field component (Ey).
     """
-
     Ey = mode_data.Ey.isel(mode_index=m_idx, f=0).values
     Ez = mode_data.Ez.isel(mode_index=m_idx, f=0).values
     Iy = np.sum(np.abs(Ey)**2)
@@ -55,15 +51,14 @@ def confinement_in_geometry(
         output_dir_name : Path,
         
         wavelength_um: float,
+        substrate_height: float,
 
         preview_geometry : bool = False,
         display_results : bool = True
 ) -> ConfinementSweepResult :
     """
-    Evaluates and visualizes TE00 mode confinement metrics
-    across a combined height and width sweep. Generates a unique
-    width-sweep summary figure for each individual height in
-    `sweep_heights`.
+    Evaluates and visualizes TE00 mode confinement metrics across a combined height and width sweep.
+    Generates a unique width-sweep summary figure for each individual height in `sweep_heights`.
     """
     freq0 = td.C_0 / wavelength_um
     n_core_guess = float(np.real(np.sqrt(core_medium.eps_model(freq0))))
@@ -72,7 +67,6 @@ def confinement_in_geometry(
         output_path = Path(output_dir_name)
         output_path.mkdir(parents=True, exist_ok=True)
 
-    # Optional visual check -- DO THIS ONCE before wasting time on 50 simulations
     if preview_geometry and output_dir_name:
         geom_dir = output_dir_name / Path("geometries/")
         geom_dir.mkdir(parents=True, exist_ok=True)
@@ -89,6 +83,7 @@ def confinement_in_geometry(
             core_medium = core_medium,
             sub_medium = sub_medium,
             wavelength_um = wavelength_um,
+            substrate_height = substrate_height
         )
 
         utilities.sim_plotter.display_3d(
@@ -117,7 +112,8 @@ def confinement_in_geometry(
                 length = 2,
                 core_medium = core_medium,
                 sub_medium = sub_medium,
-                wavelength_um = wavelength_um
+                wavelength_um = wavelength_um,
+                substrate_height = substrate_height
             )
 
             sim : td.Simulation = waveguide_obj.sim
