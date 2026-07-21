@@ -78,7 +78,7 @@ def display_2d(
 
 def display_3d(
     sim: td.Simulation,
-    output_path: Path,
+    output_path: Path = None,
     title: str = "3D Structural Layout Verification",
     coordinates : tuple = (0.0, 0.0, 0.0),
     show : bool = True,
