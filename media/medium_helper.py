@@ -16,6 +16,7 @@ import pandas as pd
 from pathlib import Path
 from pydantic import ValidationError
 import json
+import sys
 import logging
 
 
@@ -26,10 +27,12 @@ from media import format_csv
 
 # Configure the logger -- this needs to sit in the main
 logging.basicConfig(
-    level=logging.INFO, # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='pipeline.log', # Saves to a file instead of flooding the terminal
-    filemode='a' # Append mode
+    handlers=[
+        logging.FileHandler("pipeline.log", mode="a"), # Appends to file
+        logging.StreamHandler(sys.stdout)             # Prints live to terminal/console!
+    ]
 )
 
 logger = logging.getLogger(__name__)
