@@ -2,6 +2,7 @@
 .venv
 
 pipeline.log
+media/fitted_media/*
 
 results/*
 *example_results/*
