@@ -40,6 +40,7 @@ you gave us the right object to plot?")
     
     # Ensure parent directories exist
     try:
+        if type(output_path) == str: output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
     except AttributeError:
         raise AttributeError("The object you have passed doesn't seem to be a ")
@@ -94,6 +95,7 @@ def display_3d(
 you gave us the right object to plot?")
     
     # Ensure parent directories exist
+    if type(output_path) == str: output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     x_coord = coordinates[0]; y_coord = coordinates[1]; z_coord = coordinates[2]
     
