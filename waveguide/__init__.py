@@ -1,6 +1,5 @@
 from .waveguide import RidgeWaveguide
 
-
 from .mode_sweep import modes_in_geometry
 from .confinement_sweep import confinement_in_geometry
 from .dispersion_sweep import dispersion_in_geometry
