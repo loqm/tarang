@@ -16,7 +16,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import tidy3d as td
-from tidy3d.plugins.mode import ModeSolver
 from tidy3d.constants import C_0
 
 import geometries
@@ -27,23 +26,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 def modes_in_geometry(
-        sweep_heights : list[float],
-        sweep_widths : list[float],
+        sweep_heights: list[float],
+        sweep_widths: list[float],
 
         core_medium: td.Medium,       
         sub_medium: td.Medium,
 
-        output_dir_name : Path,
+        output_dir_name: Path,
         
         wavelength_um: float,
         substrate_height: float,
-        num_modes : int = 8,
+        num_modes: int = 8,
 
-        preview_geometry : bool = False,
-        display_results : bool = True
-) -> None :
+        preview_geometry: bool = False,
+        display_results: bool = True
+) -> None:
     """
     Generates width vs effective index plots at every width sweep point, 
     with a figure for every height sweep point.
@@ -67,71 +65,52 @@ def modes_in_geometry(
 
         logging.info(f"\n[Mode Analysis] Plotting mean geometry (Width: {mean_width:.2f} um, Height: {mean_height:.2f} um)...")
 
-        preview_waveguide : RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
-            width = mean_width,
-            height = mean_height,
-            length = (5*mean_width + 5*mean_height)/2,
-            core_medium = core_medium,
-            sub_medium = sub_medium,
-            wavelength_um = wavelength_um,
-            substrate_height = substrate_height
+        preview_waveguide: RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
+            width=mean_width,
+            height=mean_height,
+            length=(5*mean_width + 5*mean_height)/2,
+            core_medium=core_medium,
+            sub_medium=sub_medium,
+            wavelength_um=wavelength_um,
+            substrate_height=substrate_height
         )
 
         utilities.sim_plotter.display_3d(
-            device = preview_waveguide,
-            output_path = output_dir_name / Path("example_geometry.png"),
-            title = "Ridge Waveguide Mode Sweep Example Geometry",
-            show = True,
-            save = True
+            device=preview_waveguide,
+            output_path=output_dir_name / Path("example_geometry.png"),
+            title="Ridge Waveguide Mode Sweep Example Geometry",
+            show=True,
+            save=True
         )
 
     for height in sweep_heights:
         logging.info(f"\n[Mode Analysis] | Height: {height:.2f} um at {wl_nm} nm")
         
-        te_tracks : dict = {i: {"widths": [], "neffs": []} for i in range(num_modes)}
-        tm_tracks : dict = {i: {"widths": [], "neffs": []} for i in range(num_modes)}
+        te_tracks: dict = {i: {"widths": [], "neffs": []} for i in range(num_modes)}
+        tm_tracks: dict = {i: {"widths": [], "neffs": []} for i in range(num_modes)}
 
         for width in sweep_widths:
-            waveguide_obj : RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
-                width = width,
-                height = height,
-                length = 2,
-                core_medium = core_medium,
-                sub_medium = sub_medium,
-                wavelength_um = wavelength_um,
-                substrate_height = substrate_height
+            waveguide_obj: RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
+                width=width,
+                height=height,
+                length=2,
+                core_medium=core_medium,
+                sub_medium=sub_medium,
+                wavelength_um=wavelength_um,
+                substrate_height=substrate_height
             )
 
-            mode_plane = td.Box(
-                center=(0, 0, height/2),
-                size=(0, width + 2.0, height + 2.0) 
-            )
+            # Get mode data for the current waveguide geometry
+            modes_data = waveguide_obj.get_modes(num_modes=num_modes)
+            
+            current_te_neffs: list = []
+            current_tm_neffs: list = []
 
-            mode_spec = td.ModeSpec(
-                num_modes = num_modes,
-                target_neff = n_core
-            )
-
-            solver = ModeSolver(
-                simulation=waveguide_obj.sim,
-                plane=mode_plane,
-                mode_spec=mode_spec,
-                freqs=[freq0]
-            )
-
-            mode_data = solver.solve()
-
-            current_te_neffs : list = []
-            current_tm_neffs : list = []
-
-            for i in range(mode_spec.num_modes):
-                n_eff = np.real(mode_data.n_eff[0, i])
-                te_frac = mode_data.pol_fraction['te'][0, i]
-                
-                if te_frac > 0.5:
-                    current_te_neffs.append(n_eff)
+            for mode in modes_data["modes"]:
+                if mode["polarization"] == "TE":
+                    current_te_neffs.append(mode["neff"])
                 else:
-                    current_tm_neffs.append(n_eff)
+                    current_tm_neffs.append(mode["neff"])
 
             for rank, neff in enumerate(current_te_neffs):
                 if rank < num_modes:
