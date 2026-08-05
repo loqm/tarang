@@ -10,7 +10,7 @@ Date: 2026
 from __future__ import annotations
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Tuple, List
+from typing import TYPE_CHECKING, Dict, Tuple, List, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -39,6 +39,9 @@ def confinement_in_geometry(
         wavelength_um: float,
         substrate_height: float,
 
+        sim_size_y: Optional[float] = None,
+        sim_size_z: Optional[float] = None,
+
         preview_geometry: bool = False,
         display_results: bool = True
 ) -> ConfinementSweepResult:
@@ -46,6 +49,31 @@ def confinement_in_geometry(
     Evaluates and visualizes TE00 mode confinement metrics across a combined height and width sweep.
     Generates a unique width-sweep summary figure for each individual height in `sweep_heights`.
     """
+    max_w = max(sweep_widths)
+    max_h = max(sweep_heights)
+
+    # Validate that the requested fixed evaluation domain actually encloses the waveguides
+    if sim_size_y is not None and sim_size_y <= max_w:
+        raise ValueError(
+            f"Enforced simulation Y dimension ({sim_size_y:.3f} μm) must be strictly greater "
+            f"than the maximum waveguide width in the sweep ({max_w:.3f} μm)."
+        )
+
+    if sim_size_z is not None and sim_size_z <= max_h:
+        raise ValueError(
+            f"Enforced simulation Z dimension ({sim_size_z:.3f} μm) must be strictly greater "
+            f"than the maximum waveguide height in the sweep ({max_h:.3f} μm)."
+        )
+
+    if sim_size_y is not None and sim_size_z is not None:
+        sim_area = sim_size_y * sim_size_z
+        max_core_area = max_w * max_h
+        if sim_area <= max_core_area:
+            raise ValueError(
+                f"Enforced simulation domain area ({sim_area:.3f} μm²) is smaller than or equal to "
+                f"the maximum waveguide core area ({max_core_area:.3f} μm²)."
+            )
+
     if output_dir_name:
         output_path = Path(output_dir_name)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -57,7 +85,7 @@ def confinement_in_geometry(
         mean_height = float(np.mean(sweep_heights))
         mean_width = float(np.mean(sweep_widths))
 
-        logger.info(f"     [Confinement] Plotting mean geometry (Width: {mean_width:.2f} μm, Height: {mean_height:.2f} μm)...")
+        logger.info(f"Plotting mean geometry (Width: {mean_width:.2f} μm, Height: {mean_height:.2f} μm)...")
 
         preview_waveguide: RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
             width=mean_width,
@@ -66,7 +94,9 @@ def confinement_in_geometry(
             core_medium=core_medium,
             sub_medium=sub_medium,
             wavelength_um=wavelength_um,
-            substrate_height=substrate_height
+            substrate_height=substrate_height,
+            sim_size_y=sim_size_y,
+            sim_size_z=sim_size_z,
         )
 
         utilities.sim_plotter.display_3d(
@@ -86,7 +116,7 @@ def confinement_in_geometry(
         results_gamma: list = []
         results_Aeff: list = []
 
-        print(f"    [Confinement] Running geometric width sweep for fixed H = {h:.3f} μm at λ = {wavelength_um:.3f} μm...")
+        logger.info(f"Running geometric width sweep for fixed H = {h:.3f} μm at λ = {wavelength_um:.3f} μm...")
 
         for w in sweep_widths:
             waveguide_obj: RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
@@ -96,25 +126,32 @@ def confinement_in_geometry(
                 core_medium=core_medium,
                 sub_medium=sub_medium,
                 wavelength_um=wavelength_um,
-                substrate_height=substrate_height
+                substrate_height=substrate_height,
+                sim_size_y=sim_size_y,
+                sim_size_z=sim_size_z,
             )
 
-            # Get confinement metrics for the current waveguide geometry
-            conf_data = waveguide_obj.get_confinement()
-
-            # TODO: Implement error handling in the waveguide object.
-            if "error" in conf_data:
-                print(f"  Width {w:.2f} μm (H={h:.2f} μm): Fundamental TE00 mode not found. Skipping.")
+            try:
+                # Get confinement metrics using the enforced simulation cross-section domain
+                conf_data = waveguide_obj.get_confinement(
+                    sim_size_y=sim_size_y,
+                    sim_size_z=sim_size_z
+                )
+            except Exception as err:
+                logger.warning(f"  Width {w:.2f} μm (H={h:.2f} μm): {err}. Skipping.")
                 continue
 
             results_w.append(w)
             results_gamma.append(conf_data["confinement_percent"])
             results_Aeff.append(conf_data["effective_mode_area_um2"])
 
-            print(f"    [Confinement] Width {w:.2f} μm: Gamma = {conf_data['confinement_percent']:.1f}%, A_eff = {conf_data['effective_mode_area_um2']:.3f} μm²")
+            logger.info(
+                f" Width {w:.2f} μm: Gamma = {conf_data['confinement_percent']:.1f}%, "
+                f"A_eff = {conf_data['effective_mode_area_um2']:.3f} μm²"
+            )
 
         if not results_w:
-            logger.warning(f"   [Confinement] No valid modes identified for height H = {h:.3f} μm across all widths.")
+            logger.warning(f"No valid modes identified for height H = {h:.3f} μm across all widths.")
             continue
 
         # Plotting
@@ -142,7 +179,7 @@ def confinement_in_geometry(
         if output_dir_name:
             path = Path(output_dir_name) / f"confinement_metrics_H{h:.3f}um.png"
             plt.savefig(path, dpi=200, bbox_inches='tight')
-            print(f"    --> Saved plot: {path}")
+            logger.info(f"    --> Saved plot: {path}")
 
         if display_results:
             plt.show()
