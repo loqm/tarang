@@ -10,7 +10,8 @@ Date: July, 2026
 
 from __future__ import annotations
 import logging
-from typing import Dict, Any
+from pathlib import Path
+from typing import Dict, Any, Optional, List
 
 import numpy as np
 import tidy3d as td
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 # Speed of light in um/ps (from Tidy3D native um/s constant)
 C_UM_PS = td.C_0 / 1e12  # Result: ~299.792458
+
+
+class WaveguideModeError(Exception):
+    """Raised when mode solving fails or required mode conditions are not met."""
+    pass
 
 
 class RidgeWaveguide:
@@ -37,13 +43,16 @@ class RidgeWaveguide:
 
             wavelength_um: float,
 
+            top_cladding_medium: Optional[td.Medium] = None,
+            top_cladding_height: float = 0.0,
+
             substrate_height: float = 4.0,
 
             fine_min_steps_per_wvl: int = 20,
             coarse_min_steps_per_wvl: int = 10,
 
             margin_y: float = 2.0,  # Buffer space on each side of the core in Y
-            margin_z: float = 2.0,  # Air buffer space above the core in Z
+            margin_z: float = 2.0,  # Air/PML buffer space above the top cladding/core in Z
 
             run_time: float = 1e-12
     ):
@@ -56,6 +65,9 @@ class RidgeWaveguide:
 
         self.core_medium = core_medium
         self.sub_medium = sub_medium
+
+        self.top_cladding_medium = top_cladding_medium
+        self.top_cladding_height = top_cladding_height
 
         self.wavelength_um = wavelength_um
         self.substrate_height = substrate_height
@@ -103,8 +115,11 @@ class RidgeWaveguide:
             freqs=[freq0]
         )
 
-        logger.info(f"[Mode Engine] Solving top {num_modes} modes for W={self.width:.3f} μm, H={self.height:.3f} μm...")
-        mode_data = solver.solve()
+        logger.info(f"Solving top {num_modes} modes for W={self.width:.3f} μm, H={self.height:.3f} μm...")
+        try:
+            mode_data = solver.solve()
+        except Exception as e:
+            raise WaveguideModeError(f"Tidy3D ModeSolver failed: {e}") from e
 
         modes_info = []
         for i in range(num_modes):
@@ -121,9 +136,13 @@ class RidgeWaveguide:
                 "is_guided": is_guided
             })
 
+        if not any(m["is_guided"] for m in modes_info):
+            raise WaveguideModeError(f"No guided modes found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
+
         return {
             "width_um": self.width,
             "height_um": self.height,
+            "top_cladding_height_um": self.top_cladding_height,
             "wavelength_um": self.wavelength_um,
             "n_core": n_core,
             "n_sub": n_sub,
@@ -159,7 +178,10 @@ class RidgeWaveguide:
         )
 
         solver = ModeSolver(simulation=self.sim, plane=plane, mode_spec=mode_spec, freqs=freqs)
-        data = solver.solve()
+        try:
+            data = solver.solve()
+        except Exception as e:
+            raise WaveguideModeError(f"Dispersion ModeSolver failed: {e}") from e
 
         # Isolate fundamental TE00 mode
         te00_idx = -1
@@ -169,8 +191,7 @@ class RidgeWaveguide:
                 break
 
         if te00_idx == -1:
-            logger.warning(f"[Dispersion Engine] TE00 mode not found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
-            return {"error": "TE00 mode not found"}
+            raise WaveguideModeError(f"TE00 mode not found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
 
         # Single-mode condition check
         neff_at_center = np.real(data.n_eff.isel(f=mid_idx).values)
@@ -186,8 +207,8 @@ class RidgeWaveguide:
         dn_dlam = np.gradient(srt_neff, srt_wvl)
         d2n_dlam2 = np.gradient(dn_dlam, srt_wvl)
 
-        # D = - (lambda / c) * d2n/dlambda2 * 1e4 -> [ps / (nm * km)]
-        D_val = float(-(srt_wvl[mid_idx] / C_UM_PS) * d2n_dlam2[mid_idx] * 1e4)
+        # D = - (lambda / c) * d2n/dlambda2 * 1e6 -> [ps / (nm * km)]
+        D_val = float(-(srt_wvl[mid_idx] / C_UM_PS) * d2n_dlam2[mid_idx] * 1e6)
 
         # Classify the dispersion regime
         if D_val > 0.5:
@@ -198,7 +219,7 @@ class RidgeWaveguide:
             regime = "Zero / Near-Zero Dispersion (D ~ 0)"
 
         logger.info(
-            f"[Dispersion Engine] W={self.width:.3f} μm, H={self.height:.3f} μm | "
+            f"[Dispersion Engine] W={self.width:.3f} μm, H={self.height:.3f} μm, Clad_H={self.top_cladding_height:.3f} μm | "
             f"D = {D_val:.2f} ps/(nm·km) | Regime: {regime} | Single-Mode: {is_singlemode}"
         )
 
@@ -209,8 +230,110 @@ class RidgeWaveguide:
             "wavelength_um": self.wavelength_um,
             "neff_fundamental": float(srt_neff[mid_idx])
         }
+    
+    def get_dispersion_vs_wavelength(
+            self,
+            wvl_list: list,
+            output_dir : Path,
+            num_points: int = 11,
+            delta_wvl_um: float = 0.05,
+            show : bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Evaluates chromatic dispersion across a spectrum by sweeping target central wavelengths,
+        calling get_dispersion() at each step, and generating a D vs. lambda plot.
+        """
+        import os
+        import matplotlib.pyplot as plt
 
-    def get_confinement(self) -> Dict[str, Any]:
+        d_vals = []
+        regimes = []
+        singlemode_flags = []
+        neff_vals = []
+
+        # Store original center wavelength to restore state afterwards
+        original_wvl = self.wavelength_um
+
+        wvl_start = wvl_list[0]
+        wvl_end = wvl_list[-1]
+
+        logger.info(
+            f"[Dispersion Sweep] Sweeping {len(wvl_list)} points from {wvl_start:.3f} μm "
+            f"to {wvl_end:.3f} μm for W={self.width:.3f} μm, H={self.height:.3f} μm, Clad_H={self.top_cladding_height:.3f} μm..."
+        )
+
+        try:
+            for wvl in wvl_list:
+                self.wavelength_um = float(wvl)
+                res = self.get_dispersion(delta_wvl_um=delta_wvl_um, num_points=7)
+                
+                d_vals.append(res["dispersion_ps_nm_km"])
+                regimes.append(res["dispersion_regime"])
+                singlemode_flags.append(res["is_singlemode"])
+                neff_vals.append(res["neff_fundamental"])
+
+        finally:
+            # Always restore state
+            self.wavelength_um = original_wvl
+
+        d_vals = np.array(d_vals)
+
+        # Build Plot
+        fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+
+        # Highlight Normal vs Anomalous regimes
+        ax.axhline(0, color="gray", linestyle="--", linewidth=1.2, label="Zero Dispersion (ZDW)")
+        ax.plot(
+            wvl_list, d_vals, 
+            color="#2b5c8f", marker="o", markersize=5, linewidth=2, 
+            label=f"TE00 Mode (W={self.width:.2f}μm, H={self.height:.2f}μm)"
+        )
+
+        # Visual shading for dispersion regimes
+        ymin, ymax = ax.get_ylim()
+        if ymax > 0:
+            ax.fill_between(wvl_list, 0, ymax, where=(d_vals > 0), color="red", alpha=0.08, label="Anomalous (D > 0)")
+        if ymin < 0:
+            ax.fill_between(wvl_list, ymin, 0, where=(d_vals < 0), color="blue", alpha=0.08, label="Normal (D < 0)")
+
+        ax.set_xlabel("Wavelength $\\lambda$ (μm)", fontsize=11, fontweight="bold")
+        ax.set_ylabel("Dispersion $D$ [ps / (nm · km)]", fontsize=11, fontweight="bold")
+        ax.set_title(
+            f"Chromatic Dispersion Spectrum\n"
+            f"SiN Waveguide ($W = {self.width:.3f}\\,\\mu\\mathrm{{m}}$, $H = {self.height:.3f}\\,\\mu\\mathrm{{m}}$, $H_{{clad}} = {self.top_cladding_height:.3f}\\,\\mu\\mathrm{{m}}$)",
+            fontsize=12
+        )
+        ax.grid(True, linestyle=":", alpha=0.6)
+        ax.legend(loc="best", frameon=True)
+        fig.tight_layout()
+
+        # Handle Output Directory
+        plot_path = None
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f"dispersion_W{self.width:.3f}_H{self.height:.3f}_Clad{self.top_cladding_height:.3f}_{wvl_start:.2f}-{wvl_end:.2f}um.png"
+            plot_path = os.path.join(output_dir, filename)
+            fig.savefig(plot_path, dpi=300)
+            logger.info(f"[Dispersion Engine] Plot successfully saved to: {plot_path}")
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
+
+        return {
+            "wavelengths_um": (wvl_start, wvl_end),
+            "dispersion_ps_nm_km": d_vals,
+            "neff_array": np.array(neff_vals),
+            "regimes": regimes,
+            "is_singlemode_array": singlemode_flags,
+            "plot_path": plot_path
+        }
+
+    def get_confinement(
+            self,
+            sim_size_y: Optional[float] = None,
+            sim_size_z: Optional[float] = None
+    ) -> Dict[str, Any]:
         """
         Calculates the spatial confinement factor ($\Gamma$) and effective mode area ($A_{\mathrm{eff}}$)
         for the fundamental TE00 mode on this waveguide geometry.
@@ -218,14 +341,21 @@ class RidgeWaveguide:
         freq0 = td.C_0 / self.wavelength_um
         n_core_guess = float(np.real(np.sqrt(self.core_medium.eps_model(freq0))))
 
+        # Determine evaluation cross-section domain
+        plane_size_y = sim_size_y if sim_size_y is not None else float(self.sim.size[1])
+        plane_size_z = sim_size_z if sim_size_z is not None else float(self.sim.size[2])
+
         mode_spec = td.ModeSpec(num_modes=6, target_neff=n_core_guess)
         plane = td.Box(
             center=(0, 0, self.height / 2),
-            size=(0, self.sim.size[1], self.sim.size[2])
+            size=(0, plane_size_y, plane_size_z)
         )
 
         solver = ModeSolver(simulation=self.sim, plane=plane, mode_spec=mode_spec, freqs=[freq0])
-        data = solver.solve()
+        try:
+            data = solver.solve()
+        except Exception as e:
+            raise WaveguideModeError(f"Confinement ModeSolver failed: {e}") from e
 
         te00_idx = -1
         for m in range(len(data.n_eff.mode_index)):
@@ -234,8 +364,7 @@ class RidgeWaveguide:
                 break
 
         if te00_idx == -1:
-            logger.warning(f"[Confinement Engine] TE00 mode not found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
-            return {"error": "TE00 mode not found"}
+            raise WaveguideModeError(f"TE00 mode not found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
 
         Ex = data.Ex.isel(mode_index=te00_idx, f=0).values.squeeze()
         Ey = data.Ey.isel(mode_index=te00_idx, f=0).values.squeeze()
@@ -261,12 +390,13 @@ class RidgeWaveguide:
 
         logger.info(
             f"[Confinement Engine] W={self.width:.3f} μm, H={self.height:.3f} μm | "
-            f"Γ = {gamma*100:.2f}% | A_eff = {A_eff:.3f} μm²"
+            f"Γ = {gamma*100:.2f}% | A_eff = {A_eff:.3f} μm² | Evaluation Domain: {plane_size_y:.2f}x{plane_size_z:.2f} μm²"
         )
 
         return {
             "confinement_factor": gamma,
             "confinement_percent": gamma * 100.0,
             "effective_mode_area_um2": A_eff,
-            "physical_core_area_um2": self.width * self.height
+            "physical_core_area_um2": self.width * self.height,
+            "eval_domain_um2": plane_size_y * plane_size_z
         }

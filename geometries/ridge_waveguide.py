@@ -2,14 +2,14 @@
 geometries.ridge_waveguide.py
 
 This file defines and returns Tidy3D simulations of ridge waveguides on a
-Bottom Oxide Layer, wrapped inside RidgeWaveguide objects.
+Bottom Oxide Layer with optional Top Cladding, wrapped inside RidgeWaveguide objects.
 
 Author: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: July 2026
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from waveguide.waveguide import RidgeWaveguide
@@ -28,6 +28,9 @@ def get_passive_simulation(
 
     wavelength_um: float,
 
+    top_cladding_medium: Optional[td.Medium] = None,
+    top_cladding_height: float = 0.0,
+
     substrate_height: float = 4.0,
 
     fine_min_steps_per_wvl: int = 20,
@@ -42,48 +45,59 @@ def get_passive_simulation(
     run_time: float = 1e-12
 ) -> RidgeWaveguide:
     """
-    Generates a Tidy3D simulation with independent control over core 
-    and substrate dimensions, returning a wrapped RidgeWaveguide.
-
-    sim_size_y / sim_size_z: optional fixed overrides for the total simulation
-    cross-section, bypassing the width/height-dependent margin_y/margin_z sizing.
-    Useful for sweeps where the evaluation domain must stay constant across
-    varying geometries (see get_confinement()'s enforced-domain parameters).
+    Generates a Tidy3D simulation with independent control over core, 
+    substrate, and optional top cladding dimensions, returning a wrapped RidgeWaveguide.
     """
     
     sim_x = length
     sim_y = sim_size_y if sim_size_y is not None else (width + 2 * margin_y)
 
+    total_struct_height = height + top_cladding_height
+
     if sim_size_z is not None:
         sim_z = sim_size_z
-        effective_margin_z = sim_size_z - substrate_height - height
+        effective_margin_z = sim_size_z - substrate_height - total_struct_height
         if effective_margin_z <= 0:
             raise ValueError(
                 f"sim_size_z ({sim_size_z:.3f} μm) must exceed "
-                f"substrate_height + height ({substrate_height + height:.3f} μm)."
+                f"substrate_height + height + top_cladding_height ({substrate_height + total_struct_height:.3f} μm)."
             )
     else:
-        sim_z = substrate_height + height + margin_z
+        sim_z = substrate_height + total_struct_height + margin_z
         effective_margin_z = margin_z
 
     sim_size = (sim_x, sim_y, sim_z)
     
-    z_center = (height + effective_margin_z - substrate_height) / 2
+    z_center = (total_struct_height + effective_margin_z - substrate_height) / 2
     sim_center = (0, 0, z_center)
 
-    # Core Waveguide (sits from z = 0 to z = height)
-    core_geo = td.Box(
-        center=(0, 0, height / 2),
-        size=(td.inf, width, height)
-    )
-    core = td.Structure(geometry=core_geo, medium=core_medium)
-    
-    # Controlled Substrate Layer (sits from z = 0 down to z = -substrate_height)
+    structures = []
+
+    # 1. Substrate Layer (sits from z = -substrate_height to z = 0)
     substrate_geo = td.Box(
         center=(0, 0, -substrate_height / 2), 
         size=(td.inf, td.inf, substrate_height)
     )
     substrate = td.Structure(geometry=substrate_geo, medium=sub_medium)
+    structures.append(substrate)
+
+    # 2. Top Cladding Layer (fills z = 0 up to z = height + top_cladding_height)
+    # Note: Placed BEFORE core so core overrides it where they overlap.
+    if top_cladding_medium is not None and top_cladding_height > 0:
+        top_clad_geo = td.Box(
+            center=(0, 0, total_struct_height / 2),
+            size=(td.inf, td.inf, total_struct_height)
+        )
+        top_clad = td.Structure(geometry=top_clad_geo, medium=top_cladding_medium)
+        structures.append(top_clad)
+
+    # 3. Core Waveguide (sits from z = 0 to z = height)
+    core_geo = td.Box(
+        center=(0, 0, height / 2),
+        size=(td.inf, width, height)
+    )
+    core = td.Structure(geometry=core_geo, medium=core_medium)
+    structures.append(core)
     
     # Mesh Override Region around core
     buffer_y = 0.5
@@ -106,7 +120,6 @@ def get_passive_simulation(
         enforce=True 
     )
     
-    # Simulation Setup
     grid_spec = td.GridSpec.auto(
         wavelength=wavelength_um, 
         min_steps_per_wvl=coarse_min_steps_per_wvl,
@@ -123,7 +136,7 @@ def get_passive_simulation(
         center=sim_center,
         size=sim_size,
         grid_spec=grid_spec,
-        structures=[substrate, core],
+        structures=structures,
         boundary_spec=boundary_spec,
         run_time=run_time
     )
@@ -137,6 +150,8 @@ def get_passive_simulation(
         length=length,
         core_medium=core_medium,
         sub_medium=sub_medium,
+        top_cladding_medium=top_cladding_medium,
+        top_cladding_height=top_cladding_height,
         wavelength_um=wavelength_um,
         substrate_height=substrate_height,
         fine_min_steps_per_wvl=fine_min_steps_per_wvl,
@@ -157,7 +172,13 @@ def get_active_simulation(
 
     wavelength_um: float,
 
+    top_cladding_medium: Optional[td.Medium] = None,
+    top_cladding_height: float = 0.0,
+
     substrate_height: float = 4.0,
+
+    num_modes: int = 1,
+    target_mode_index: int = 0,
 
     fine_min_steps_per_wvl: int = 20,
     coarse_min_steps_per_wvl: int = 10,
@@ -165,52 +186,64 @@ def get_active_simulation(
     margin_y: float = 2.0,
     margin_z: float = 2.0,
 
-    sim_size_y: float | None = None,   # NEW
-    sim_size_z: float | None = None,   # NEW
+    sim_size_y: float | None = None,
+    sim_size_z: float | None = None,
 
     run_time: float = 1e-12
 ) -> RidgeWaveguide:
     """
-    Generates a Tidy3D simulation with independent control over core 
-    and substrate dimensions, returning a wrapped RidgeWaveguide.
-
-    sim_size_y / sim_size_z: optional fixed overrides for the total simulation
-    cross-section, bypassing the width/height-dependent margin_y/margin_z sizing.
-    Useful for sweeps where the evaluation domain must stay constant across
-    varying geometries (see get_confinement()'s enforced-domain parameters).
+    Generates an active Tidy3D simulation with mode sources/monitors and 
+    support for optional top cladding.
     """
     
     sim_x = length
     sim_y = sim_size_y if sim_size_y is not None else (width + 2 * margin_y)
 
+    total_struct_height = height + top_cladding_height
+
     if sim_size_z is not None:
         sim_z = sim_size_z
-        effective_margin_z = sim_size_z - substrate_height - height
+        effective_margin_z = sim_size_z - substrate_height - total_struct_height
         if effective_margin_z <= 0:
             raise ValueError(
                 f"sim_size_z ({sim_size_z:.3f} μm) must exceed "
-                f"substrate_height + height ({substrate_height + height:.3f} μm)."
+                f"substrate_height + height + top_cladding_height ({substrate_height + total_struct_height:.3f} μm)."
             )
     else:
-        sim_z = substrate_height + height + margin_z
+        sim_z = substrate_height + total_struct_height + margin_z
         effective_margin_z = margin_z
 
     sim_size = (sim_x, sim_y, sim_z)
     
-    z_center = (height + effective_margin_z - substrate_height) / 2
+    z_center = (total_struct_height + effective_margin_z - substrate_height) / 2
     sim_center = (0, 0, z_center)
 
-    core_geo = td.Box(
-        center=(0, 0, height / 2),
-        size=(td.inf, width, height)
-    )
-    core = td.Structure(geometry=core_geo, medium=core_medium)
-    
+    structures = []
+
+    # Substrate
     substrate_geo = td.Box(
         center=(0, 0, -substrate_height / 2), 
         size=(td.inf, td.inf, substrate_height)
     )
     substrate = td.Structure(geometry=substrate_geo, medium=sub_medium)
+    structures.append(substrate)
+
+    # Top Cladding
+    if top_cladding_medium is not None and top_cladding_height > 0:
+        top_clad_geo = td.Box(
+            center=(0, 0, total_struct_height / 2),
+            size=(td.inf, td.inf, total_struct_height)
+        )
+        top_clad = td.Structure(geometry=top_clad_geo, medium=top_cladding_medium)
+        structures.append(top_clad)
+
+    # Core
+    core_geo = td.Box(
+        center=(0, 0, height / 2),
+        size=(td.inf, width, height)
+    )
+    core = td.Structure(geometry=core_geo, medium=core_medium)
+    structures.append(core)
     
     freq0 = td.C_0 / wavelength_um
     eps_core = core_medium.eps_model(freq0)
@@ -274,7 +307,7 @@ def get_active_simulation(
         center=sim_center,
         size=sim_size,
         grid_spec=grid_spec,
-        structures=[substrate, core],
+        structures=structures,
         sources=[mode_source],
         monitors=[mode_monitor],
         boundary_spec=boundary_spec,
@@ -290,6 +323,8 @@ def get_active_simulation(
         length=length,
         core_medium=core_medium,
         sub_medium=sub_medium,
+        top_cladding_medium=top_cladding_medium,
+        top_cladding_height=top_cladding_height,
         wavelength_um=wavelength_um,
         substrate_height=substrate_height,
         fine_min_steps_per_wvl=fine_min_steps_per_wvl,
