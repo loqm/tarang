@@ -157,6 +157,7 @@ class GratingCoupler:
             logging.warning("[Warning] TIDY3D_API_KEY not found in environment. The web run will likely fail unless configured globally.")
 
         # 1. Construct specific directory name
+        cfg = self.config
         param_dir_name = self.get_dir_name()
 
         # 2. Form child path and ensure it exists
@@ -213,6 +214,9 @@ class GratingCoupler:
         Executes the simulation (or loads from cache) and plots spatial field 
         distribution maps for valid 2D FieldMonitors.
         """
+        cfg = self.config
+        dim_str = "3D" if self.is_3d else "2D"
+
         # 1. Reconstruct the exact child parameter directory where HDF5 lives
         param_dir_name = self.get_dir_name()
         target_dir = Path(output_dir) / param_dir_name
@@ -267,5 +271,4 @@ class GratingCoupler:
 
                 except Exception as e:
                     logging.error(f"[Analytics Error] Could not render field monitor plot '{monitor.name}': {e}")
-
         
