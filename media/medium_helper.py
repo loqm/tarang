@@ -12,13 +12,16 @@ Date: June, 2026
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from pathlib import Path
 from pydantic import ValidationError
 import json
 import sys
 import logging
-
+import hashlib
+import uuid
+from datetime import datetime
 
 import tidy3d as td
 from tidy3d.plugins.dispersion import FastDispersionFitter as Fitter
@@ -37,47 +40,54 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-MEDIUM_FILE_PATH : Path = Path("media.json")
+MEDIUM_FILE_PATH: Path = Path("media.json")
 FITTED_DIR = Path("media/fitted_media/")
 FITTED_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---- Load Media Configuration ---- #
 try:
-    with open (MEDIUM_FILE_PATH, "r", encoding="utf-8") as file:
+    with open(MEDIUM_FILE_PATH, "r", encoding="utf-8") as file:
         MEDIA_DB = json.load(file)       
 except FileNotFoundError:
     raise FileNotFoundError(f"Failed to find media JSON file at {MEDIUM_FILE_PATH}!")
 
+# ---- Utility Functions ---- #
+
+def get_file_hash(filepath: Path) -> str:
+    """Computes a quick MD5 hash of a file to check for staleness."""
+    hasher = hashlib.md5()
+    with open(filepath, 'rb') as f:
+        buf = f.read(65536)
+        while len(buf) > 0:
+            hasher.update(buf)
+            buf = f.read(65536)
+    return hasher.hexdigest()
+
+def write_json_atomic(filepath: Path, data: dict) -> None:
+    """Writes JSON to a temporary file then atomically renames it to prevent corruption."""
+    tmp_path = filepath.with_suffix('.tmp')
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4)
+    tmp_path.replace(filepath)
+
+
 # ---- Main Helper Function ---- #
+
 def get_medium(
-        medium_key : str,
-        wl_range : tuple,
-        tolerance : float = 1e-8,
-        force_zero_k : bool = False,
-        try_reformat : bool = True
-) -> td.Medium :
+        medium_key: str,
+        wl_range: tuple = None,
+        tolerance: float = 1e-6,
+        max_num_poles: int = 10,
+        force_zero_k: bool = False,
+        try_reformat: bool = True
+) -> td.Medium:
     """
-    Docstring for get_medium
-    
-    :param medium_key: Description
-    :type medium_key: str
-    :param wl_range: Description
-    :type wl_range: tuple
-    :param tolerance: Description
-    :type tolerance: float
-    :param force_zero_k: Description
-    :type force_zero_k: bool
-    :param try_reformat: Description
-    :type try_reformat: bool
-    :return: Description
-    :rtype: Medium
-
-    Fetches a Tidy3D Medium object. Loads from JSON cache if available, 
-    otherwise reads the CSV, fits the data, caches it, and returns the Medium.
-    Bypasses file system entirely for standard air background requests.
+    Fetches a Tidy3D Medium object. Validates against a manifest cache to ensure 
+    reused fits meet the precise bounds, pole limits, and error tolerances of the request.
+    If wl_range is None, dynamically fits across the entire wavelength range of the CSV.
     """
 
-     # -- Case-Insensitive Air Override Gate -- #
+    # -- Case-Insensitive Air Override Gate -- #
     if medium_key.lower() == "air":
         logger.info("[Medium] Bypassing file system for air. Returning dispersionless vacuum medium (n=1.0)...")
         return td.Medium(permittivity=1.0)
@@ -85,72 +95,251 @@ def get_medium(
     if medium_key.lower() not in MEDIA_DB:
         raise ValueError(f"Material '{medium_key}' not found in media data JSON file. Are you sure you spelt that correctly?")
     
-    csv_path : Path = Path(MEDIA_DB[medium_key.lower()])
+    csv_path: Path = Path(MEDIA_DB[medium_key.lower()])
     
-    # Check if the path listed exists
     if not csv_path.exists():
         raise FileNotFoundError(f"Raw data CSV not found at {csv_path}!")
     
-    # Generate the JSON filename dynamically from the CSV name
-    json_path : Path = FITTED_DIR / f"{csv_path.stem}.json"
-    
-    # Load from cache if it exists
-    if json_path.exists():
-        logger.info(f"[Medium] Loading {medium_key} cached fit from {json_path.name}...")
-        return td.PoleResidue.from_file(str(json_path))
-    
-    # Fit if no cache exists
-    logger.info(f"[Medium] No {medium_key} cache found. Fitting data from {csv_path.name}...")
-    df = pd.read_csv(csv_path)
+    # 1. Safely Parse Numeric CSV Data (Catches stacked headers/strings early)
+    try:
+        df = pd.read_csv(csv_path)
+        wvl_um = pd.to_numeric(df['wl'], errors='raise').to_numpy(dtype=float)
+        n_data = pd.to_numeric(df['n'], errors='raise').to_numpy(dtype=float)
 
-    wvl_um = np.array(df['wl'].values)
-    n_data = np.array(df['n'].values)
+        if force_zero_k or 'k' not in df.columns:
+            k_data = np.zeros_like(n_data)
+        else:
+            k_data = pd.to_numeric(df['k'], errors='raise').to_numpy(dtype=float)
 
-    # Handle zero 'k' cases automatically
-    if force_zero_k or 'k' not in df.columns:
-        k_data = np.zeros_like(n_data)
-    else:
-        k_data = np.array(df['k'].values)
-
-    if try_reformat:
-        try:    
-            fitter = Fitter(
-                wvl_um=wvl_um,
-                n_data=n_data,
-                k_data=k_data,
-                wvl_range=wl_range
-            )
-        except ValidationError as e:
-            logger.error(f"[Medium]: Error during fitter initialization. Rerunning with reformatted data.")
-            
-            # Format the csv file in place
+    except Exception as e:
+        if try_reformat:
+            logger.error(f"[Medium]: CSV formatting check failed for {medium_key} ({e}). Running reformatter...")
             format_question_mark = format_csv.fix_stacked_csv(str(csv_path))
 
-            # If formatting was successful
-            # Prevent reformatting a second time to prevent infinite recursion
             if format_question_mark:
                 return get_medium(
                     medium_key=medium_key,
                     wl_range=wl_range,
                     tolerance=tolerance,
+                    max_num_poles=max_num_poles,
                     force_zero_k=force_zero_k,
                     try_reformat=False
                 )
             else:
                 raise RuntimeError(f"[Medium]: Failed to reformat CSV for {medium_key}. You're on your own here.")
+        else:
+            raise RuntimeError(f"[Medium]: Unrecoverable numeric parsing error in {csv_path.name}: {e}")
+
+    # 2. Resolve Dynamic Wavelength Range & Validate Coverage
+    data_wl_min, data_wl_max = float(np.min(wvl_um)), float(np.max(wvl_um))
+
+    if wl_range is None:
+        wl_range = (data_wl_min, data_wl_max)
+        logger.info(f"[Medium] Auto-detected full wavelength range for {medium_key}: {wl_range}")
     else:
-        fitter = Fitter(
-                wvl_um=wvl_um,
-                n_data=n_data,
-                k_data=k_data,
-                wvl_range=wl_range
+        # Check that requested range contains at least some data points
+        eps_bounds = 1e-5
+        in_range_mask = (wvl_um >= wl_range[0] - eps_bounds) & (wvl_um <= wl_range[1] + eps_bounds)
+        if not np.any(in_range_mask):
+            raise ValueError(
+                f"[{medium_key}] Requested wl_range {wl_range} μm has ZERO data points in '{csv_path.name}'. "
+                f"The available dataset wavelength range is [{data_wl_min:.4f}, {data_wl_max:.4f}] μm."
             )
 
+    # 3. Manifest and Hashing Setup
+    current_csv_hash = get_file_hash(csv_path)
+    manifest_path: Path = FITTED_DIR / f"{csv_path.stem}_index.json"
     
-    medium, rms_err = fitter.fit(tolerance_rms=tolerance)
+    manifest = {"fits": []}
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except json.JSONDecodeError:
+            logger.warning(f"[Medium] Manifest {manifest_path.name} corrupted. Generating fresh.")
+
+    # 4. Cache Validation Rules
+    valid_entries = []
+    rejection_reasons = []
+    eps = 1e-5  
+
+    req_wl_min, req_wl_max = wl_range
+
+    for entry in manifest.get("fits", []):
+        c_wl_min, c_wl_max = entry["wl_range"]
+        
+        if entry["csv_hash"] != current_csv_hash:
+            rejection_reasons.append("csv_hash_mismatch")
+            continue
+        if entry["force_zero_k"] != force_zero_k:
+            rejection_reasons.append("force_zero_k_mismatch")
+            continue
+        if entry["max_num_poles"] < max_num_poles:
+            rejection_reasons.append("insufficient_max_poles")
+            continue
+        if entry["rms_err"] > tolerance:
+            rejection_reasons.append("insufficient_accuracy")
+            continue
+        if not (c_wl_min <= req_wl_min + eps and c_wl_max >= req_wl_max - eps):
+            rejection_reasons.append("wl_range_out_of_bounds")
+            continue
+            
+        valid_entries.append(entry)
+
+    # 5. Cache Hit Evaluation
+    if valid_entries:
+        best_match = sorted(valid_entries, key=lambda x: (
+            x["wl_range"][1] - x["wl_range"][0],
+            x["max_num_poles"]
+        ))[0]
+        
+        target_fit_path = FITTED_DIR / best_match["fit_filename"]
+        if target_fit_path.exists():
+            logger.info(f"[Medium] Cache HIT for {medium_key}. Reusing {best_match['fit_filename']} "
+                        f"(Fit range: {best_match['wl_range']}, RMS: {best_match['rms_err']:.2e}, "
+                        f"Poles allowed: {best_match['max_num_poles']}).")
+            return td.PoleResidue.from_file(str(target_fit_path))
+        else:
+            logger.warning(f"[Medium] Valid manifest entry points to missing file {target_fit_path.name}. Refitting...")
+
+    else:
+        if not manifest.get("fits"):
+            logger.info(f"[Medium] Cache MISS for {medium_key}. No manifest found. Fitting data...")
+        else:
+            logger.info(f"[Medium] Cache MISS for {medium_key}. Existing entries failed validation: {list(set(rejection_reasons))}. Fitting data...")
+
+    # 6. The Inquisition (Sanity Checks)
+    if np.isnan(n_data).any() or np.isnan(k_data).any():
+        logger.error(f"[{medium_key}] Error! Data contains NaNs.")
+    if (k_data < 0).any():
+        logger.error(f"[{medium_key}] Error! Negative k values detected. Physical impossibilities")
+    if not np.all(np.diff(wvl_um) > 0):
+        logger.error(f"[{medium_key}] Error! Wavelengths do not increase monotonically!")
+
+    # 7. Initialize Fitter
+    try:
+        fitter = Fitter(
+            wvl_um=wvl_um,
+            n_data=n_data,
+            k_data=k_data,
+            wvl_range=wl_range,
+        )
+    except ValidationError as e:
+        if try_reformat:
+            logger.error(f"[Medium]: Fitter validation failed. Attempting reformat...")
+            format_csv.fix_stacked_csv(str(csv_path))
+            return get_medium(
+                medium_key=medium_key,
+                wl_range=wl_range,
+                tolerance=tolerance,
+                max_num_poles=max_num_poles,
+                force_zero_k=force_zero_k,
+                try_reformat=False
+            )
+        else:
+            raise ValidationError(e)
+
+    # 8. Execute Local Fit
+    logger.info(f"[Medium] Running local fitter for {medium_key} (up to {max_num_poles} poles)...")
+    medium, rms_err = fitter.fit(tolerance_rms=tolerance, max_num_poles=max_num_poles)
+    
     logger.info(f"[Medium] {medium_key} fit complete! RMS Error: {rms_err:.2e}")
 
-    medium.to_file(str(json_path))
-    logger.info(f"[Medium] {medium_key} cached fit to {json_path.name}.\n")
-
+    # 9. Save Unique Fit and Update Manifest
+    unique_id = uuid.uuid4().hex[:8]
+    fit_filename = f"{csv_path.stem}_{unique_id}.json"
+    fit_path = FITTED_DIR / fit_filename
+    
+    medium.to_file(str(fit_path))
+    
+    new_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "fit_filename": fit_filename,
+        "csv_hash": current_csv_hash,
+        "wl_range": wl_range,
+        "max_num_poles": max_num_poles,
+        "tolerance": tolerance,
+        "rms_err": float(rms_err),
+        "force_zero_k": force_zero_k
+    }
+    
+    manifest["fits"].append(new_entry)
+    write_json_atomic(manifest_path, manifest)
+    
+    logger.info(f"[Medium] {medium_key} cached new fit to {fit_filename} and updated manifest.\n")
     return medium
+
+
+def get_medium_dispersion(
+    medium_key: str,
+    output_path: Path,
+    wl_range: tuple = None,
+    points_plotted: int = 500,
+    loglog: bool = False,
+    show: bool = False,
+    tolerance: float = 1e-8,
+    max_num_poles: int = 10,
+    force_zero_k: bool = False
+) -> None:
+    """
+    Fetches a Tidy3D Medium object and generates the chromatic dispersion
+    graph for it.
+    """
+    if isinstance(output_path, str):
+        output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 1. Delegate fitting, reformatting, and dynamic range resolution to get_medium FIRST
+    medium: td.Medium = get_medium(
+        medium_key=medium_key,
+        wl_range=wl_range,
+        tolerance=tolerance,
+        max_num_poles=max_num_poles,
+        force_zero_k=force_zero_k,
+        try_reformat=True
+    )
+
+    # 2. Safely read bounds for plotting AFTER get_medium guarantees the CSV is clean
+    if wl_range is None:
+        csv_path = Path(MEDIA_DB[medium_key.lower()])
+        df = pd.read_csv(csv_path)
+        wvl_um = pd.to_numeric(df['wl'], errors='coerce').dropna().to_numpy()
+        wl_range = (float(np.min(wvl_um)), float(np.max(wvl_um)))
+
+    wl_linspace = np.linspace(wl_range[0], wl_range[1], points_plotted)
+    freq_linspace = td.C_0 / wl_linspace
+
+    eps_complex = medium.eps_model(freq_linspace)
+    n_complex = np.sqrt(eps_complex)
+
+    n_arr = np.real(n_complex)
+    k_arr = np.imag(n_complex)
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    plot_fn = ax1.loglog if loglog else ax1.plot
+
+    ax1.set_xlabel("Wavelength (μm)")
+    ax1.set_ylabel("Real Index (n)", color="tab:blue")
+    line1 = plot_fn(wl_linspace, n_arr, color="tab:blue", label="n (real)")
+    ax1.tick_params(axis="y", labelcolor="tab:blue")
+
+    ax2 = ax1.twinx()
+    plot_fn_2 = ax2.loglog if loglog else ax2.plot
+    ax2.set_ylabel("Extinction Coefficient (k)", color="tab:red")
+    line2 = plot_fn_2(wl_linspace, k_arr, color="tab:red", linestyle="--", label="k (imag)")
+    ax2.tick_params(axis="y", labelcolor="tab:red")
+
+    lines = line1 + line2
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc="best")
+
+    ax1.set_title(f"Chromatic Dispersion Profile: {medium_key}")
+    ax1.grid(True, which="both" if loglog else "major", linestyle=":", alpha=0.6)
+    
+    fig.tight_layout()
+
+    plt.savefig(output_path, dpi=300)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
