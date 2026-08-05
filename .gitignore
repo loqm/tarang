@@ -6,6 +6,8 @@ media/fitted_media/*
 
 results/*
 *example_results/*
+*.png
+*.hdf5
 
 *.pyc
 *.toml
