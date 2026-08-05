@@ -33,25 +33,42 @@ def get_passive_simulation(
     fine_min_steps_per_wvl: int = 20,
     coarse_min_steps_per_wvl: int = 10,
 
-    margin_y: float = 2.0,  # Buffer space on each side of core in Y
-    margin_z: float = 2.0,  # Air buffer above the core in Z
+    margin_y: float = 2.0,
+    margin_z: float = 2.0,
+
+    sim_size_y: float | None = None,
+    sim_size_z: float | None = None,
 
     run_time: float = 1e-12
 ) -> RidgeWaveguide:
     """
     Generates a Tidy3D simulation with independent control over core 
     and substrate dimensions, returning a wrapped RidgeWaveguide.
+
+    sim_size_y / sim_size_z: optional fixed overrides for the total simulation
+    cross-section, bypassing the width/height-dependent margin_y/margin_z sizing.
+    Useful for sweeps where the evaluation domain must stay constant across
+    varying geometries (see get_confinement()'s enforced-domain parameters).
     """
     
-    # Total domain dimensions:
-    # Z-span covers substrate (below z=0), core (z=0 to h), and top air buffer
     sim_x = length
-    sim_y = width + 2 * margin_y
-    sim_z = substrate_height + height + margin_z
+    sim_y = sim_size_y if sim_size_y is not None else (width + 2 * margin_y)
+
+    if sim_size_z is not None:
+        sim_z = sim_size_z
+        effective_margin_z = sim_size_z - substrate_height - height
+        if effective_margin_z <= 0:
+            raise ValueError(
+                f"sim_size_z ({sim_size_z:.3f} μm) must exceed "
+                f"substrate_height + height ({substrate_height + height:.3f} μm)."
+            )
+    else:
+        sim_z = substrate_height + height + margin_z
+        effective_margin_z = margin_z
+
     sim_size = (sim_x, sim_y, sim_z)
     
-    # Adjust Z-center so the origin (0,0,0) stays locked to the substrate-core interface
-    z_center = (height + margin_z - substrate_height) / 2
+    z_center = (height + effective_margin_z - substrate_height) / 2
     sim_center = (0, 0, z_center)
 
     # Core Waveguide (sits from z = 0 to z = height)
@@ -140,10 +157,7 @@ def get_active_simulation(
 
     wavelength_um: float,
 
-    substrate_height: float = 4.0, 
-
-    num_modes: int = 2,
-    target_mode_index: int = 0,
+    substrate_height: float = 4.0,
 
     fine_min_steps_per_wvl: int = 20,
     coarse_min_steps_per_wvl: int = 10,
@@ -151,19 +165,39 @@ def get_active_simulation(
     margin_y: float = 2.0,
     margin_z: float = 2.0,
 
+    sim_size_y: float | None = None,   # NEW
+    sim_size_z: float | None = None,   # NEW
+
     run_time: float = 1e-12
 ) -> RidgeWaveguide:
     """
-    Generates an active Tidy3D simulation with independent substrate control,
-    returning a wrapped RidgeWaveguide.
+    Generates a Tidy3D simulation with independent control over core 
+    and substrate dimensions, returning a wrapped RidgeWaveguide.
+
+    sim_size_y / sim_size_z: optional fixed overrides for the total simulation
+    cross-section, bypassing the width/height-dependent margin_y/margin_z sizing.
+    Useful for sweeps where the evaluation domain must stay constant across
+    varying geometries (see get_confinement()'s enforced-domain parameters).
     """
     
     sim_x = length
-    sim_y = width + 2 * margin_y
-    sim_z = substrate_height + height + margin_z
+    sim_y = sim_size_y if sim_size_y is not None else (width + 2 * margin_y)
+
+    if sim_size_z is not None:
+        sim_z = sim_size_z
+        effective_margin_z = sim_size_z - substrate_height - height
+        if effective_margin_z <= 0:
+            raise ValueError(
+                f"sim_size_z ({sim_size_z:.3f} μm) must exceed "
+                f"substrate_height + height ({substrate_height + height:.3f} μm)."
+            )
+    else:
+        sim_z = substrate_height + height + margin_z
+        effective_margin_z = margin_z
+
     sim_size = (sim_x, sim_y, sim_z)
     
-    z_center = (height + margin_z - substrate_height) / 2
+    z_center = (height + effective_margin_z - substrate_height) / 2
     sim_center = (0, 0, z_center)
 
     core_geo = td.Box(
