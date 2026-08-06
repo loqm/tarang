@@ -79,12 +79,14 @@ def get_medium(
         tolerance: float = 1e-6,
         max_num_poles: int = 10,
         force_zero_k: bool = False,
+        use_cache: bool = True,
         try_reformat: bool = True
 ) -> td.Medium:
     """
     Fetches a Tidy3D Medium object. Validates against a manifest cache to ensure 
     reused fits meet the precise bounds, pole limits, and error tolerances of the request.
     If wl_range is None, dynamically fits across the entire wavelength range of the CSV.
+    If use_cache is False, bypasses manifest checks and forces a fresh fit.
     """
 
     # -- Case-Insensitive Air Override Gate -- #
@@ -123,6 +125,7 @@ def get_medium(
                     tolerance=tolerance,
                     max_num_poles=max_num_poles,
                     force_zero_k=force_zero_k,
+                    use_cache=use_cache,
                     try_reformat=False
                 )
             else:
@@ -187,7 +190,7 @@ def get_medium(
         valid_entries.append(entry)
 
     # 5. Cache Hit Evaluation
-    if valid_entries:
+    if use_cache and valid_entries:
         best_match = sorted(valid_entries, key=lambda x: (
             x["wl_range"][1] - x["wl_range"][0],
             x["max_num_poles"]
@@ -203,7 +206,9 @@ def get_medium(
             logger.warning(f"[Medium] Valid manifest entry points to missing file {target_fit_path.name}. Refitting...")
 
     else:
-        if not manifest.get("fits"):
+        if not use_cache:
+            logger.info(f"[Medium] Cache BYPASSED for {medium_key} (use_cache=False). Refitting data...")
+        elif not manifest.get("fits"):
             logger.info(f"[Medium] Cache MISS for {medium_key}. No manifest found. Fitting data...")
         else:
             logger.info(f"[Medium] Cache MISS for {medium_key}. Existing entries failed validation: {list(set(rejection_reasons))}. Fitting data...")
@@ -234,6 +239,7 @@ def get_medium(
                 tolerance=tolerance,
                 max_num_poles=max_num_poles,
                 force_zero_k=force_zero_k,
+                use_cache=use_cache,
                 try_reformat=False
             )
         else:
@@ -279,7 +285,8 @@ def get_medium_dispersion(
     show: bool = False,
     tolerance: float = 1e-8,
     max_num_poles: int = 10,
-    force_zero_k: bool = False
+    force_zero_k: bool = False,
+    use_cache: bool = True
 ) -> None:
     """
     Fetches a Tidy3D Medium object and generates the chromatic dispersion
@@ -296,6 +303,7 @@ def get_medium_dispersion(
         tolerance=tolerance,
         max_num_poles=max_num_poles,
         force_zero_k=force_zero_k,
+        use_cache=use_cache,
         try_reformat=True
     )
 
@@ -313,7 +321,6 @@ def get_medium_dispersion(
     n_complex = np.sqrt(eps_complex)
 
     n_arr = np.real(n_complex)
-    k_arr = np.imag(n_complex)
 
     fig, ax1 = plt.subplots(figsize=(10, 6))
     plot_fn = ax1.loglog if loglog else ax1.plot
@@ -323,15 +330,19 @@ def get_medium_dispersion(
     line1 = plot_fn(wl_linspace, n_arr, color="tab:blue", label="n (real)")
     ax1.tick_params(axis="y", labelcolor="tab:blue")
 
-    ax2 = ax1.twinx()
-    plot_fn_2 = ax2.loglog if loglog else ax2.plot
-    ax2.set_ylabel("Extinction Coefficient (k)", color="tab:red")
-    line2 = plot_fn_2(wl_linspace, k_arr, color="tab:red", linestyle="--", label="k (imag)")
-    ax2.tick_params(axis="y", labelcolor="tab:red")
+    if not force_zero_k:
+        k_arr = np.imag(n_complex)
+        ax2 = ax1.twinx()
+        plot_fn_2 = ax2.loglog if loglog else ax2.plot
+        ax2.set_ylabel("Extinction Coefficient (k)", color="tab:red")
+        line2 = plot_fn_2(wl_linspace, k_arr, color="tab:red", linestyle="--", label="k (imag)")
+        ax2.tick_params(axis="y", labelcolor="tab:red")
 
-    lines = line1 + line2
-    labels = [l.get_label() for l in lines]
-    ax1.legend(lines, labels, loc="best")
+        lines = line1 + line2
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc="best")
+    else:
+        ax1.legend(loc="best")
 
     ax1.set_title(f"Chromatic Dispersion Profile: {medium_key}")
     ax1.grid(True, which="both" if loglog else "major", linestyle=":", alpha=0.6)
