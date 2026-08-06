@@ -24,8 +24,7 @@ try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    raise FileNotFoundError("Failed to find .env file! I'm not sure where to\
-search for your API key right now!")
+    raise FileNotFoundError("Failed to find .env file! I'm not sure where to search for your API key right now!")
 
 if TYPE_CHECKING:
     from geometries.grating_coupler import get_active_simulation
@@ -74,7 +73,7 @@ class GratingCoupler:
             core_medium: td.Medium,
             box_medium: td.Medium,
             substrate_medium: td.Medium,
-            cladding_medium: td.Medium | None = None,   # Defaults to ``air" if None
+            cladding_medium: td.Medium | None = None,   # Defaults to "air" if None
 
             is_3d: bool = False,
 
@@ -93,13 +92,6 @@ class GratingCoupler:
 
         self.fine_steps_per_wvl = fine_steps_per_wvl
         self.coarse_steps_per_wvl = coarse_steps_per_wvl
-
-    # This is a questionable design choice
-    """
-    def __getattr__(self, item):
-        #Forwards unknown attributes/methods directly to self.sim
-        return getattr(self.sim, item)
-    """
 
     @classmethod
     def from_config(
@@ -135,8 +127,6 @@ class GratingCoupler:
     def get_dir_name(self) -> str:
         dim = "3D" if self.is_3d else "2D"
 
-        # 2. Construct the hyper-specific directory name
-        # Using 4 decimal places for floats to keep path readable yet precise
         cfg = self.config
         param_dir_name = (
             f"{dim}_p_{cfg.period:.4f}_dc_{cfg.ff:.4f}_e_{cfg.etch_depth:.4f}_"
@@ -147,34 +137,30 @@ class GratingCoupler:
         )
         return param_dir_name
 
-    def _run_sim(self, output_dir: Path) -> td.SimulationData:
+    def _run_sim(self, output_dir: Path, verbose: bool = False) -> td.SimulationData:
         """
         Private method: Checks for API key, ensures the output directory exists,
         and either runs the FDTD simulation on the cloud or loads existing HDF5 data.
         """
 
         if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-            logging.warning("[Warning] TIDY3D_API_KEY not found in environment. The web run will likely fail unless configured globally.")
+            logging.warning("[Warning] TIDY3D_API_KEY not found in environment.")
 
-        # 1. Construct specific directory name
         cfg = self.config
         param_dir_name = self.get_dir_name()
 
-        # 2. Form child path and ensure it exists
         full_output_dir = Path(output_dir) / param_dir_name
         full_output_dir.mkdir(parents=True, exist_ok=True)
         
         hdf5_target_path = full_output_dir / "raw_simulation_data.hdf5"
 
-        # 3. Cache hit check
         if hdf5_target_path.exists():
             logging.info(f"[Profiler] Cache hit. Loading existing simulation data from {hdf5_target_path}...")
             return td.SimulationData.from_file(str(hdf5_target_path))
         
-        # 4. Cache miss: Run on cloud
         logging.info("[Profiler] Cache miss. Uploading architecture to Tidy3D cloud infrastructure...")
         task_name = f"gc_sim_{cfg.wavelength_um}um"
-        sim_data = web.run(self.sim, task_name=task_name, verbose=True)
+        sim_data = web.run(self.sim, task_name=task_name, verbose=verbose)
         
         logging.info(f"[Profiler] Execution complete. Serializing data to {hdf5_target_path}...")
         sim_data.to_file(str(hdf5_target_path))
@@ -184,16 +170,16 @@ class GratingCoupler:
     def get_efficiency(
             self,
             output_dir: Path,
+            verbose: bool = False
         ) -> float:
         """
         Executes the simulation (or loads from cache) and extracts the coupling 
         efficiency for the fundamental mode at the target wavelength.
         """
-        sim_data = self._run_sim(output_dir)
+        sim_data = self._run_sim(output_dir, verbose=verbose)
         
         logging.info("[Analytics] Extracting scattering coefficients from 'mode monitor'...")
         try:
-            # Robust frequency selection using nearest-neighbor interpolation
             mode_amps_array = sim_data['mode monitor'].amps.sel(direction="-", mode_index=0)
             target_freq = td.C_0 / self.config.wavelength_um
             
@@ -217,30 +203,24 @@ class GratingCoupler:
         cfg = self.config
         dim_str = "3D" if self.is_3d else "2D"
 
-        # 1. Reconstruct the exact child parameter directory where HDF5 lives
         param_dir_name = self.get_dir_name()
         target_dir = Path(output_dir) / param_dir_name
         
-        # 2. Run / Load simulation data
-        sim_data = self._run_sim(output_dir)
+        sim_data = self._run_sim(output_dir, verbose=False)
         target_freq = td.C_0 / cfg.wavelength_um
 
         print(f"[Analytics] Processing spatial field distributions ({dim_str} mode)...")
 
-        # 3. Filter monitors based on dimensionality
         for monitor in self.sim.monitors:
-            # Ignore ModeMonitors explicitly (they don't hold spatial field slices)
             if isinstance(monitor, td.ModeMonitor):
                 logging.debug(f"[Analytics] Skipping ModeMonitor '{monitor.name}' during spatial field plotting.")
                 continue
 
             if isinstance(monitor, td.FieldMonitor):
-                # In 2D, only the y-plane (x-z cross section) has non-zero 2D area
                 if not self.is_3d and monitor.name != "field_y_plane":
                     logging.info(f"[Analytics] Skipping 3D-only slice '{monitor.name}' for 2D simulation.")
                     continue
 
-                # Additional sanity check: ensure monitor is actually a 2D slice (exactly one axis size == 0)
                 non_zero_axes = sum(1 for axis_len in monitor.size if axis_len > 0)
                 if non_zero_axes < 2:
                     logging.warning(f"[Analytics] Skipping '{monitor.name}': degenerate slice with <2 spatial dimensions.")
@@ -249,7 +229,6 @@ class GratingCoupler:
                 try:
                     fig, ax = plt.subplots(figsize=(10, 5), dpi=300)
 
-                    # Compute total electric field intensity (|E|^2)
                     sim_data.plot_field(
                         field_monitor_name=monitor.name,
                         field_name="E",
@@ -271,4 +250,3 @@ class GratingCoupler:
 
                 except Exception as e:
                     logging.error(f"[Analytics Error] Could not render field monitor plot '{monitor.name}': {e}")
-        
