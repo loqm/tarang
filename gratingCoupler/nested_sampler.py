@@ -39,7 +39,7 @@ import pymultinest
 from gratingCoupler.grating_coupler import GratingConfig, GratingCoupler
 from geometries.grating_coupler import get_ideal_coords
 from utilities.sim_plotter import display_2d, display_3d
-from gratingCoupler.post_processor import post_process_run
+from utilities.nested_sampling_post_process import post_process_run
 
 # Completely mute Tidy3D's chatter and progress indicators globally
 td.config.logging_level = "ERROR"
@@ -347,7 +347,6 @@ class GratingCouplerBayesianOptimizer:
         self.report_top_configurations()
         
         if budget_halted:
-            # Delegate directly to post_processor for partial run parsing + corner plot
             summary = post_process_run(
                 output_dir=self.output_dir,
                 sigma=self.sigma,
@@ -363,14 +362,12 @@ class GratingCouplerBayesianOptimizer:
         self.report_top_configurations()
         print("[Bayesian Engine] Delegating chain parsing and corner plot to PostProcessor...")
         
-        # Hand off chain reading, GetDist plotting, and posterior extraction to post_processor.py
         summary = post_process_run(
             output_dir=self.output_dir,
             sigma=self.sigma,
             plot_filename="bayesian_structural_corner_plot.png"
         )
         
-        # Render optimal geometry 2D/3D verification plots if posterior stats are intact
         space_variance = summary.get("parameter_space_variance", {})
         required_keys = ['period', 'fill_factor', 'etch_depth', 'num_periods', 'source_x']
         
