@@ -178,7 +178,7 @@ class GratingCouplerBayesianOptimizer:
         
         try:
             config = GratingConfig(
-                wavelength_um=self.fixed_params["lda0"], 
+                wavelength_um=self.fixed_params["wavelength0_um"], 
                 theta_deg=self.fixed_params["theta_deg"],
                 mfd=self.fixed_params["mfd"], 
                 source_gap=self.fixed_params["source_gap"],
@@ -377,7 +377,7 @@ class GratingCouplerBayesianOptimizer:
         if space_variance and all(k in space_variance for k in required_keys):
             try:
                 opt_config = GratingConfig(
-                    wavelength_um=self.fixed_params["lda0"], 
+                    wavelength_um=self.fixed_params["wavelength0_um"], 
                     theta_deg=self.fixed_params["theta_deg"],
                     mfd=self.fixed_params["mfd"], 
                     source_gap=self.fixed_params["source_gap"],
