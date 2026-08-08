@@ -1,13 +1,3 @@
-"""
-waveguide.dispersion.py
-
-This script allows us to visualize the different regimes of dispersion
-within the waveguide, either by varying the geometry, or by varying
-the wavelength.
-
-Author: Esraaj Sarkar Gupta, Divyanshu Tiwari
-Date: 2026
-"""
 from __future__ import annotations
 import logging
 from pathlib import Path
@@ -46,7 +36,7 @@ def dispersion_in_geometry(
 ) -> DispersionSweepResult:
     """
     Evaluates and visualizes Chromatic Dispersion (D) and Single-Mode boundaries 
-    across a combined height and width sweep.
+    across a combined height and width sweep (sweeping width for each fixed height).
     """
     if output_dir_name:
         output_path = Path(output_dir_name)
@@ -79,18 +69,18 @@ def dispersion_in_geometry(
             save=True
         )
 
-    logger.info(f"Starting dispersion sweep across {len(sweep_widths)} widths and {len(sweep_heights)} heights.")
+    logger.info(f"Starting dispersion sweep across {len(sweep_heights)} heights and {len(sweep_widths)} widths.")
 
     all_results: DispersionSweepResult = {}
 
-    for w in sweep_widths:
-        results_h: list = []
+    for h in sweep_heights:
+        results_w: list = []
         results_D: list = []
         results_is_singlemode: list = []
 
-        print(f"    [Dispersion] Sweeping heights for fixed W = {w:.3f} μm at λ = {wavelength_um:.3f} μm...")
+        print(f"    [Dispersion] Sweeping widths for fixed H = {h:.3f} μm at λ = {wavelength_um:.3f} μm...")
 
-        for h in sweep_heights:
+        for w in sweep_widths:
             waveguide_obj: RidgeWaveguide = geometries.ridge_waveguide.get_passive_simulation(
                 width=w,
                 height=h,
@@ -105,32 +95,31 @@ def dispersion_in_geometry(
             # 11 points spanning 0.1um is the default.
             disp_data = waveguide_obj.get_dispersion(delta_wvl_um=0.1, num_points=11)
 
-            # TODO: Implement error handling in the waveguide object.
             if "error" in disp_data:
-                print(f"  Height {h:.2f} μm (W={w:.2f} μm): Fundamental TE00 mode not found. Skipping.")
+                print(f"  Width {w:.2f} μm (H={h:.2f} μm): Fundamental TE00 mode not found. Skipping.")
                 continue
                 
             D_val = disp_data["dispersion_ps_nm_km"]
             is_singlemode = disp_data["is_singlemode"]
 
-            results_h.append(h)
+            results_w.append(w)
             results_D.append(D_val)
             results_is_singlemode.append(is_singlemode)
 
             sm_status = "SINGLE MODE" if is_singlemode else "MULTIMODE"
-            print(f"    [Dispersion] Height {h:.2f} μm: D = {D_val:.2f} ps/(nm·km) [{sm_status}]")
+            print(f"    [Dispersion] Width {w:.2f} μm: D = {D_val:.2f} ps/(nm·km) [{sm_status}]")
 
-        if not results_h:
-            logger.warning(f"   [Dispersion] No valid modes identified for width W = {w:.3f} μm across all heights.")
+        if not results_w:
+            logger.warning(f"   [Dispersion] No valid modes identified for height H = {h:.3f} μm across all widths.")
             continue
 
         # Plotting
         fig, ax = plt.subplots(figsize=(9, 6), dpi=200)
-        ax.plot(results_h, results_D, 'o-', color='black', linewidth=2, label='Dispersion ($D$)')
+        ax.plot(results_w, results_D, 'o-', color='black', linewidth=2, label='Dispersion ($D$)')
         ax.axhline(0, color='blue', linestyle='--', linewidth=1.2, label='Zero Dispersion Line')
 
-        for i in range(len(results_h) - 1):
-            h_start, h_end = results_h[i], results_h[i+1]
+        for i in range(len(results_w) - 1):
+            w_start, w_end = results_w[i], results_w[i+1]
             D_avg = (results_D[i] + results_D[i+1]) / 2.0
             is_sm = results_is_singlemode[i] and results_is_singlemode[i+1]
 
@@ -139,11 +128,11 @@ def dispersion_in_geometry(
             else:
                 color_zone = 'lightgray'
 
-            ax.axvspan(h_start, h_end, color=color_zone, alpha=0.3)
+            ax.axvspan(w_start, w_end, color=color_zone, alpha=0.3)
 
-        ax.set_xlabel('Waveguide Height ($\mu$m)')
+        ax.set_xlabel('Waveguide Width ($\mu$m)')
         ax.set_ylabel('Dispersion Parameter $D$ [ps / (nm · km)]')
-        ax.set_title(f'Geometric Optimization Space (Fixed W = {w:.3f} μm, λ = {wavelength_um:.3f} μm)', fontsize=12, fontweight='bold')
+        ax.set_title(f'Geometric Optimization Space (Fixed H = {h:.3f} μm, λ = {wavelength_um:.3f} μm)', fontsize=12, fontweight='bold')
 
         legend_elements = [
             Patch(facecolor='lightgray', edgecolor='gray', alpha=0.5, label='Normal Dispersion ($D < 0$)'),
@@ -155,7 +144,7 @@ def dispersion_in_geometry(
         fig.tight_layout()
 
         if output_dir_name:
-            path = Path(output_dir_name) / f"dispersion_metrics_W{w:.3f}um.png"
+            path = Path(output_dir_name) / f"dispersion_metrics_H{h:.3f}um.png"
             plt.savefig(path, dpi=200, bbox_inches='tight')
             print(f"  --> Saved plot: {path}")
 
@@ -164,6 +153,6 @@ def dispersion_in_geometry(
         else:
             plt.close(fig)
 
-        all_results[w] = (results_h, results_D, results_is_singlemode)
+        all_results[h] = (results_w, results_D, results_is_singlemode)
 
     return all_results
