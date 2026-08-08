@@ -137,7 +137,8 @@ class RidgeWaveguide:
             })
 
         if not any(m["is_guided"] for m in modes_info):
-            raise WaveguideModeError(f"No guided modes found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
+            #raise WaveguideModeError(f"No guided modes found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
+            logger.error(f"No guided modes found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
 
         return {
             "width_um": self.width,
