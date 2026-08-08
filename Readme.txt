@@ -1,1 +1,1 @@
-This is the readme file for Frequency combs code which can be used in tidy3d.
+# TARANG: Toolkit for Automated Resonator Analysis and Nonlinear-comb Generation
