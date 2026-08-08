@@ -9,116 +9,135 @@ Date: 2026
 """
 
 from pathlib import Path
+from typing import Optional, Tuple, Union
+import logging
+
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import tidy3d as td
-import logging
 
 logger = logging.getLogger(__name__)
 
-# TODO: Error handling for non-device objects passed to this function
-# The stupidity of a programmer should be no surprise to me,
-# I'm an idiot too!
+
+def _extract_simulation(device) -> td.Simulation:
+    """Extracts td.Simulation whether given a wrapper object or a raw Simulation."""
+    if isinstance(device, td.Simulation):
+        return device
+    if hasattr(device, "sim") and isinstance(device.sim, td.Simulation):
+        return device.sim
+    raise TypeError(
+        f"Expected a Tidy3D Simulation or an object with a '.sim' attribute, but got {type(device).__name__}."
+    )
+
+
+def _validate_and_get_save_path(
+    output_path: Optional[Union[str, Path]], 
+    default_filename: str
+) -> Path:
+    """
+    Ensures a valid output path exists when save=True.
+    Handles directory paths cleanly by appending default_filename if no file is specified.
+    """
+    if output_path is None or str(output_path).strip() == "":
+        raise ValueError("Cannot save plot: 'save' is True, but no valid 'output_path' was provided.")
+    
+    path = Path(output_path)
+    
+    # If path is an existing directory, ends in a trailing slash, or lacks a file extension,
+    # assume a directory was provided and attach default_filename.
+    if path.is_dir() or str(output_path).endswith(('/', '\\')) or not path.suffix:
+        path = path / default_filename
+
+    if path.parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+    return path
+
 
 def display_2d(
     device,
-    output_path: Path = None,
+    output_path: Optional[Union[str, Path]] = None,
     title: str = "2D Structural Layout Verification",
     slice_axis: str = "y",
     slice_coord: float = 0.0,
-    show : bool = True,
-    save : bool = False
+    show: bool = True,
+    save: bool = False
 ) -> None:
     """
     Extracts a pristine 2D cross-sectional layout map of a simulation object 
-    along a single specified axis and saves it to the designated disk path.
+    along a single specified axis. Saves to disk only if save=True.
     """
-    try:
-        sim = device.sim
-    except NameError:
-        raise NameError("The object you have passed does not contain a Tidy3D simulation! Are you sure\
-you gave us the right object to plot?")
-    
-    # Ensure parent directories exist
-    try:
-        if type(output_path) == str: output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-    except AttributeError:
-        raise AttributeError("The object you have passed doesn't seem to be a ")
+    sim = _extract_simulation(device)
     
     fig, ax = plt.subplots(figsize=(11, 4), dpi=300)
     
-    # Dynamically select the structural slicing plane
-    if slice_axis.lower() == "x":
+    axis_clean = slice_axis.lower()
+    if axis_clean == "x":
         sim.plot(x=slice_coord, ax=ax)
         ax.set_xlabel("Y (μm)", fontsize=10)
         ax.set_ylabel("Z (μm)", fontsize=10)
-    elif slice_axis.lower() == "y":
+    elif axis_clean == "y":
         sim.plot(y=slice_coord, ax=ax)
         ax.set_xlabel("X (μm)", fontsize=10)
         ax.set_ylabel("Z (μm)", fontsize=10)
-    elif slice_axis.lower() == "z":
+    elif axis_clean == "z":
         sim.plot(z=slice_coord, ax=ax)
         ax.set_xlabel("X (μm)", fontsize=10)
         ax.set_ylabel("Y (μm)", fontsize=10)
     else:
+        plt.close(fig)
         raise ValueError("Invalid slice axis. Choose from 'x', 'y', or 'z'.")
         
     ax.set_title(title, fontsize=12, fontweight="bold")
     ax.grid(True, alpha=0.2, linestyle="--")
     
     fig.tight_layout()
+    
     if save:
-        if (output_path == None): output_path = "example_2d_simulation.png"
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        path = _validate_and_get_save_path(output_path, "example_2d_simulation.png")
+        plt.savefig(path, dpi=300, bbox_inches="tight")
+        logger.info(f"[Visualizer] 2D geometry layout map saved to: {path}")
+        
     if show:
         plt.show()
-    plt.close()
-    logger.info(f"[Visualizer] 2D geometry layout map saved to: {output_path}")
+        
+    plt.close(fig)
 
 
 def display_3d(
     device,
-    output_path: Path = None,
+    output_path: Optional[Union[str, Path]] = None,
     title: str = "3D Structural Layout Verification",
-    coordinates : tuple = (0.0, 0.0, 0.0),
-    show : bool = True,
-    save : bool = False
+    coordinates: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    show: bool = True,
+    save: bool = False
 ) -> None:
     """
     Generates a comprehensive three-pane orthogonal projection sheet (XY, XZ, YZ slices)
-    to visually audit the internal layout of a full 3D simulation volume.
+    to visually audit internal volume. Saves to disk only if save=True.
     """ 
-    try:
-        sim = device.sim
-    except AttributeError:
-        raise AttributeError("The object you have passed does not contain a Tidy3D simulation! Are you sure\
-you gave us the right object to plot?")
-    
-    # Ensure parent directories exist
-    if type(output_path) == str: output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    x_coord = coordinates[0]; y_coord = coordinates[1]; z_coord = coordinates[2]
-    
+    sim = _extract_simulation(device)
+    x_coord, y_coord, z_coord = coordinates
 
-    # Create a 3-column canvas for the three primary planes
     fig, (ax_xy, ax_xz, ax_yz) = plt.subplots(1, 3, figsize=(18, 5), dpi=300)
     fig.suptitle(title, fontsize=14, fontweight="bold", y=1.02)
     
-    # Top-Down View (XY Plane cut at designated Z)
+    # Top-Down View (XY Plane)
     sim.plot(z=z_coord, ax=ax_xy)
     ax_xy.set_title(f"Top-Down View (XY Plane at Z = {z_coord:.2f} μm)", fontsize=10)
     ax_xy.set_xlabel("X (μm)")
     ax_xy.set_ylabel("Y (μm)")
     ax_xy.grid(True, alpha=0.2, linestyle="--")
     
-    # Longitudinal Side-View (XZ Plane cut at designated Y)
+    # Longitudinal Side-View (XZ Plane)
     sim.plot(y=y_coord, ax=ax_xz)
     ax_xz.set_title(f"Longitudinal View (XZ Plane at Y = {y_coord:.2f} μm)", fontsize=10)
     ax_xz.set_xlabel("X (μm)")
     ax_xz.set_ylabel("Z (μm)")
     ax_xz.grid(True, alpha=0.2, linestyle="--")
     
-    # Transverse Cross-Section (YZ Plane cut at designated X)
+    # Transverse Cross-Section (YZ Plane)
     sim.plot(x=x_coord, ax=ax_yz)
     ax_yz.set_title(f"Cross-Section View (YZ Plane at X = {x_coord:.2f} μm)", fontsize=10)
     ax_yz.set_xlabel("Y (μm)")
@@ -126,10 +145,13 @@ you gave us the right object to plot?")
     ax_yz.grid(True, alpha=0.2, linestyle="--")
     
     fig.tight_layout()
+    
     if save:
-        if (output_path == None): output_path = "example_2d_simulation.png"
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        path = _validate_and_get_save_path(output_path, "example_3d_simulation.png")
+        plt.savefig(path, dpi=300, bbox_inches="tight")
+        logger.info(f"[Visualizer] 3D orthogonal layout sheet saved to: {path}")
+        
     if show:
         plt.show()
-    plt.close()
-    logger.info(f"[Visualizer] 3D orthogonal layout sheet saved to: {output_path}")
+        
+    plt.close(fig)
