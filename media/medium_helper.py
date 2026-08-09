@@ -278,7 +278,7 @@ def get_medium(
 
 def get_medium_dispersion(
     medium_key: str,
-    output_path: Path,
+    output_path: Path | str,
     wl_range: tuple = None,
     points_plotted: int = 500,
     loglog: bool = False,
@@ -287,7 +287,7 @@ def get_medium_dispersion(
     max_num_poles: int = 10,
     force_zero_k: bool = False,
     use_cache: bool = True
-) -> None:
+) -> dict:
     """
     Fetches a Tidy3D Medium object and generates the chromatic dispersion
     graph for it.
@@ -354,3 +354,17 @@ def get_medium_dispersion(
         plt.show()
     else:
         plt.close(fig)
+
+    if (force_zero_k):
+        return dict({
+            "wl" : wl_linspace,
+            "wavelength" : wl_linspace,
+            "n" : n_arr
+        })
+    else:
+        return dict({
+            "wl" : wl_linspace,
+            "wavelength" : wl_linspace,
+            "n" : n_arr,
+            "k" : k_arr
+        })
