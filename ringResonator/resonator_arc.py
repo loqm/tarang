@@ -7,7 +7,7 @@ Date: 2026
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Any
 import logging
 import os
 
@@ -19,7 +19,6 @@ from tidy3d import web
 from ringResonator.ring_resonator import BaseResonator
 
 logger = logging.getLogger(__name__)
-
 
 class resonatorArc(BaseResonator):
     def __init__(
@@ -56,9 +55,7 @@ class resonatorArc(BaseResonator):
         self.cladding_medium = cladding_medium
 
     def get_dir_name(self) -> str:
-        """
-        Generates a clean, unique parameter-based identifier for caching directory paths.
-        """
+        """Generates a clean, unique parameter-based identifier for caching directory paths."""
         return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg}_{self.wavelength0:.3f}um"
 
     def run_sim(
@@ -94,6 +91,23 @@ class resonatorArc(BaseResonator):
         
         return sim_data
 
+    def get_mode_data(
+        self,
+        output_dir: Union[str, Path],
+        monitor_name: str = "Mode Monitor",
+        force_rerun: bool = False,
+        verbose: bool = False,
+    ) -> Any:
+        """
+        Retrieves mode monitor data from cached HDF5 file or triggers simulation execution.
+        """
+        sim_data = self.run_sim(output_dir=output_dir, verbose=verbose, force_rerun=force_rerun)
+        
+        if monitor_name not in sim_data.simulation.monitors:
+            raise KeyError(f"Monitor '{monitor_name}' not found in simulation monitors.")
+            
+        return sim_data[monitor_name]
+
     def plot_field(
         self, 
         sim_data: td.SimulationData, 
@@ -102,9 +116,7 @@ class resonatorArc(BaseResonator):
         show: bool = True, 
         save: bool = False
     ) -> None:
-        """
-        Extracts and visualizes the E-field magnitude for the arc monitor.
-        """
+        """Extracts and visualizes the E-field magnitude for the arc monitor."""
         if monitor_name not in sim_data.simulation.monitors:
             raise ValueError(f"Monitor '{monitor_name}' doesn't exist in the simulation monitors.")
             
