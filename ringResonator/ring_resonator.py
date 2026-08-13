@@ -15,6 +15,9 @@ import matplotlib.pyplot as plt
 import tidy3d as td
 from tidy3d import web
 
+from tidy3d.plugins.mode import ModeSolver
+from tidy3d.plugins.mode.web import run as run_mode_solver
+
 if TYPE_CHECKING:
     from geometries.half_ring_resonator import (
         get_active_simulation as get_active_half_sim,
@@ -146,28 +149,80 @@ class BaseResonator:
         mode_index: int = 0,
         use_bend_radius: bool = True,
         local: bool = False,
+        domain_padding: float = 2.0,
     ) -> float:
         """
-        Solves for the fundamental mode's group index at wavelength0
-        using the mode solver directly (no FDTD cutback required).
+        Solves for the fundamental mode's group index at wavelength0 using a
+        standalone mode solver on the waveguide cross-section (no FDTD run,
+        no dependence on monitors existing in self.sim).
         """
+        freq0 = td.C_0 / self.wavelength0
+
+        air_medium = td.Medium(permittivity=1.0)
+        top_medium = self.top_cladding_medium if self.top_cladding_medium is not None else air_medium
+        top_height = self.top_cladding_height if self.top_cladding_height > 0.0 else 2.0
+
+        # -- Vertical stack: substrate / core / cladding, extruded along x (propagation) -- #
+        size_y = self.wg_width + 2 * domain_padding
+        size_z = self.substrate_height + self.wg_height + top_height
+
+        z_min = -self.substrate_height
+        substrate = td.Structure(
+            geometry=td.Box(
+                center=(0, 0, z_min / 2.0),
+                size=(td.inf, td.inf, self.substrate_height),
+            ),
+            medium=self.substrate_medium,
+            name="mode_solve_substrate",
+        )
+
+        cladding = td.Structure(
+            geometry=td.Box(
+                center=(0, 0, top_height / 2.0),
+                size=(td.inf, td.inf, top_height),
+            ),
+            medium=top_medium,
+            name="mode_solve_cladding",
+        )
+
+        core = td.Structure(
+            geometry=td.Box(
+                center=(0, 0, self.wg_height / 2.0),
+                size=(td.inf, self.wg_width, self.wg_height),
+            ),
+            medium=self.core_medium,
+            name="mode_solve_core",
+        )
+
+        dummy_sim = td.Simulation(
+            center=(0, 0, (self.wg_height / 2.0)),
+            size=(1.0, size_y, size_z),
+            grid_spec=td.GridSpec.auto(
+                min_steps_per_wvl=self.fine_steps_per_wvl,
+                wavelength=self.wavelength0,
+            ),
+            structures=[substrate, cladding, core],
+            run_time=1e-12,  # unused -- mode solver never time-steps this
+            boundary_spec=td.BoundarySpec.all_sides(boundary=td.PML()),
+            medium=air_medium,
+        )
+
+        plane = td.Box(center=(0, 0, self.wg_height / 2.0), size=(0, size_y, size_z))
+
         mode_spec = td.ModeSpec(
             num_modes=mode_index + 1,
             target_neff=target_neff,
-            precision="double",        # required for stable n_group derivative
+            precision="double",        # required for a stable n_group derivative
             group_index_step=True,     # or an explicit fractional step, e.g. 0.005
             bend_radius=self.radius if use_bend_radius else None,
-            bend_axis=1,               # match your actual bend plane
+            bend_axis=0,                # radial direction is the plane's y-axis (index 0 of the 2 in-plane axes)
         )
 
-        # Reuse the existing straight cross-section plane from self.sim,
-        # or construct a minimal mode-solver-only simulation if you want
-        # this decoupled from a full active/passive sim object.
         mode_solver = ModeSolver(
-            simulation=self.sim,
-            plane=self._cross_section_plane(),   # your existing plane geometry
+            simulation=dummy_sim,
+            plane=plane,
             mode_spec=mode_spec,
-            freqs=[td.C_0 / self.wavelength0],
+            freqs=[freq0],
         )
 
         data = mode_solver.solve() if local else run_mode_solver(mode_solver)
