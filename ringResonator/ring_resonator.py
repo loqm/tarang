@@ -139,6 +139,44 @@ class BaseResonator:
         else:
             plt.close(fig)
 
+    # ---- The "Physicsy" Object Methods ---- #
+    def get_group_index(
+        self,
+        target_neff: Optional[float] = None,
+        mode_index: int = 0,
+        use_bend_radius: bool = True,
+        local: bool = False,
+    ) -> float:
+        """
+        Solves for the fundamental mode's group index at wavelength0
+        using the mode solver directly (no FDTD cutback required).
+        """
+        mode_spec = td.ModeSpec(
+            num_modes=mode_index + 1,
+            target_neff=target_neff,
+            precision="double",        # required for stable n_group derivative
+            group_index_step=True,     # or an explicit fractional step, e.g. 0.005
+            bend_radius=self.radius if use_bend_radius else None,
+            bend_axis=1,               # match your actual bend plane
+        )
+
+        # Reuse the existing straight cross-section plane from self.sim,
+        # or construct a minimal mode-solver-only simulation if you want
+        # this decoupled from a full active/passive sim object.
+        mode_solver = ModeSolver(
+            simulation=self.sim,
+            plane=self._cross_section_plane(),   # your existing plane geometry
+            mode_spec=mode_spec,
+            freqs=[td.C_0 / self.wavelength0],
+        )
+
+        data = mode_solver.solve() if local else run_mode_solver(mode_solver)
+        return float(data.n_group.sel(mode_index=mode_index).item())
+
+    def get_fsr_nm(self, **kwargs) -> float:
+        n_g = self.get_group_index(**kwargs)
+        return compute_fsr_nm(n_g, self.radius, self.wavelength0)
+
 
 class halfringResonator(BaseResonator):
     def to_full_ring(self, active: Optional[bool] = None) -> ringResonator:
