@@ -143,6 +143,34 @@ class BaseResonator:
             plt.close(fig)
 
     # ---- The "Physicsy" Object Methods ---- #
+    def compute_fsr_nm(
+        self, 
+        n_group: float, 
+        radius_um: Optional[float] = None, 
+        wavelength_um: Optional[float] = None
+    ) -> float:
+        """Analytical FSR (nm) for a ring resonator of given radius and group index."""
+        r = radius_um if radius_um is not None else self.radius
+        wvl = wavelength_um if wavelength_um is not None else self.wavelength0
+        L_um = 2 * np.pi * r
+        fsr_um = (wvl ** 2) / (n_group * L_um)
+        return fsr_um * 1000.0
+
+    def compute_fsr_ghz(
+        self, 
+        n_group: float, 
+        radius_um: Optional[float] = None
+    ) -> float:
+        """
+        Calculates FSR directly in GHz from group index and cavity length.
+        Defaults to self.radius if radius_um is not explicitly provided.
+        """
+        r = radius_um if radius_um is not None else self.radius
+        L_um = 2 * np.pi * r
+        
+        fsr_hz = td.C_0 / (n_group * L_um)
+        return fsr_hz / 1e9
+
     def get_group_index(
         self,
         target_neff: Optional[float] = None,
@@ -215,7 +243,7 @@ class BaseResonator:
             precision="double",        # required for a stable n_group derivative
             group_index_step=True,     # or an explicit fractional step, e.g. 0.005
             bend_radius=self.radius if use_bend_radius else None,
-            bend_axis=0,                # radial direction is the plane's y-axis (index 0 of the 2 in-plane axes)
+            bend_axis=0,                # radial direction is the plane's y-axis
         )
 
         mode_solver = ModeSolver(
@@ -229,8 +257,14 @@ class BaseResonator:
         return float(data.n_group.sel(mode_index=mode_index).item())
 
     def get_fsr_nm(self, **kwargs) -> float:
+        """Solves group index and computes FSR in nm."""
         n_g = self.get_group_index(**kwargs)
-        return compute_fsr_nm(n_g, self.radius, self.wavelength0)
+        return self.compute_fsr_nm(n_g, self.radius, self.wavelength0)
+
+    def get_fsr_ghz(self, **kwargs) -> float:
+        """Solves group index and computes FSR directly in GHz."""
+        n_g = self.get_group_index(**kwargs)
+        return self.compute_fsr_ghz(n_g, self.radius)
 
 
 class halfringResonator(BaseResonator):
