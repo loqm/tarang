@@ -99,19 +99,20 @@ def compute_intrinsic_metrics(
     
     arc_kwargs = _extract_arc_geometry_kwargs(geometry_kwargs)
 
-    # Generate the 90 and 180 degree arcs
-    sim_90 = get_arc_sim(radius=radius_um, bend_angle_deg=90, wavelength0=target_wavelength_um, **arc_kwargs)
-    sim_180 = get_arc_sim(radius=radius_um, bend_angle_deg=180, wavelength0=target_wavelength_um, **arc_kwargs)
+    # Generate the 90 and 180 degree arc wrappers
+    arc_90_obj = get_arc_sim(radius=radius_um, bend_angle_deg=90, wavelength0=target_wavelength_um, **arc_kwargs)
+    arc_180_obj = get_arc_sim(radius=radius_um, bend_angle_deg=180, wavelength0=target_wavelength_um, **arc_kwargs)
     
+    # Pass raw td.Simulation objects (.sim) to Tidy3D Batch validator
     simulations = {
-        "Arc_90": sim_90,
-        "Arc_180": sim_180
+        "Arc_90": arc_90_obj.sim,
+        "Arc_180": arc_180_obj.sim
     }
     
     batch = web.Batch(simulations=simulations, verbose=True)
     batch_data = batch.run(path_dir=str(base_output_dir / "arc_cache"))
     
-    # Extract 'Mode Monitor' data (correct key name for resonator_arc)
+    # Extract 'Mode Monitor' data
     mon_90 = batch_data["Arc_90"]['Mode Monitor']
     mon_180 = batch_data["Arc_180"]['Mode Monitor']
 
@@ -147,9 +148,9 @@ def compute_intrinsic_metrics(
     # Total power attenuation coefficient alpha_m [m^-1]
     alpha_m = (alpha_total_db_cm * 100) / 4.343
     
-    # Mode solver group index calculation on sim_90 resonator object
+    # Mode solver group index calculation on arc_90_obj resonator object
     try:
-        n_group = float(sim_90.get_group_index(
+        n_group = float(arc_90_obj.get_group_index(
             target_neff=1.8,
             mode_index=0,
             use_bend_radius=True,
@@ -215,12 +216,14 @@ def run_gap_optimization_batch(
     simulations = {}
     for gap in gap_sweep_array:
         sim_key = f"Gap_{gap:.3f}"
-        simulations[sim_key] = get_half_ring_sim(
+        hr_obj = get_half_ring_sim(
             radius=radius_um,
             gap=gap,
             wavelength0=target_wavelength_um,
             **half_ring_geometry_kwargs
         )
+        # Pass raw td.Simulation object (.sim) to Tidy3D Batch validator
+        simulations[sim_key] = hr_obj.sim
         
     batch = web.Batch(simulations=simulations, verbose=True)
     active_sim_data = batch.run(path_dir=str(base_output_dir / "gap_cache"))
