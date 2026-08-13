@@ -110,7 +110,9 @@ class resonatorArc(BaseResonator):
 
     def plot_field(
         self, 
-        sim_data: td.SimulationData, 
+        sim_data: td.SimulationData,
+        # NOTE: Is this an argument we wish to keep?
+        # TODO: Review note to self (because who else is looking at this ffs)
         monitor_name: str = "field_map", 
         output_path: Optional[Union[str, Path]] = None, 
         show: bool = True, 

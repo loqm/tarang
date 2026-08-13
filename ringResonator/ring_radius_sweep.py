@@ -32,19 +32,19 @@ def compute_fsr_nm(n_group: float, radius_um: float, wavelength_um: float) -> fl
 
 
 def ring_radius_sweep(
+    scattering_loss_db_cm: float, # Emperical results
+
     radii: Sequence[float],
     target_wavelength_um: float,
 
     wg_width: float,
     wg_height: float,
 
-    base_output_dir: Path | str,
+    output_dir: Path | str,
 
     core_medium: td.Medium,
     substrate_medium: td.Medium,
     cladding_medium: td.Medium = td.Medium(permittivity=1.0),
-    
-    scattering_loss_dm_cm: float = 2.0, # Emperical results
 
     fine_steps_per_wvl: int = 20,
     coarse_steps_per_wvl: int = 10,
@@ -61,9 +61,9 @@ def ring_radius_sweep(
     Extracts pure bend loss (dB/cm), Total Loss, Q_intrinsic, and FSR.
     Returns a dictionary mapping radius to its fundamental physical properties.
     """
-    base_output_dir = Path(base_output_dir)
-    base_output_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = base_output_dir / "intrinsic_physics_manifest.json"
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "intrinsic_physics_manifest.json"
     
     results_manifest: dict = {}
     
@@ -115,8 +115,8 @@ def ring_radius_sweep(
                 
                 # Documentation for the mathematics provided in the official documentation for TARANG
                 # 2. Retrieve mode monitor results via resonatorArc method
-                mon_90 = arc_90.get_mode_data(output_dir=base_output_dir, force_rerun=force_rerun)
-                mon_180 = arc_180.get_mode_data(output_dir=base_output_dir, force_rerun=force_rerun)
+                mon_90 = arc_90.get_mode_data(output_dir=output_dir, force_rerun=force_rerun)
+                mon_180 = arc_180.get_mode_data(output_dir=output_dir, force_rerun=force_rerun)
                 
                 # 3. Process power transmission & losses
                 T_90 = float(np.abs(mon_90.amps.sel(direction="-", mode_index=0).isel(f=1).item())**2)
@@ -132,15 +132,21 @@ def ring_radius_sweep(
                 if fitted_loss_db_cm < 0: 
                     fitted_loss_db_cm = 0.0 
                 
-                total_loss_db_cm = fitted_loss_db_cm + scattering_loss_dm_cm
+                total_loss_db_cm = fitted_loss_db_cm + scattering_loss_db_cm
                 
                 # 4. Group index & Intrinsic Q derivation
                 freqs = mon_90.amps.coords['f'].values
-                n_effs = np.real(mon_90.n_eff.sel(mode_index=0).values)
-                wavelengths = td.C_0 / freqs
+                wavelengths_um = (td.C_0 / freqs)
 
-                dn_dlam = (n_effs[0] - n_effs[-1]) / (wavelengths[0] - wavelengths[-1])
-                n_g = n_effs[1] - target_wavelength_um * dn_dlam
+                n_effs = np.real(mon_90.n_eff.sel(mode_index=0).values)
+
+                dn_dlam = np.gradient(n_effs, wavelengths_um)
+
+                n_g_array = n_effs - wavelengths_um * dn_dlam
+
+                # Find the index closest to target wavelength
+                center_idx = np.argmin(np.abs(wavelengths_um - target_wavelength_um))
+                n_g = float(n_g_array[center_idx])
                 
                 alpha_m = (total_loss_db_cm * 100) / 4.343 
                 q_intrinsic = (2 * np.pi * n_g) / ((target_wavelength_um * 1e-6) * alpha_m)
@@ -189,7 +195,7 @@ def ring_radius_sweep(
         
         if save:
             if output_path is None or str(output_path).strip() == "":
-                out_p = base_output_dir / "bend_radius_sweep.png"
+                out_p = output_dir / "bend_radius_sweep.png"
             else:
                 out_p = Path(output_path)
                 if out_p.is_dir() or not out_p.suffix:
