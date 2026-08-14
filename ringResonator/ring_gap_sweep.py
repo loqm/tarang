@@ -110,6 +110,11 @@ def compute_intrinsic_metrics(
     }
     
     batch = web.Batch(simulations=simulations, verbose=True)
+    try:
+        est_credits = batch.estimate_cost()
+        print(f"[Cost Estimate] Estimated cost: {est_credits:.4f} Flex Credits")
+    except Exception as e:
+        print(f"[Cost Estimate] Could not retrieve cost estimate: {e}")
     batch_data = batch.run(path_dir=str(base_output_dir / "arc_cache"))
     
     # Extract 'Mode Monitor' data
