@@ -11,6 +11,8 @@ Optimization:
     -> Fits theta(gap) to an exponential decay curve.
     -> Solves for the exact analytic critical gap.
     -> Self-caching. Future runs at the same radius just regenerate plots.
+    -> Sequential processing: Runs simulations one-by-one to avoid batch limits and saves HDF5 files.
+    -> Geometry-aware caching: Local cache files explicitly track the geometric configuration.
 """
 
 import json
@@ -95,11 +97,19 @@ def compute_intrinsic_metrics(
     **geometry_kwargs
 ) -> dict:
     """
-    Forces FDTD to calculate bending loss and group index so we don't have to rely on ghost files.
+    Forces FDTD to calculate bending loss and group index sequentially so we don't have to rely on ghost files.
     """
-    print(f"[Metrics] Simulating annular arcs for R={radius_um} um...")
+    print(f"[Metrics] Simulating annular arcs sequentially for R={radius_um} um...")
     
     arc_kwargs = _extract_arc_geometry_kwargs(geometry_kwargs)
+    
+    # Extract geometric parameters for cache naming
+    w_val = arc_kwargs.get("wg_width", "NA")
+    h_val = arc_kwargs.get("wg_height", "NA")
+    geom_str = f"R{radius_um}_w{w_val}_h{h_val}_res{fine_steps_per_wvl}_{coarse_steps_per_wvl}"
+    
+    name_90 = f"Arc_90_{geom_str}"
+    name_180 = f"Arc_180_{geom_str}"
 
     # Generate the 90 and 180 degree arc wrappers
     arc_90_obj = get_arc_sim(
@@ -120,23 +130,39 @@ def compute_intrinsic_metrics(
         **arc_kwargs
     )
     
-    # Pass raw td.Simulation objects (.sim) to Tidy3D Batch validator
-    simulations = {
-        "Arc_90": arc_90_obj.sim,
-        "Arc_180": arc_180_obj.sim
-    }
+    # Run sequentially and save to files
+    arc_cache_dir = base_output_dir / "arc_cache"
+    arc_cache_dir.mkdir(parents=True, exist_ok=True)
     
-    batch = web.Batch(simulations=simulations, verbose=True)
-    try:
-        est_credits = batch.estimate_cost()
-        print(f"[Cost Estimate] Estimated cost: {est_credits:.4f} Flex Credits")
-    except Exception as e:
-        print(f"[Cost Estimate] Could not retrieve cost estimate: {e}")
-    batch_data = batch.run(path_dir=str(base_output_dir / "arc_cache"))
+    simulations = [
+        (name_90, arc_90_obj.sim),
+        (name_180, arc_180_obj.sim)
+    ]
+    
+    sim_data_dict = {}
+    
+    for name, sim in simulations:
+        filepath = arc_cache_dir / f"{name}.hdf5"
+        
+        if filepath.exists():
+            print(f"[Metrics] Loading cached FDTD data for {name} from {filepath}")
+            sim_data_dict[name] = td.SimulationData.from_file(str(filepath))
+        else:
+            print(f"[Metrics] Submitting job for {name}...")
+            job = web.Job(simulation=sim, task_name=name)
+            try:
+                est_credits = job.estimate_cost()
+                print(f"[Cost Estimate] Estimated cost for {name}: {est_credits:.4f} Flex Credits")
+            except Exception as e:
+                print(f"[Cost Estimate] Could not retrieve cost estimate for {name}: {e}")
+                
+            # Run the simulation and download the HDF5 results file
+            sim_data = job.run(path=str(filepath))
+            sim_data_dict[name] = sim_data
     
     # Extract 'Mode Monitor' data
-    mon_90 = batch_data["Arc_90"]['Mode Monitor']
-    mon_180 = batch_data["Arc_180"]['Mode Monitor']
+    mon_90 = sim_data_dict[name_90]['Mode Monitor']
+    mon_180 = sim_data_dict[name_180]['Mode Monitor']
 
     # Handle 3-frequency array output by selecting center frequency index (f=1)
     amp_90_data = mon_90.amps.isel(f=1) if ("f" in mon_90.amps.dims and mon_90.amps.sizes.get("f", 1) > 1) else mon_90.amps
@@ -210,10 +236,17 @@ def run_gap_optimization_batch(
     manifest_path = base_output_dir / "analytic_coupling_manifest.json"
     field_maps_dir = base_output_dir / "field_maps"
     field_maps_dir.mkdir(parents=True, exist_ok=True)
+    gap_cache_dir = base_output_dir / "gap_cache"
+    gap_cache_dir.mkdir(parents=True, exist_ok=True)
     
     # Separate keyword arguments for arc and half-ring simulations
     arc_geometry_kwargs = _extract_arc_geometry_kwargs(geometry_kwargs)
     half_ring_geometry_kwargs = _extract_half_ring_geometry_kwargs(geometry_kwargs)
+
+    # Extract geometric parameters for cache naming
+    w_val = half_ring_geometry_kwargs.get("wg_width", "NA")
+    h_val = half_ring_geometry_kwargs.get("wg_height", "NA")
+    geom_str = f"R{radius_um}_w{w_val}_h{h_val}_res{fine_steps_per_wvl}_{coarse_steps_per_wvl}"
 
     # --- CACHE HIT: BYPASS FDTD ---
     if manifest_path.exists():
@@ -236,12 +269,15 @@ def run_gap_optimization_batch(
     q_intrinsic = metrics["q_intrinsic"]
     n_group = metrics["n_group"]
 
-    # --- PHASE 2: GAP SWEEP FDTD ---
-    print(f"\n[Solver] Initializing FDTD batch for {len(gap_sweep_array)} gap configurations...")
+    # --- PHASE 2: GAP SWEEP FDTD (SEQUENTIAL) ---
+    print(f"\n[Solver] Initializing sequential FDTD runs for {len(gap_sweep_array)} gap configurations...")
     
-    simulations = {}
+    active_sim_data = {}
+    
     for gap in gap_sweep_array:
-        sim_key = f"Gap_{gap:.3f}"
+        sim_key = f"Gap_{gap:.3f}_{geom_str}"
+        filepath = gap_cache_dir / f"{sim_key}.hdf5"
+        
         hr_obj = get_half_ring_sim(
             radius=radius_um,
             gap=gap,
@@ -250,17 +286,23 @@ def run_gap_optimization_batch(
             coarse_steps_per_wvl=coarse_steps_per_wvl, 
             **half_ring_geometry_kwargs
         )
-        # Pass raw td.Simulation object (.sim) to Tidy3D Batch validator
-        simulations[sim_key] = hr_obj.sim
         
-    batch = web.Batch(simulations=simulations, verbose=True)
-    active_sim_data = batch.run(path_dir=str(base_output_dir / "gap_cache"))
+        if filepath.exists():
+            print(f"[Solver] Loading cached FDTD data for {sim_key}...")
+            sim_data = td.SimulationData.from_file(str(filepath))
+        else:
+            print(f"[Solver] Submitting job for {sim_key}...")
+            job = web.Job(simulation=hr_obj.sim, task_name=sim_key)
+            sim_data = job.run(path=str(filepath))
+            
+        active_sim_data[sim_key] = sim_data
 
     # --- PHASE 3: DATA EXTRACTION ---
     raw_data = []
     results_manifest = {}
     
     for sim_key, sim_data in active_sim_data.items():
+        # Correctly parsing the gap value out of the geometry-appended string
         gap_val = float(sim_key.split("_")[1])
         
         try:
