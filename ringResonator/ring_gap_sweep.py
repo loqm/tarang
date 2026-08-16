@@ -90,6 +90,8 @@ def compute_intrinsic_metrics(
     target_wavelength_um: float,
     scattering_loss_db_cm: float,
     base_output_dir: Path,
+    fine_steps_per_wvl: int = 20,
+    coarse_steps_per_wvl: int = 10,
     **geometry_kwargs
 ) -> dict:
     """
@@ -100,8 +102,23 @@ def compute_intrinsic_metrics(
     arc_kwargs = _extract_arc_geometry_kwargs(geometry_kwargs)
 
     # Generate the 90 and 180 degree arc wrappers
-    arc_90_obj = get_arc_sim(radius=radius_um, bend_angle_deg=90, wavelength0=target_wavelength_um, **arc_kwargs)
-    arc_180_obj = get_arc_sim(radius=radius_um, bend_angle_deg=180, wavelength0=target_wavelength_um, **arc_kwargs)
+    arc_90_obj = get_arc_sim(
+        radius=radius_um, 
+        bend_angle_deg=90, 
+        wavelength0=target_wavelength_um, 
+        fine_steps_per_wvl=fine_steps_per_wvl,
+        coarse_steps_per_wvl=coarse_steps_per_wvl,
+        **arc_kwargs
+    )
+
+    arc_180_obj = get_arc_sim(
+        radius=radius_um, 
+        bend_angle_deg=180, 
+        wavelength0=target_wavelength_um, 
+        fine_steps_per_wvl=fine_steps_per_wvl,
+        coarse_steps_per_wvl=coarse_steps_per_wvl,
+        **arc_kwargs
+    )
     
     # Pass raw td.Simulation objects (.sim) to Tidy3D Batch validator
     simulations = {
@@ -184,6 +201,8 @@ def run_gap_optimization_batch(
     target_wavelength_um: float,
     scattering_loss_db_cm: float,
     base_output_dir: Path,
+    fine_steps_per_wvl: int = 20,
+    coarse_steps_per_wvl: int = 15,
     **geometry_kwargs
 ) -> dict:
     
@@ -209,6 +228,8 @@ def run_gap_optimization_batch(
         target_wavelength_um=target_wavelength_um,
         scattering_loss_db_cm=scattering_loss_db_cm,
         base_output_dir=base_output_dir,
+        fine_steps_per_wvl=fine_steps_per_wvl,     
+        coarse_steps_per_wvl=coarse_steps_per_wvl, 
         **arc_geometry_kwargs
     )
     
@@ -225,6 +246,8 @@ def run_gap_optimization_batch(
             radius=radius_um,
             gap=gap,
             wavelength0=target_wavelength_um,
+            fine_steps_per_wvl=fine_steps_per_wvl,     
+            coarse_steps_per_wvl=coarse_steps_per_wvl, 
             **half_ring_geometry_kwargs
         )
         # Pass raw td.Simulation object (.sim) to Tidy3D Batch validator
