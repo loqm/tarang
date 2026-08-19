@@ -68,13 +68,17 @@ def compute_intrinsic_metrics(
     base_output_dir: Path,
     fine_steps_per_wvl: int = 20,
     coarse_steps_per_wvl: int = 10,
+    bend_angles_deg: Tuple[int, ...] = (90, 180, 270),
     **geometry_kwargs
 ) -> dict:
     """
-    Calculates bending loss and group index sequentially using annular arcs.
+    Calculates bending loss and group index using a multi-angle cutback
+    regression over annular arcs (replaces the old 90-vs-180 two-point
+    subtraction, which is extremely sensitive to any constant per-simulation
+    offset since it divides by a tiny ~0.017 cm baseline).
     """
     print(f"[Metrics] Simulating annular arcs sequentially for R={radius_um} um...")
-    
+
     arc_kwargs = _extract_geometry_kwargs(geometry_kwargs)
     # resonator_arc specifically expects cladding_medium instead of top_cladding_medium
     if "top_cladding_medium" in arc_kwargs:
@@ -83,88 +87,106 @@ def compute_intrinsic_metrics(
     w_val = arc_kwargs.get("wg_width", "NA")
     h_val = arc_kwargs.get("wg_height", "NA")
     geom_str = f"R{radius_um}_w{w_val}_h{h_val}_res{fine_steps_per_wvl}_{coarse_steps_per_wvl}"
-    
-    name_90 = f"Arc_90_{geom_str}"
-    name_180 = f"Arc_180_{geom_str}"
 
-    arc_90_obj = get_arc_sim(
-        radius=radius_um, 
-        bend_angle_deg=90, 
-        wavelength0=target_wavelength_um, 
-        fine_steps_per_wvl=fine_steps_per_wvl,
-        coarse_steps_per_wvl=coarse_steps_per_wvl,
-        **arc_kwargs
-    )
-
-    arc_180_obj = get_arc_sim(
-        radius=radius_um, 
-        bend_angle_deg=180, 
-        wavelength0=target_wavelength_um, 
-        fine_steps_per_wvl=fine_steps_per_wvl,
-        coarse_steps_per_wvl=coarse_steps_per_wvl,
-        **arc_kwargs
-    )
-    
     arc_cache_dir = base_output_dir / "arc_cache"
     arc_cache_dir.mkdir(parents=True, exist_ok=True)
-    
-    simulations = [
-        (name_90, arc_90_obj.sim),
-        (name_180, arc_180_obj.sim)
-    ]
-    
+
+    # --- PHASE 1: BUILD + RUN ALL ARC SIMULATIONS ---
+    sim_objs = {}
     sim_data_dict = {}
-    
-    for name, sim in simulations:
+
+    for angle in bend_angles_deg:
+        name = f"Arc_{angle}_{geom_str}"
+        arc_obj = get_arc_sim(
+            radius=radius_um,
+            bend_angle_deg=angle,
+            wavelength0=target_wavelength_um,
+            fine_steps_per_wvl=fine_steps_per_wvl,
+            coarse_steps_per_wvl=coarse_steps_per_wvl,
+            **arc_kwargs
+        )
+        sim_objs[angle] = arc_obj
+
         filepath = arc_cache_dir / f"{name}.hdf5"
-        
         if filepath.exists():
             print(f"[Metrics] Loading cached FDTD data for {name} from {filepath}")
-            sim_data_dict[name] = td.SimulationData.from_file(str(filepath))
+            sim_data_dict[angle] = td.SimulationData.from_file(str(filepath))
         else:
             print(f"[Metrics] Submitting job for {name}...")
-            job = web.Job(simulation=sim, task_name=name)
+            job = web.Job(simulation=arc_obj.sim, task_name=name)
             try:
                 est_credits = job.estimate_cost()
                 print(f"[Cost Estimate] Estimated cost for {name}: {est_credits:.4f} Flex Credits")
             except Exception as e:
                 print(f"[Cost Estimate] Could not retrieve cost estimate for {name}: {e}")
-                
             sim_data = job.run(path=str(filepath))
-            sim_data_dict[name] = sim_data
-    
-    mon_90 = sim_data_dict[name_90]['Mode Monitor']
-    mon_180 = sim_data_dict[name_180]['Mode Monitor']
+            sim_data_dict[angle] = sim_data
 
-    amp_90_data = mon_90.amps.isel(f=1) if ("f" in mon_90.amps.dims and mon_90.amps.sizes.get("f", 1) > 1) else mon_90.amps
-    amp_180_data = mon_180.amps.isel(f=1) if ("f" in mon_180.amps.dims and mon_180.amps.sizes.get("f", 1) > 1) else mon_180.amps
+    # --- PHASE 2: LOCK A SINGLE, GLOBALLY-CONSISTENT PROPAGATION DIRECTION ---
+    # Old code called max(amp_plus, amp_minus) independently per simulation.
+    # That lets each sim silently pick a different "forward" direction, which
+    # is fatal for any comparison (subtraction, regression) across them. Here
+    # we sum power in each direction across every angle and commit to whichever
+    # direction dominates in total -- a real transmitted signal should stay
+    # dominant across all arc lengths, while a one-off flip from reflection or
+    # mode mismatch at a single angle won't be enough to hijack the total.
+    power_plus_total = 0.0
+    power_minus_total = 0.0
+    raw_amp_by_angle = {}
 
-    amp_90_plus = np.abs(amp_90_data.sel(direction="+", mode_index=0).item())**2
-    amp_90_minus = np.abs(amp_90_data.sel(direction="-", mode_index=0).item())**2
-    t_90 = float(max(amp_90_plus, amp_90_minus))
+    for angle, sim_data in sim_data_dict.items():
+        mon = sim_data['Mode Monitor']
+        amp_data = mon.amps.isel(f=1) if ("f" in mon.amps.dims and mon.amps.sizes.get("f", 1) > 1) else mon.amps
 
-    amp_180_plus = np.abs(amp_180_data.sel(direction="+", mode_index=0).item())**2
-    amp_180_minus = np.abs(amp_180_data.sel(direction="-", mode_index=0).item())**2
-    t_180 = float(max(amp_180_plus, amp_180_minus))
+        amp_plus = np.abs(amp_data.sel(direction="+", mode_index=0).item())**2
+        amp_minus = np.abs(amp_data.sel(direction="-", mode_index=0).item())**2
 
-    assert 0.0 < t_90 <= 1.05, f"Unphysical transmission T_90 = {t_90:.4f}."
-    assert 0.0 < t_180 <= 1.05, f"Unphysical transmission T_180 = {t_180:.4f}."
+        raw_amp_by_angle[angle] = (amp_plus, amp_minus)
+        power_plus_total += amp_plus
+        power_minus_total += amp_minus
 
-    loss_90_db = -10 * np.log10(t_90)
-    loss_180_db = -10 * np.log10(t_180)
-    
-    l_90_cm = (np.pi / 2 * radius_um) * 1e-4
-    l_180_cm = (np.pi * radius_um) * 1e-4
-    
-    alpha_bend_db_cm = (loss_180_db - loss_90_db) / (l_180_cm - l_90_cm)
-    if alpha_bend_db_cm < 0:
-        alpha_bend_db_cm = 0.0
-        
+    propagation_direction = "+" if power_plus_total >= power_minus_total else "-"
+    print(f"[Metrics] Locked propagation direction = '{propagation_direction}' "
+          f"(total power +: {power_plus_total:.4e}, -: {power_minus_total:.4e})")
+
+    # --- PHASE 3: EXTRACT LOSS PER ANGLE USING THE FIXED DIRECTION ---
+    arc_lengths_cm = []
+    loss_db_values = []
+
+    for angle in bend_angles_deg:
+        amp_plus, amp_minus = raw_amp_by_angle[angle]
+        t = amp_plus if propagation_direction == "+" else amp_minus
+
+        assert 0.0 < t <= 1.05, f"Unphysical transmission T_{angle} = {t:.4f} (dir={propagation_direction})."
+
+        loss_db = -10 * np.log10(t)
+        length_cm = (np.deg2rad(angle) * radius_um) * 1e-4
+
+        arc_lengths_cm.append(length_cm)
+        loss_db_values.append(loss_db)
+
+        print(f"[Metrics] Angle={angle}deg | L={length_cm*1e4:.2f}um | T={t:.4f} | Loss={loss_db:.3f} dB")
+
+    arc_lengths_cm = np.array(arc_lengths_cm)
+    loss_db_values = np.array(loss_db_values)
+
+    # Linear regression: loss_dB(L) = alpha_bend * L + offset.
+    # The offset absorbs constant per-simulation mismatch (taper coupling,
+    # small reflections) instead of letting it leak into the slope, which a
+    # 2-point difference over a short baseline can't do.
+    slope, intercept = np.polyfit(arc_lengths_cm, loss_db_values, 1)
+
+    alpha_bend_db_cm = max(0.0, float(slope))
+    print(f"[Metrics] Cutback regression over {len(bend_angles_deg)} angles: "
+          f"alpha_bend = {alpha_bend_db_cm:.4f} dB/cm (facet/taper offset ~ {intercept:.3f} dB)")
+
     alpha_total_db_cm = alpha_bend_db_cm + scattering_loss_db_cm
     alpha_m = (alpha_total_db_cm * 100) / 4.343
-    
+
+    # Group index solve uses any one of the arc sims as a reference geometry.
+    ref_arc_obj = sim_objs[bend_angles_deg[0]]
     try:
-        n_group = float(arc_90_obj.get_group_index(
+        n_group = float(ref_arc_obj.get_group_index(
             target_neff=1.8,
             mode_index=0,
             use_bend_radius=True,
@@ -173,18 +195,24 @@ def compute_intrinsic_metrics(
     except Exception as e:
         print(f"[Error] Failed to calculate group index via mode solver: {e}")
         raise RuntimeError(f"Group index calculation failed for R={radius_um} um arc: {e}") from e
-    
+
     q_intrinsic = (2 * np.pi * n_group) / ((target_wavelength_um * 1e-6) * alpha_m)
-    
+
     print(f"[Metrics] Calculated Q_intrinsic: {q_intrinsic:.1f} | n_group: {n_group:.4f}")
-    
+
     return {
         "q_intrinsic": q_intrinsic,
         "n_group": n_group,
         "bend_loss_db_cm": alpha_bend_db_cm,
-        "total_loss_db_cm": alpha_total_db_cm
+        "total_loss_db_cm": alpha_total_db_cm,
+        "cutback_fit": {
+            "angles_deg": list(bend_angles_deg),
+            "lengths_cm": arc_lengths_cm.tolist(),
+            "loss_db": loss_db_values.tolist(),
+            "facet_offset_db": float(intercept),
+            "propagation_direction": propagation_direction,
+        },
     }
-
 
 def run_gap_optimization_batch(
     gap_sweep_array: np.ndarray,
@@ -237,8 +265,9 @@ def run_gap_optimization_batch(
         target_wavelength_um=target_wavelength_um,
         scattering_loss_db_cm=scattering_loss_db_cm,
         base_output_dir=base_output_dir,
-        fine_steps_per_wvl=fine_steps_per_wvl,     
-        coarse_steps_per_wvl=coarse_steps_per_wvl, 
+        fine_steps_per_wvl=fine_steps_per_wvl,
+        coarse_steps_per_wvl=coarse_steps_per_wvl,
+        # bend_angles_deg=(90, 180, 270),  # uncomment to override the default
         **clean_geometry_kwargs
     )
     
