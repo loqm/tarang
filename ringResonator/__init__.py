@@ -1,5 +1,6 @@
 from .ring_resonator import halfringResonator
 from .ring_resonator import ringResonator
+from .ring_resonator import partialRingResonator
 
 from .resonator_arc import resonatorArc
 

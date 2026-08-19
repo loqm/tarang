@@ -27,6 +27,10 @@ if TYPE_CHECKING:
         get_active_simulation as get_active_full_sim,
         get_passive_simulation as get_passive_full_sim,
     )
+    from geometries.partial_ring_resonator import (
+        get_active_simulation as get_active_partial_sim,
+        get_passive_simulation as get_passive_partial_sim,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +106,12 @@ class BaseResonator:
         Extracts and plots the E-field magnitude for a specific monitor.
         Because staring at raw arrays is just depressing.
         """
-        if monitor_name not in sim_data.simulation.monitors:
-            raise ValueError(f"Monitor '{monitor_name}' doesn't exist. Did you even run an active sim?")
+        available_monitors = [m.name for m in sim_data.simulation.monitors]
+        if monitor_name not in available_monitors:
+            raise ValueError(
+                f"Monitor '{monitor_name}' doesn't exist in simulation data. "
+                f"Available monitors: {available_monitors}"
+            )
             
         field_data = sim_data[monitor_name]
         
@@ -124,10 +132,9 @@ class BaseResonator:
         
         if save:
             if output_path is None or str(output_path).strip() == "":
-                raise ValueError("Cannot save plot: 'save' is True, but no valid 'output_path' was provided. Try using actual letters.")
+                raise ValueError("Cannot save plot: 'save' is True, but no valid 'output_path' was provided.")
             
             path = Path(output_path)
-            # If they just pass a directory, generate a cute filename for them
             if path.is_dir() or str(output_path).endswith(('/', '\\')) or not path.suffix:
                 path = path / f"{monitor_name}_field.png"
                 
@@ -181,8 +188,7 @@ class BaseResonator:
     ) -> float:
         """
         Solves for the fundamental mode's group index at wavelength0 using a
-        standalone mode solver on the waveguide cross-section (no FDTD run,
-        no dependence on monitors existing in self.sim).
+        standalone mode solver on the waveguide cross-section.
         """
         freq0 = td.C_0 / self.wavelength0
 
@@ -190,7 +196,6 @@ class BaseResonator:
         top_medium = self.top_cladding_medium if self.top_cladding_medium is not None else air_medium
         top_height = self.top_cladding_height if self.top_cladding_height > 0.0 else 2.0
 
-        # -- Vertical stack: substrate / core / cladding, extruded along x (propagation) -- #
         size_y = self.wg_width + 2 * domain_padding
         size_z = self.substrate_height + self.wg_height + top_height
 
@@ -230,7 +235,7 @@ class BaseResonator:
                 wavelength=self.wavelength0,
             ),
             structures=[substrate, cladding, core],
-            run_time=1e-12,  # unused -- mode solver never time-steps this
+            run_time=1e-12,
             boundary_spec=td.BoundarySpec.all_sides(boundary=td.PML()),
             medium=air_medium,
         )
@@ -240,10 +245,10 @@ class BaseResonator:
         mode_spec = td.ModeSpec(
             num_modes=mode_index + 1,
             target_neff=target_neff,
-            precision="double",        # required for a stable n_group derivative
-            group_index_step=True,     # or an explicit fractional step, e.g. 0.005
+            precision="double",
+            group_index_step=True,
             bend_radius=self.radius if use_bend_radius else None,
-            bend_axis=0,                # radial direction is the plane's y-axis
+            bend_axis=0,
         )
 
         mode_solver = ModeSolver(
@@ -269,10 +274,6 @@ class BaseResonator:
 
 class halfringResonator(BaseResonator):
     def to_full_ring(self, active: Optional[bool] = None) -> ringResonator:
-        """
-        Converts this half-ring simulation object to a full-ring simulation object.
-        Auto-detects active/passive state if `active` is not explicitly provided.
-        """
         from geometries.full_ring_resonator import (
             get_active_simulation,
             get_passive_simulation,
@@ -300,11 +301,38 @@ class halfringResonator(BaseResonator):
 
 class ringResonator(BaseResonator):
     def to_half_ring(self, active: Optional[bool] = None) -> halfringResonator:
-        """
-        Converts this full-ring simulation object to a truncated half-ring simulation object.
-        Auto-detects active/passive state if `active` is not explicitly provided.
-        """
         from geometries.half_ring_resonator import (
+            get_active_simulation,
+            get_passive_simulation,
+        )
+
+        is_active = active if active is not None else (len(self.sim.sources) > 0)
+        builder = get_active_simulation if is_active else get_passive_simulation
+
+        return builder(
+            radius=self.radius,
+            gap=self.gap,
+            wg_width=self.wg_width,
+            wg_height=self.wg_height,
+            core_medium=self.core_medium,
+            substrate_medium=self.substrate_medium,
+            wavelength0=self.wavelength0,
+            substrate_height=self.substrate_height,
+            top_cladding_medium=self.top_cladding_medium,
+            top_cladding_height=self.top_cladding_height,
+            fine_steps_per_wvl=self.fine_steps_per_wvl,
+            coarse_steps_per_wvl=self.coarse_steps_per_wvl,
+            wg_length=self.wg_length,
+        )
+
+
+class partialRingResonator(BaseResonator):
+    def __init__(self, span_angle: float, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.span_angle = span_angle
+
+    def to_full_ring(self, active: Optional[bool] = None) -> ringResonator:
+        from geometries.full_ring_resonator import (
             get_active_simulation,
             get_passive_simulation,
         )
