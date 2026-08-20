@@ -25,14 +25,14 @@ def get_passive_simulation(
     substrate_medium: td.Medium,
     cladding_medium: td.Medium = td.Medium(permittivity=1.0),   # Air
 
-    bend_angle_deg: int = 90,
+    bend_angle_deg: float = 90,
 
     fine_steps_per_wvl: int = 20,
     coarse_steps_per_wvl: int = 10
 ) -> resonatorArc:
     """
     Constructs a passive arc resonator simulation wrapped in a resonatorArc object.
-    Explicitly handles 90° and 180° bend geometries in isolated branches.
+    Explicitly handles 90°, 180°, and 270° bend geometries in isolated branches.
     """
     # -- Shared Ring & Substrate Geometry -- #
     geom_outer = td.Cylinder(
@@ -58,6 +58,10 @@ def get_passive_simulation(
     )
 
     # -- Explicit Angle Branching -- #
+    # Each branch defines: which structures cut the annulus down to the desired
+    # arc, where the two straight port waveguides sit (each poking into a
+    # region that was cut away, tangent to the ring at its connection point),
+    # and the simulation domain box that contains the kept geometry with margin.
     if bend_angle_deg == 90:
         # 90 Arc: Keep top-right quadrant (x > 0, y > 0)
         cut_B = td.Structure(
@@ -78,7 +82,9 @@ def get_passive_simulation(
         )
         structures = [ring_outer, ring_inner, substrate, cut_B, cut_L, wg_in, wg_out]
         domain_size_x = radius + 6.000
+        domain_size_y = radius + 6.000
         center_x = radius / 2.0
+        center_y = radius / 2.0
 
     elif bend_angle_deg == 180:
         # 180 Arc: Keep top half (y > 0)
@@ -96,12 +102,43 @@ def get_passive_simulation(
         )
         structures = [ring_outer, ring_inner, substrate, cut_B, wg_in, wg_out]
         domain_size_x = 2 * radius + 6.000
+        domain_size_y = radius + 6.000
         center_x = 0.0
+        center_y = radius / 2.0
+
+    elif bend_angle_deg == 270:
+        # 270 Arc: Keep three quadrants (everything except x > 0, y < 0).
+        # Both open ends of the arc -- angle 0 at (radius, 0) and angle 270
+        # at (0, -radius) -- border that single removed quadrant, so both
+        # port waveguides poke into it, tangent to the ring at their
+        # respective connection points.
+        cut_Q4 = td.Structure(
+            geometry=td.Box(center=(radius, -radius, 0), size=(2 * radius, 2 * radius, 10.000)),
+            medium=cladding_medium, name="Bottom-Right Cut"
+        )
+        wg_in = td.Structure(
+            geometry=td.Box(center=(radius, -2.000, wg_height / 2), size=(wg_width, 4.000, wg_height)),
+            medium=core_medium, name="Waveguide In"
+        )
+        wg_out = td.Structure(
+            geometry=td.Box(center=(2.000, -radius, wg_height / 2), size=(4.000, wg_width, wg_height)),
+            medium=core_medium, name="Waveguide Out"
+        )
+        structures = [ring_outer, ring_inner, substrate, cut_Q4, wg_in, wg_out]
+        # Unlike 90/180, the kept geometry now reaches negative y (down to
+        # the wg_out port at y = -radius) as well as positive x and y, so the
+        # domain must be sized symmetrically around the origin on BOTH axes
+        # instead of reusing the old radius/2-centered box that only worked
+        # because 90/180 never went below y ~ 0.
+        domain_size_x = 2 * radius + 6.000
+        domain_size_y = 2 * radius + 6.000
+        center_x = 0.0
+        center_y = 0.0
 
     else:
         raise ValueError(
-            # TODO: Raise a warning and still return the geometry for any arbitrary angle
-            f"[Error] Unsupported bend angle: {bend_angle_deg}°. Only 90° and 180° bends are explicitly supported."
+            f"[Error] Unsupported bend angle: {bend_angle_deg}°. "
+            f"Only 90°, 180°, and 270° bends are explicitly supported."
         )
 
     # -- Grid Overrides & Solver Setup -- #
@@ -121,8 +158,8 @@ def get_passive_simulation(
     estimated_travel_time = (arc_length_um / (td.C_0 / n_core_approx)) * 2.5 
     
     sim_passive = td.Simulation(
-        center=(center_x, radius / 2.0, -0.500),
-        size=(domain_size_x, radius + 6.000, 4.000),
+        center=(center_x, center_y, -0.500),
+        size=(domain_size_x, domain_size_y, 4.000),
         grid_spec=td.GridSpec.auto(
             min_steps_per_wvl=coarse_steps_per_wvl, wavelength=wavelength0,
             override_structures=[mesh_override_ring, mesh_override_in, mesh_override_out]
@@ -166,13 +203,13 @@ def get_active_simulation(
     substrate_medium: td.Medium,
     cladding_medium: td.Medium = td.Medium(permittivity=1.0),   # Air
 
-    bend_angle_deg: int = 90, 
+    bend_angle_deg: float = 90, 
 
     fine_steps_per_wvl: int = 20, 
     coarse_steps_per_wvl: int = 10
 ) -> resonatorArc:  
     """
-    Constructs an active simulation with mode sources and monitors for 90° or 180° bends.
+    Constructs an active simulation with mode sources and monitors for 90°, 180°, or 270° bends.
     """
     freq0 = td.C_0 / wavelength0
     df = freq0 * 0.02 
@@ -212,9 +249,18 @@ def get_active_simulation(
         src_size = (3.0, 0, 2.5)
         mon_center = (radius, -1.0, wg_height / 2.0)
         mon_size = (3.0, 0, 2.5)
+    elif bend_angle_deg == 270:
+        # wg_in is the vertical strip at x = radius (propagates along +y,
+        # entering the ring at (radius, 0)); wg_out is the horizontal strip
+        # at y = -radius (propagates along +x, exiting at (0, -radius)).
+        src_center = (radius, -1.0, wg_height / 2.0)
+        src_size = (3.0, 0, 2.5)
+        mon_center = (1.0, -radius, wg_height / 2.0)
+        mon_size = (0, 3.0, 2.5)
     else:
         raise ValueError(
-            f"[Error] Unsupported bend angle: {bend_angle_deg}°. Only 90° and 180° bends are explicitly supported."
+            f"[Error] Unsupported bend angle: {bend_angle_deg}°. "
+            f"Only 90°, 180°, and 270° bends are explicitly supported."
         )
 
     source = td.ModeSource(
