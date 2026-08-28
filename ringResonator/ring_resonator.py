@@ -327,9 +327,35 @@ class ringResonator(BaseResonator):
 
 
 class partialRingResonator(BaseResonator):
-    def __init__(self, span_angle: float, *args, **kwargs):
+    def __init__(self, span_angle_rad: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.span_angle = span_angle
+        self.span_angle_rad = span_angle_rad
+
+    def to_half_ring(self, active: Optional[bool] = None) -> halfringResonator:
+        from geometries.half_ring_resonator import (
+            get_active_simulation,
+            get_passive_simulation,
+        )
+
+        is_active = active if active is not None else (len(self.sim.sources) > 0)
+        builder = get_active_simulation if is_active else get_passive_simulation
+
+        return builder(
+            radius=self.radius,
+            gap=self.gap,
+            wg_width=self.wg_width,
+            wg_height=self.wg_height,
+            core_medium=self.core_medium,
+            substrate_medium=self.substrate_medium,
+            wavelength0=self.wavelength0,
+            substrate_height=self.substrate_height,
+            top_cladding_medium=self.top_cladding_medium,
+            top_cladding_height=self.top_cladding_height,
+            fine_steps_per_wvl=self.fine_steps_per_wvl,
+            coarse_steps_per_wvl=self.coarse_steps_per_wvl,
+            # We don't want to directly pass the domain length
+            #wg_length=self.wg_length
+        )
 
     def to_full_ring(self, active: Optional[bool] = None) -> ringResonator:
         from geometries.full_ring_resonator import (
@@ -353,5 +379,6 @@ class partialRingResonator(BaseResonator):
             top_cladding_height=self.top_cladding_height,
             fine_steps_per_wvl=self.fine_steps_per_wvl,
             coarse_steps_per_wvl=self.coarse_steps_per_wvl,
-            wg_length=self.wg_length,
+            # We don't want to directly pass the domain length
+            # wg_length=self.wg_length,
         )
