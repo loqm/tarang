@@ -20,17 +20,16 @@ def get_passive_simulation(
     wg_height: float,
     core_medium: td.Medium,
     substrate_medium: td.Medium,
-    cladding_medium: td.Medium = td.Medium(permittivity=1.0),   # Air
+    cladding_medium: td.Medium = td.Medium(permittivity=1.0),
     bend_angle_deg: float = 90,
     fine_steps_per_wvl: int = 20,
     coarse_steps_per_wvl: int = 10,
-    num_absorber_layers: int = 60
+    num_absorber_layers: int = 60,
+    wg_in_length: float = 4.0,
+    wg_out_length: float = 4.0
 ) -> resonatorArc:
     """
     Constructs a passive arc resonator simulation wrapped in a resonatorArc object.
-    Supports any angle between 0 and 180 degrees.
-    Uses Absorber boundaries on X/Y to prevent PML structure extrusion artifacts
-    on curved arc boundaries.
     """
     if not (0 < bend_angle_deg <= 180):
         raise ValueError(
@@ -61,14 +60,12 @@ def get_passive_simulation(
     )
 
     # -- Dynamic Arc Generation via Boolean Subtraction -- #
-    # 1. Remove everything in the x < 0 half-plane
     cut_left = td.Box(
         center=(-2 * radius, 0, wg_height / 2), 
         size=(4 * radius, 4 * radius, wg_height + 2.0)
     )
     core_geom = annulus_geom - cut_left
 
-    # 2. Remove the wedge from the end angle to 180 degrees (if angle < 180)
     if bend_angle_deg < 180:
         cut_pts = [(0, 0), (2 * radius * np.sin(theta_rad), 2 * radius * np.cos(theta_rad))]
         if bend_angle_deg <= 90:
@@ -81,7 +78,6 @@ def get_passive_simulation(
     ring_arc = td.Structure(geometry=core_geom, medium=core_medium, name="Ring Arc")
 
     # -- Dynamic Waveguide Generation -- #
-    wg_in_length = 4.0
     wg_in = td.Structure(
         geometry=td.Box(
             center=(-wg_in_length / 2, radius, wg_height / 2), 
@@ -90,13 +86,10 @@ def get_passive_simulation(
         medium=core_medium, name="Waveguide In"
     )
 
-    wg_out_length = 4.0
     w = wg_width
-    # Base straight waveguide vertices along +X axis
     v1, v2, v3, v4 = (0, w/2), (0, -w/2), (wg_out_length, -w/2), (wg_out_length, w/2)
     
     def transform_pt(x, y):
-        # Rotate by -theta_rad and translate to the end of the arc
         xr = x * np.cos(-theta_rad) - y * np.sin(-theta_rad)
         yr = x * np.sin(-theta_rad) + y * np.cos(-theta_rad)
         return xr + radius * np.sin(theta_rad), yr + radius * np.cos(theta_rad)
@@ -190,11 +183,13 @@ def get_active_simulation(
     bend_angle_deg: float = 90, 
     fine_steps_per_wvl: int = 20, 
     coarse_steps_per_wvl: int = 10,
-    num_absorber_layers: int = 60
+    num_absorber_layers: int = 60,
+    wg_in_length: float = 4.0,
+    wg_out_length: float = 4.0
 ) -> resonatorArc:  
     """
     Constructs an active simulation with mode sources and monitors dynamically 
-    placed based on the arbitrary arc bend angle.
+    placed based on the arbitrary arc bend angle. Corrects mode direction mapping.
     """
     freq0 = td.C_0 / wavelength0
     df = freq0 * 0.02 
@@ -215,28 +210,32 @@ def get_active_simulation(
         bend_angle_deg=bend_angle_deg,
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
-        num_absorber_layers=num_absorber_layers
+        num_absorber_layers=num_absorber_layers,
+        wg_in_length=wg_in_length,
+        wg_out_length=wg_out_length
     )
     sim_passive = resonator_obj.sim
 
     # -- Dynamic Port Layout -- #
     theta_rad = np.deg2rad(bend_angle_deg)
     
-    # Source is always on wg_in, which is axis-aligned to +X
-    src_center = (-2.0, radius, wg_height / 2.0)
+    src_center = (-wg_in_length / 2.0, radius, wg_height / 2.0)
     src_size = (0, 3.0, 2.5)
 
-    # Monitor placed 2.0um along the oblique wg_out path
-    mon_cx = radius * np.sin(theta_rad) + 2.0 * np.cos(-theta_rad)
-    mon_cy = radius * np.cos(theta_rad) + 2.0 * np.sin(-theta_rad)
+    mon_cx = radius * np.sin(theta_rad) + (wg_out_length / 2.0) * np.cos(-theta_rad)
+    mon_cy = radius * np.cos(theta_rad) + (wg_out_length / 2.0) * np.sin(-theta_rad)
     mon_center = (mon_cx, mon_cy, wg_height / 2.0)
 
-    # Because Tidy3D mode monitors must be axis-aligned, dynamically choose 
-    # the normal orientation that minimizes obliqueness relative to propagation
     if 45 <= bend_angle_deg <= 135:
-        mon_size = (3.0, 0, 2.5)  # Normal to Y
+        mon_size = (3.0, 0, 2.5)  # Normal to Y (axis 1)
     else:
-        mon_size = (0, 3.0, 2.5)  # Normal to X
+        mon_size = (0, 3.0, 2.5)  # Normal to X (axis 0)
+
+    # Resolve correct Tidy3D mode direction relative to the monitor's normal axis
+    tangent = (np.cos(theta_rad), -np.sin(theta_rad))
+    normal_component = tangent[1] if mon_size[1] == 0 else tangent[0]
+    mode_direction = "+" if normal_component > 0 else "-"
+    resonator_obj.mode_direction = mode_direction
 
     source = td.ModeSource(
         center=src_center, size=src_size, direction="+",
@@ -261,7 +260,6 @@ def get_active_simulation(
     resonator_obj.sim = sim_active
     return resonator_obj
 
-# Try to be helpful
 get_active_sim = get_active_simulation
 
 def get_optimal_plot_coords(sim: td.Simulation) -> Tuple[float, float, float]:
