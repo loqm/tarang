@@ -15,25 +15,31 @@ from ringResonator.resonator_arc import resonatorArc
 
 def get_passive_simulation(
     wavelength0: float,
-
     radius: float,
-
     wg_width: float,
     wg_height: float,
-
     core_medium: td.Medium,
     substrate_medium: td.Medium,
     cladding_medium: td.Medium = td.Medium(permittivity=1.0),   # Air
-
     bend_angle_deg: float = 90,
-
     fine_steps_per_wvl: int = 20,
-    coarse_steps_per_wvl: int = 10
+    coarse_steps_per_wvl: int = 10,
+    num_absorber_layers: int = 60
 ) -> resonatorArc:
     """
     Constructs a passive arc resonator simulation wrapped in a resonatorArc object.
-    Explicitly handles 90°, 180°, and 270° bend geometries in isolated branches.
+    Supports any angle between 0 and 180 degrees.
+    Uses Absorber boundaries on X/Y to prevent PML structure extrusion artifacts
+    on curved arc boundaries.
     """
+    if not (0 < bend_angle_deg <= 180):
+        raise ValueError(
+            f"[Error] Unsupported bend angle: {bend_angle_deg}°. "
+            f"Angle must be in the range (0, 180]."
+        )
+
+    theta_rad = np.deg2rad(bend_angle_deg)
+
     # -- Shared Ring & Substrate Geometry -- #
     geom_outer = td.Cylinder(
         center=(0, 0, wg_height / 2),
@@ -47,9 +53,6 @@ def get_passive_simulation(
         length=wg_height + 0.200,
         axis=2
     )
-    
-    ring_outer = td.Structure(geometry=geom_outer, medium=core_medium, name="Ring Outer")
-    ring_inner = td.Structure(geometry=geom_inner, medium=cladding_medium, name="Ring Inner Hole")
     annulus_geom = geom_outer - geom_inner
 
     substrate = td.Structure(
@@ -57,89 +60,75 @@ def get_passive_simulation(
         medium=substrate_medium, name="Substrate"
     )
 
-    # -- Explicit Angle Branching -- #
-    # Each branch defines: which structures cut the annulus down to the desired
-    # arc, where the two straight port waveguides sit (each poking into a
-    # region that was cut away, tangent to the ring at its connection point),
-    # and the simulation domain box that contains the kept geometry with margin.
-    if bend_angle_deg == 90:
-        # 90 Arc: Keep top-right quadrant (x > 0, y > 0)
-        cut_B = td.Structure(
-            geometry=td.Box(center=(0, -radius, 0), size=(3 * radius, 2 * radius, 10.000)),
-            medium=cladding_medium, name="Bottom Cut"
-        )
-        cut_L = td.Structure(
-            geometry=td.Box(center=(-radius, radius / 2, 0), size=(2 * radius, 3 * radius, 10.000)),
-            medium=cladding_medium, name="Left Cut"
-        )
-        wg_in = td.Structure(
-            geometry=td.Box(center=(-2.000, radius, wg_height / 2), size=(4.000, wg_width, wg_height)),
-            medium=core_medium, name="Waveguide In"
-        )
-        wg_out = td.Structure(
-            geometry=td.Box(center=(radius, -2.000, wg_height / 2), size=(wg_width, 4.000, wg_height)),
-            medium=core_medium, name="Waveguide Out"
-        )
-        structures = [ring_outer, ring_inner, substrate, cut_B, cut_L, wg_in, wg_out]
-        domain_size_x = radius + 6.000
-        domain_size_y = radius + 6.000
-        center_x = radius / 2.0
-        center_y = radius / 2.0
+    # -- Dynamic Arc Generation via Boolean Subtraction -- #
+    # 1. Remove everything in the x < 0 half-plane
+    cut_left = td.Box(
+        center=(-2 * radius, 0, wg_height / 2), 
+        size=(4 * radius, 4 * radius, wg_height + 2.0)
+    )
+    core_geom = annulus_geom - cut_left
 
-    elif bend_angle_deg == 180:
-        # 180 Arc: Keep top half (y > 0)
-        cut_B = td.Structure(
-            geometry=td.Box(center=(0, -radius, 0), size=(3 * radius, 2 * radius, 10.000)),
-            medium=cladding_medium, name="Bottom Cut"
-        )
-        wg_in = td.Structure(
-            geometry=td.Box(center=(-radius, -2.000, wg_height / 2), size=(wg_width, 4.000, wg_height)),
-            medium=core_medium, name="Waveguide In"
-        )
-        wg_out = td.Structure(
-            geometry=td.Box(center=(radius, -2.000, wg_height / 2), size=(wg_width, 4.000, wg_height)),
-            medium=core_medium, name="Waveguide Out"
-        )
-        structures = [ring_outer, ring_inner, substrate, cut_B, wg_in, wg_out]
-        domain_size_x = 2 * radius + 6.000
-        domain_size_y = radius + 6.000
-        center_x = 0.0
-        center_y = radius / 2.0
+    # 2. Remove the wedge from the end angle to 180 degrees (if angle < 180)
+    if bend_angle_deg < 180:
+        cut_pts = [(0, 0), (2 * radius * np.sin(theta_rad), 2 * radius * np.cos(theta_rad))]
+        if bend_angle_deg <= 90:
+            cut_pts.append((2 * radius, -2 * radius))
+        cut_pts.append((0, -2 * radius))
+        
+        cut_wedge = td.PolySlab(vertices=cut_pts, axis=2, slab_bounds=(-1.0, wg_height + 1.0))
+        core_geom = core_geom - cut_wedge
 
-    elif bend_angle_deg == 270:
-        # 270 Arc: Keep three quadrants (everything except x > 0, y < 0).
-        # Both open ends of the arc -- angle 0 at (radius, 0) and angle 270
-        # at (0, -radius) -- border that single removed quadrant, so both
-        # port waveguides poke into it, tangent to the ring at their
-        # respective connection points.
-        cut_Q4 = td.Structure(
-            geometry=td.Box(center=(radius, -radius, 0), size=(2 * radius, 2 * radius, 10.000)),
-            medium=cladding_medium, name="Bottom-Right Cut"
-        )
-        wg_in = td.Structure(
-            geometry=td.Box(center=(radius, -2.000, wg_height / 2), size=(wg_width, 4.000, wg_height)),
-            medium=core_medium, name="Waveguide In"
-        )
-        wg_out = td.Structure(
-            geometry=td.Box(center=(2.000, -radius, wg_height / 2), size=(4.000, wg_width, wg_height)),
-            medium=core_medium, name="Waveguide Out"
-        )
-        structures = [ring_outer, ring_inner, substrate, cut_Q4, wg_in, wg_out]
-        # Unlike 90/180, the kept geometry now reaches negative y (down to
-        # the wg_out port at y = -radius) as well as positive x and y, so the
-        # domain must be sized symmetrically around the origin on BOTH axes
-        # instead of reusing the old radius/2-centered box that only worked
-        # because 90/180 never went below y ~ 0.
-        domain_size_x = 2 * radius + 6.000
-        domain_size_y = 2 * radius + 6.000
-        center_x = 0.0
-        center_y = 0.0
+    ring_arc = td.Structure(geometry=core_geom, medium=core_medium, name="Ring Arc")
 
-    else:
-        raise ValueError(
-            f"[Error] Unsupported bend angle: {bend_angle_deg}°. "
-            f"Only 90°, 180°, and 270° bends are explicitly supported."
-        )
+    # -- Dynamic Waveguide Generation -- #
+    wg_in_length = 4.0
+    wg_in = td.Structure(
+        geometry=td.Box(
+            center=(-wg_in_length / 2, radius, wg_height / 2), 
+            size=(wg_in_length, wg_width, wg_height)
+        ),
+        medium=core_medium, name="Waveguide In"
+    )
+
+    wg_out_length = 4.0
+    w = wg_width
+    # Base straight waveguide vertices along +X axis
+    v1, v2, v3, v4 = (0, w/2), (0, -w/2), (wg_out_length, -w/2), (wg_out_length, w/2)
+    
+    def transform_pt(x, y):
+        # Rotate by -theta_rad and translate to the end of the arc
+        xr = x * np.cos(-theta_rad) - y * np.sin(-theta_rad)
+        yr = x * np.sin(-theta_rad) + y * np.cos(-theta_rad)
+        return xr + radius * np.sin(theta_rad), yr + radius * np.cos(theta_rad)
+    
+    wg_out_verts = [transform_pt(x, y) for x, y in [v1, v2, v3, v4]]
+    wg_out = td.Structure(
+        geometry=td.PolySlab(vertices=wg_out_verts, axis=2, slab_bounds=(0, wg_height)),
+        medium=core_medium, name="Waveguide Out"
+    )
+
+    structures = [ring_arc, substrate, wg_in, wg_out]
+
+    # -- Dynamic Domain Sizing -- #
+    xs = [0, -wg_in_length, radius * np.sin(theta_rad)]
+    ys = [radius + wg_width / 2, radius - wg_width / 2, radius * np.cos(theta_rad)]
+    
+    if bend_angle_deg >= 90:
+        xs.append(radius + wg_width / 2)
+        ys.append(0)
+        
+    for vx, vy in wg_out_verts:
+        xs.append(vx)
+        ys.append(vy)
+        
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    
+    pad = 3.0
+    domain_size_x = (max_x - min_x) + 2 * pad
+    domain_size_y = (max_y - min_y) + 2 * pad
+    center_x = (min_x + max_x) / 2.0
+    center_y = (min_y + max_y) / 2.0
 
     # -- Grid Overrides & Solver Setup -- #
     try:
@@ -150,13 +139,19 @@ def get_passive_simulation(
         
     dl_fine = wavelength0 / (n_core_approx * fine_steps_per_wvl)
 
-    mesh_override_ring = td.MeshOverrideStructure(geometry=annulus_geom, dl=[dl_fine] * 3, enforce=True)
+    mesh_override_ring = td.MeshOverrideStructure(geometry=ring_arc.geometry, dl=[dl_fine] * 3, enforce=True)
     mesh_override_in = td.MeshOverrideStructure(geometry=wg_in.geometry, dl=[dl_fine] * 3, enforce=True)
     mesh_override_out = td.MeshOverrideStructure(geometry=wg_out.geometry, dl=[dl_fine] * 3, enforce=True)
 
-    arc_length_um = (bend_angle_deg / 180.0 * np.pi * radius) + 6.0
+    arc_length_um = (bend_angle_deg / 180.0 * np.pi * radius) + wg_in_length + wg_out_length
     estimated_travel_time = (arc_length_um / (td.C_0 / n_core_approx)) * 2.5 
     
+    boundary_spec = td.BoundarySpec(
+        x=td.Boundary.absorber(num_layers=num_absorber_layers),
+        y=td.Boundary.absorber(num_layers=num_absorber_layers),
+        z=td.Boundary.pml()
+    )
+
     sim_passive = td.Simulation(
         center=(center_x, center_y, -0.500),
         size=(domain_size_x, domain_size_y, 4.000),
@@ -166,50 +161,40 @@ def get_passive_simulation(
         ),
         structures=structures,
         run_time=max(3e-12, estimated_travel_time),
-        boundary_spec=td.BoundarySpec.all_sides(boundary=td.PML()),
+        boundary_spec=boundary_spec,
         medium=cladding_medium
     )
     
     return resonatorArc(
         sim=sim_passive,
-
         radius=radius,
-
         wg_width=wg_width,
         wg_height=wg_height,
-
         core_medium=core_medium,
         cladding_medium=cladding_medium,
         substrate_medium=substrate_medium,
-
         bend_angle_deg=bend_angle_deg,
-
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
-
         wavelength0=wavelength0
     )
 
-
 def get_active_simulation(
     wavelength0: float,
-
     radius: float, 
-
     wg_width: float, 
     wg_height: float,
-
     core_medium: td.Medium, 
     substrate_medium: td.Medium,
-    cladding_medium: td.Medium = td.Medium(permittivity=1.0),   # Air
-
+    cladding_medium: td.Medium = td.Medium(permittivity=1.0),
     bend_angle_deg: float = 90, 
-
     fine_steps_per_wvl: int = 20, 
-    coarse_steps_per_wvl: int = 10
+    coarse_steps_per_wvl: int = 10,
+    num_absorber_layers: int = 60
 ) -> resonatorArc:  
     """
-    Constructs an active simulation with mode sources and monitors for 90°, 180°, or 270° bends.
+    Constructs an active simulation with mode sources and monitors dynamically 
+    placed based on the arbitrary arc bend angle.
     """
     freq0 = td.C_0 / wavelength0
     df = freq0 * 0.02 
@@ -221,47 +206,37 @@ def get_active_simulation(
 
     resonator_obj = get_passive_simulation(
         wavelength0=wavelength0,
-
         radius=radius,
-
         wg_width=wg_width,
         wg_height=wg_height,
-
         core_medium=core_medium,
         cladding_medium=cladding_medium,
         substrate_medium=substrate_medium,
-
         bend_angle_deg=bend_angle_deg,
-
         fine_steps_per_wvl=fine_steps_per_wvl,
-        coarse_steps_per_wvl=coarse_steps_per_wvl
+        coarse_steps_per_wvl=coarse_steps_per_wvl,
+        num_absorber_layers=num_absorber_layers
     )
     sim_passive = resonator_obj.sim
 
-    # -- Explicit Port Layout for Active Sources -- #
-    if bend_angle_deg == 90:
-        src_center = (-1.0, radius, wg_height / 2.0)
-        src_size = (0, 3.0, 2.5)
-        mon_center = (radius, -1.0, wg_height / 2.0)
-        mon_size = (3.0, 0, 2.5)
-    elif bend_angle_deg == 180:
-        src_center = (-radius, -1.0, wg_height / 2.0)
-        src_size = (3.0, 0, 2.5)
-        mon_center = (radius, -1.0, wg_height / 2.0)
-        mon_size = (3.0, 0, 2.5)
-    elif bend_angle_deg == 270:
-        # wg_in is the vertical strip at x = radius (propagates along +y,
-        # entering the ring at (radius, 0)); wg_out is the horizontal strip
-        # at y = -radius (propagates along +x, exiting at (0, -radius)).
-        src_center = (radius, -1.0, wg_height / 2.0)
-        src_size = (3.0, 0, 2.5)
-        mon_center = (1.0, -radius, wg_height / 2.0)
-        mon_size = (0, 3.0, 2.5)
+    # -- Dynamic Port Layout -- #
+    theta_rad = np.deg2rad(bend_angle_deg)
+    
+    # Source is always on wg_in, which is axis-aligned to +X
+    src_center = (-2.0, radius, wg_height / 2.0)
+    src_size = (0, 3.0, 2.5)
+
+    # Monitor placed 2.0um along the oblique wg_out path
+    mon_cx = radius * np.sin(theta_rad) + 2.0 * np.cos(-theta_rad)
+    mon_cy = radius * np.cos(theta_rad) + 2.0 * np.sin(-theta_rad)
+    mon_center = (mon_cx, mon_cy, wg_height / 2.0)
+
+    # Because Tidy3D mode monitors must be axis-aligned, dynamically choose 
+    # the normal orientation that minimizes obliqueness relative to propagation
+    if 45 <= bend_angle_deg <= 135:
+        mon_size = (3.0, 0, 2.5)  # Normal to Y
     else:
-        raise ValueError(
-            f"[Error] Unsupported bend angle: {bend_angle_deg}°. "
-            f"Only 90°, 180°, and 270° bends are explicitly supported."
-        )
+        mon_size = (0, 3.0, 2.5)  # Normal to X
 
     source = td.ModeSource(
         center=src_center, size=src_size, direction="+",
@@ -289,7 +264,6 @@ def get_active_simulation(
 # Try to be helpful
 get_active_sim = get_active_simulation
 
-
 def get_optimal_plot_coords(sim: td.Simulation) -> Tuple[float, float, float]:
     """
     Slicing helper focused on the critical waveguide core plane.
@@ -300,9 +274,8 @@ def get_optimal_plot_coords(sim: td.Simulation) -> Tuple[float, float, float]:
     if sim.sources:
         z_coord = float(sim.sources[0].center[2])
     else:
-        # Locate the core structure to extract true waveguide height
         core_struct = next(
-            (s for s in sim.structures if s.name in ["Ring Outer", "Bus_Waveguide"]), 
+            (s for s in sim.structures if s.name in ["Ring Arc", "Waveguide In"]), 
             None
         )
         if core_struct:

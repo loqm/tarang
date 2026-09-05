@@ -30,7 +30,7 @@ class resonatorArc(BaseResonator):
         core_medium: td.Medium,
         cladding_medium: td.Medium,
         substrate_medium: td.Medium,
-        bend_angle_deg: int,
+        bend_angle_deg: float,  # Updated to float for continuous angle support
         fine_steps_per_wvl: float,
         coarse_steps_per_wvl: float,
         wavelength0: float,
@@ -56,7 +56,8 @@ class resonatorArc(BaseResonator):
 
     def get_dir_name(self) -> str:
         """Generates a clean, unique parameter-based identifier for caching directory paths."""
-        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg}_{self.wavelength0:.3f}um"
+        # Added .1f formatting to bend_angle_deg to ensure clean directory names
+        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength0:.3f}um"
 
     def run_sim(
         self, 
@@ -111,8 +112,6 @@ class resonatorArc(BaseResonator):
     def plot_field(
         self, 
         sim_data: td.SimulationData,
-        # NOTE: Is this an argument we wish to keep?
-        # TODO: Review note to self (because who else is looking at this ffs)
         monitor_name: str = "field_map", 
         output_path: Optional[Union[str, Path]] = None, 
         show: bool = True, 
@@ -134,7 +133,8 @@ class resonatorArc(BaseResonator):
         
         E_mag.isel(f=0).plot(x='x', y='y', ax=ax, cmap='magma', robust=True)
         
-        ax.set_title(f"Field Intensity: {monitor_name} (R={self.radius}μm, {self.bend_angle_deg}°)", fontsize=10)
+        # Formatted bend_angle_deg to .1f for cleaner plot titles
+        ax.set_title(f"Field Intensity: {monitor_name} (R={self.radius}μm, {self.bend_angle_deg:.1f}°)", fontsize=10)
         ax.set_aspect('equal')
         fig.tight_layout()
         
@@ -144,7 +144,8 @@ class resonatorArc(BaseResonator):
             
             path = Path(output_path)
             if path.is_dir() or str(output_path).endswith(('/', '\\')) or not path.suffix:
-                path = path / f"bend_{self.bend_angle_deg}deg_R{self.radius}_{monitor_name}.png"
+                # Formatted bend_angle_deg to .1f and radius to .2f for robust file naming
+                path = path / f"bend_{self.bend_angle_deg:.1f}deg_R{self.radius:.2f}_{monitor_name}.png"
                 
             if path.parent:
                 path.parent.mkdir(parents=True, exist_ok=True)
