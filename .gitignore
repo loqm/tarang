@@ -11,3 +11,5 @@ results/*
 
 *.pyc
 *.toml
+
+TESTING_*
