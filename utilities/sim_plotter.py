@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import Optional, Tuple, Union
 import logging
 
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import tidy3d as td
 
@@ -44,8 +42,6 @@ def _validate_and_get_save_path(
     
     path = Path(output_path)
     
-    # If path is an existing directory, ends in a trailing slash, or lacks a file extension,
-    # assume a directory was provided and attach default_filename.
     if path.is_dir() or str(output_path).endswith(('/', '\\')) or not path.suffix:
         path = path / default_filename
 
@@ -101,8 +97,8 @@ def display_2d(
         
     if show:
         plt.show()
-        
-    plt.close(fig)
+    else:
+        plt.close(fig)
 
 
 def display_3d(
@@ -153,5 +149,5 @@ def display_3d(
         
     if show:
         plt.show()
-        
-    plt.close(fig)
+    else:
+        plt.close(fig)
