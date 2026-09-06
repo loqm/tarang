@@ -4,3 +4,4 @@ from . import partial_ring_resonator
 from . import half_ring_resonator
 from . import full_ring_resonator
 from . import resonator_arc
+from . import edge_coupler
