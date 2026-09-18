@@ -5,9 +5,16 @@ Defines the GratingConfig dataclass and GratingCoupler wrapper class.
 
 Author: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: 2026
+
+Exposes: GratingConfig, GratingCoupler, GratingCoupler.from_config(),
+GratingCoupler.get_dir_name(), GratingCoupler.get_efficiency(),
+GratingCoupler.get_fields().
 """
 
 from __future__ import annotations
+from tarang import get_logger
+from tarang._logging import tidy3d_verbose
+
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -15,21 +22,16 @@ from typing import TYPE_CHECKING
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-import logging
 
 import tidy3d as td
 from tidy3d import web
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    raise FileNotFoundError("Failed to find .env file! I'm not sure where to search for your API key right now!")
-
 if TYPE_CHECKING:
     from geometries.grating_coupler import get_active_simulation
 
-logger = logging.getLogger(__name__)
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class GratingConfig:
@@ -43,13 +45,13 @@ class GratingConfig:
     # Substrate geometry
     core_height: float
     cladding_height: float
-    box_height: float        # Isolating oxide layer beneath core
+    box_height: float  # Isolating oxide layer beneath core
     substrate_height: float  # Deep silicon handle
 
     # Coupler geometry
     etch_depth: float
     period: float
-    ff: float                # Fill Factor
+    ff: float  # Fill Factor
     n_teeth: int
     w_grating: float
 
@@ -66,20 +68,20 @@ class GratingCoupler:
     """
 
     def __init__(
-            self,
-            sim: td.Simulation,
-            config: GratingConfig,
-
-            core_medium: td.Medium,
-            box_medium: td.Medium,
-            substrate_medium: td.Medium,
-            cladding_medium: td.Medium | None = None,   # Defaults to "air" if None
-
-            is_3d: bool = False,
-
-            fine_steps_per_wvl: int = 20,
-            coarse_steps_per_wvl: int = 15
+        self,
+        sim: td.Simulation,
+        config: GratingConfig,
+        core_medium: td.Medium,
+        box_medium: td.Medium,
+        substrate_medium: td.Medium,
+        cladding_medium: td.Medium | None = None,  # Defaults to "air" if None
+        is_3d: bool = False,
+        fine_steps_per_wvl: int = 20,
+        coarse_steps_per_wvl: int = 15,
     ):
+        """Initialize the grating device from its simulation and configuration.
+        Store the output settings used for simulation and efficiency analysis.
+        """
         self.sim = sim
         self.config = config
 
@@ -95,18 +97,18 @@ class GratingCoupler:
 
     @classmethod
     def from_config(
-            cls,
-            config: GratingConfig,
-            core_medium: td.Medium,
-            box_medium: td.Medium,
-            substrate_medium: td.Medium | None = None,
-            cladding_medium: td.Medium | None = None,
-            is_3d: bool = False,
-            fine_steps_per_wvl: int = 15,
-            coarse_steps_per_wvl: int = 10
+        cls,
+        config: GratingConfig,
+        core_medium: td.Medium,
+        box_medium: td.Medium,
+        substrate_medium: td.Medium | None = None,
+        cladding_medium: td.Medium | None = None,
+        is_3d: bool = False,
+        fine_steps_per_wvl: int = 15,
+        coarse_steps_per_wvl: int = 10,
     ) -> GratingCoupler:
-        """
-        Convenience factory method to build and wrap a simulation in one step.
+        """Convenience factory method to build and wrap a simulation in one step.
+        Build the active grating geometry without submitting a cloud simulation.
         """
         from geometries.grating_coupler import get_active_simulation
 
@@ -118,13 +120,16 @@ class GratingCoupler:
             cladding_medium=cladding_medium,
             is_3d=is_3d,
             fine_steps_per_wvl=fine_steps_per_wvl,
-            coarse_steps_per_wvl=coarse_steps_per_wvl
+            coarse_steps_per_wvl=coarse_steps_per_wvl,
         )
-    
+
     # --------------------------------
     # Execution and Analysis Methods
     # --------------------------------
     def get_dir_name(self) -> str:
+        """Build a parameter-based directory name for simulation results.
+        Include the geometry settings used by this device cache.
+        """
         dim = "3D" if self.is_3d else "2D"
 
         cfg = self.config
@@ -137,67 +142,106 @@ class GratingCoupler:
         )
         return param_dir_name
 
-    def _run_sim(self, output_dir: Path, verbose: bool = False) -> td.SimulationData:
+    def _run_sim(
+        self,
+        output_dir: Path,
+        verbose: bool = False,
+    ) -> td.SimulationData:
         """
         Private method: Checks for API key, ensures the output directory exists,
         and either runs the FDTD simulation on the cloud or loads existing HDF5 data.
         """
 
         if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-            logging.warning("[Warning] TIDY3D_API_KEY not found in environment.")
+            logger.warning("[Warning] TIDY3D_API_KEY not found in environment.")
 
         cfg = self.config
         param_dir_name = self.get_dir_name()
 
         full_output_dir = Path(output_dir) / param_dir_name
-        full_output_dir.mkdir(parents=True, exist_ok=True)
-        
+        full_output_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         hdf5_target_path = full_output_dir / "raw_simulation_data.hdf5"
 
         if hdf5_target_path.exists():
-            logging.info(f"[Profiler] Cache hit. Loading existing simulation data from {hdf5_target_path}...")
+            logger.info(
+                f"[Profiler] Cache hit. Loading existing simulation data from {hdf5_target_path}..."
+            )
             return td.SimulationData.from_file(str(hdf5_target_path))
-        
-        logging.info("[Profiler] Cache miss. Uploading architecture to Tidy3D cloud infrastructure...")
+
+        logger.info(
+            "[Profiler] Cache miss. Uploading architecture to Tidy3D cloud infrastructure..."
+        )
         task_name = f"gc_sim_{cfg.wavelength_um}um"
-        sim_data = web.run(self.sim, task_name=task_name, verbose=verbose)
-        
-        logging.info(f"[Profiler] Execution complete. Serializing data to {hdf5_target_path}...")
+        sim_data = web.run(
+            self.sim,
+            task_name=task_name,
+            verbose=tidy3d_verbose(verbose),
+        )
+
+        logger.info(
+            f"[Profiler] Execution complete. Serializing data to {hdf5_target_path}..."
+        )
         sim_data.to_file(str(hdf5_target_path))
-        
+
         return sim_data
-    
+
     def get_efficiency(
-            self,
-            output_dir: Path,
-            verbose: bool = False
-        ) -> float:
+        self,
+        output_dir: Path,
+        verbose: bool = False,
+    ) -> float:
         """
-        Executes the simulation (or loads from cache) and extracts the coupling 
+        Executes the simulation (or loads from cache) and extracts the coupling
         efficiency for the fundamental mode at the target wavelength.
         """
-        sim_data = self._run_sim(output_dir, verbose=verbose)
-        
-        logging.info("[Analytics] Extracting scattering coefficients from 'mode monitor'...")
+        sim_data = self._run_sim(
+            output_dir,
+            verbose=verbose,
+        )
+
+        logger.info(
+            "[Analytics] Extracting scattering coefficients from 'mode monitor'..."
+        )
         try:
-            mode_amps_array = sim_data['mode monitor'].amps.sel(direction="-", mode_index=0)
+            mode_amps_array = sim_data["mode monitor"].amps.sel(
+                direction="-",
+                mode_index=0,
+            )
             target_freq = td.C_0 / self.config.wavelength_um
-            
-            efficiency = float(np.abs(mode_amps_array.sel(f=target_freq, method="nearest"))**2)
+
+            efficiency = float(
+                np.abs(
+                    mode_amps_array.sel(
+                        f=target_freq,
+                        method="nearest",
+                    )
+                )
+                ** 2
+            )
             peak_loss = 10.0 * np.log10(efficiency + 1e-12)
-            
-            logging.info(f"[Analytics] Target mode audit completed.\n\
+
+            logger.info(f"[Analytics] Target mode audit completed.\n\
 \tCoupling Efficiency: {efficiency*100.0:.2f}%\n\
-\tInsertion Loss:      {peak_loss:.2f} dB")          
+\tInsertion Loss:      {peak_loss:.2f} dB")
             return efficiency
-            
+
         except Exception as e:
-            logging.error(f"[Analytics Error] Failed to parse mode data cleanly: {e}")
+            logger.error(f"[Analytics Error] Failed to parse mode data cleanly: {e}")
             return 0.0
-        
-    def get_fields(self, output_dir: Path, show: bool = True) -> None:
+
+    def get_fields(
+        self,
+        output_dir: Path,
+        show: bool = True,
+        *,
+        plot_dpi: int = 300,  # Resolution of displayed and saved figures (dots per inch).
+    ) -> None:
         """
-        Executes the simulation (or loads from cache) and plots spatial field 
+        Executes the simulation (or loads from cache) and plots spatial field
         distribution maps for valid 2D FieldMonitors.
         """
         cfg = self.config
@@ -205,43 +249,72 @@ class GratingCoupler:
 
         param_dir_name = self.get_dir_name()
         target_dir = Path(output_dir) / param_dir_name
-        
-        sim_data = self._run_sim(output_dir, verbose=False)
+
+        sim_data = self._run_sim(
+            output_dir,
+            verbose=False,
+        )
         target_freq = td.C_0 / cfg.wavelength_um
 
-        print(f"[Analytics] Processing spatial field distributions ({dim_str} mode)...")
+        logger.info(
+            f"[Analytics] Processing spatial field distributions ({dim_str} mode)..."
+        )
 
         for monitor in self.sim.monitors:
-            if isinstance(monitor, td.ModeMonitor):
-                logging.debug(f"[Analytics] Skipping ModeMonitor '{monitor.name}' during spatial field plotting.")
+            if isinstance(
+                monitor,
+                td.ModeMonitor,
+            ):
+                logger.debug(
+                    f"[Analytics] Skipping ModeMonitor '{monitor.name}' during spatial field plotting."
+                )
                 continue
 
-            if isinstance(monitor, td.FieldMonitor):
+            if isinstance(
+                monitor,
+                td.FieldMonitor,
+            ):
                 if not self.is_3d and monitor.name != "field_y_plane":
-                    logging.info(f"[Analytics] Skipping 3D-only slice '{monitor.name}' for 2D simulation.")
+                    logger.info(
+                        f"[Analytics] Skipping 3D-only slice '{monitor.name}' for 2D simulation."
+                    )
                     continue
 
                 non_zero_axes = sum(1 for axis_len in monitor.size if axis_len > 0)
                 if non_zero_axes < 2:
-                    logging.warning(f"[Analytics] Skipping '{monitor.name}': degenerate slice with <2 spatial dimensions.")
+                    logger.warning(
+                        f"[Analytics] Skipping '{monitor.name}': degenerate slice with <2 spatial dimensions."
+                    )
                     continue
 
                 try:
-                    fig, ax = plt.subplots(figsize=(10, 5), dpi=300)
+                    fig, ax = plt.subplots(
+                        figsize=(10, 5),
+                        dpi=plot_dpi,
+                    )
 
                     sim_data.plot_field(
                         field_monitor_name=monitor.name,
                         field_name="E",
                         val="abs^2",
                         f=target_freq,
-                        ax=ax
+                        ax=ax,
                     )
 
-                    ax.set_title(f"Field Intensity Map (|E|²): {monitor.name} ({dim_str})", fontweight="bold")
+                    ax.set_title(
+                        f"Field Intensity Map (|E|²): {monitor.name} ({dim_str})",
+                        fontweight="bold",
+                    )
 
                     save_path = target_dir / f"spatial_field_{monitor.name}.png"
-                    plt.savefig(save_path, bbox_inches="tight")
-                    logging.info(f"[Analytics] Exported field profile slice: {save_path.name}")
+                    plt.savefig(
+                        save_path,
+                        bbox_inches="tight",
+                        dpi=plot_dpi,
+                    )
+                    logger.info(
+                        f"[Analytics] Exported field profile slice: {save_path.name}"
+                    )
 
                     if show:
                         plt.show()
@@ -249,4 +322,6 @@ class GratingCoupler:
                     plt.close(fig)
 
                 except Exception as e:
-                    logging.error(f"[Analytics Error] Could not render field monitor plot '{monitor.name}': {e}")
+                    logger.error(
+                        f"[Analytics Error] Could not render field monitor plot '{monitor.name}': {e}"
+                    )
