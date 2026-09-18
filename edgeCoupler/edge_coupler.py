@@ -165,12 +165,12 @@ class edgeCoupler:
 
         if hdf5_target_path.exists() and not force_rerun:
             logger.info(
-                f"[Profiler] Cache hit. Loading existing simulation data from {hdf5_target_path}..."
+                f"Cache hit. Loading existing simulation data from {hdf5_target_path}..."
             )
             return td.SimulationData.from_file(str(hdf5_target_path))
 
         logger.info(
-            f"[Profiler] Cache miss. Uploading {param_dir} to Tidy3D cloud infrastructure..."
+            f"Cache miss. Uploading {param_dir} to Tidy3D cloud infrastructure..."
         )
         task_name = f"edge_coupler_{param_dir}"
         sim_data = web.run(
@@ -180,7 +180,7 @@ class edgeCoupler:
         )
 
         logger.info(
-            f"[Profiler] Execution complete. Serializing data to {hdf5_target_path}..."
+            f"Execution complete. Serializing data to {hdf5_target_path}..."
         )
         sim_data.to_file(str(hdf5_target_path))
 
@@ -249,7 +249,7 @@ class edgeCoupler:
         )
 
         logger.info(
-            f"[Analytics] Extracting transmission metrics from '{monitor_name}'..."
+            f"Extracting transmission metrics from '{monitor_name}'..."
         )
         try:
             target_freq = td.C_0 / self.wavelength0
@@ -292,13 +292,13 @@ class edgeCoupler:
                 )
 
             logger.info(
-                f"[Analytics] Transmission evaluation complete. Efficiency: {efficiency * 100.0:.2f}%"
+                f"Transmission evaluation complete. Efficiency: {efficiency * 100.0:.2f}%"
             )
             return efficiency
 
         except (KeyError, ValueError) as e:
             logger.error(
-                f"[Analytics Error] Failed to parse transmission efficiency cleanly: {e}"
+                f"Failed to parse transmission efficiency cleanly: {e}"
             )
             raise RuntimeError(
                 f"Failed to extract coupling efficiency from monitor '{monitor_name}' "
@@ -322,7 +322,7 @@ class edgeCoupler:
             force_rerun=force_rerun,
         )
         loss_db = float(-10.0 * np.log10(efficiency + 1e-12))
-        logger.info(f"[Analytics] Calculated Insertion Loss: {loss_db:.2f} dB")
+        logger.info(f"Calculated Insertion Loss: {loss_db:.2f} dB")
         return loss_db
 
     def plot_fields(

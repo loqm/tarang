@@ -54,53 +54,23 @@ def parametric_optimization_sweep(
     tip widths.
     """
 
-    sweep_taper_lengths = _values(
-        "sweep_taper_lengths",
-        sweep_taper_lengths,
-    )
-    sweep_tip_widths = _values(
-        "sweep_tip_widths",
-        sweep_tip_widths,
-    )
-    wg_width = _positive(
-        "wg_width",
-        wg_width,
-    )
-    wg_height = _positive(
-        "wg_height",
-        wg_height,
-    )
-    wavelength0 = _positive(
-        "wavelength0",
-        wavelength0,
-    )
-    substrate_height = _positive(
-        "substrate_height",
-        substrate_height,
-    )
-    fine_steps_per_wvl = _positive(
-        "fine_steps_per_wvl",
-        fine_steps_per_wvl,
-    )
-    coarse_steps_per_wvl = _positive(
-        "coarse_steps_per_wvl",
-        coarse_steps_per_wvl,
-    )
-    plot_dpi = _positive(
-        "plot_dpi",
-        plot_dpi,
-    )
-    top_cladding_height = _positive(
-        "top_cladding_height",
-        top_cladding_height,
-        allow_zero=True,
-    )
+    sweep_taper_lengths = _values("sweep_taper_lengths", sweep_taper_lengths)
+    sweep_tip_widths = _values("sweep_tip_widths", sweep_tip_widths)
+
+    wg_width = _positive("wg_width", wg_width)
+    wg_height = _positive("wg_height", wg_height)
+    wavelength0 = _positive("wavelength0", wavelength0)
+    substrate_height = _positive("substrate_height", substrate_height)
+
+    fine_steps_per_wvl = int(_positive("fine_steps_per_wvl", fine_steps_per_wvl))
+    coarse_steps_per_wvl = int(_positive("coarse_steps_per_wvl", coarse_steps_per_wvl))
+    plot_dpi = int(_positive("plot_dpi", plot_dpi))
+
+    top_cladding_height = _positive("top_cladding_height", top_cladding_height, allow_zero=True)
     if settling_buffer_length is not None:
-        settling_buffer_length = _positive(
-            "settling_buffer_length",
-            settling_buffer_length,
-            allow_zero=True,
-        )
+        settling_buffer_length = _positive("settling_buffer_length", settling_buffer_length, allow_zero=True)
+        
+    
     # Local import to prevent circular dependency with geometries.edge_coupler
     from geometries.edge_coupler import get_active_simulation
 
