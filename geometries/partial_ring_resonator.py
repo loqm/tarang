@@ -10,9 +10,13 @@ to a specified span angle centered at (0, -R), wrapped in a partialRingResonator
 This module defines a simulation with Absorber layers in the PML, specifically to
 handle guided wave truncation. Light that leaves the end of a ring hits the PML at
 oblique angles.
+
+Exposes: get_passive_simulation(), get_active_simulation(), get_optimal_plot_coords().
 """
 
 from __future__ import annotations
+from tarang import get_logger
+
 from typing import Optional, Tuple
 import warnings
 import numpy as np
@@ -20,33 +24,45 @@ import tidy3d as td
 
 from ringResonator.ring_resonator import partialRingResonator
 
+logger = get_logger(__name__)
+
 
 def get_passive_simulation(
     radius: float,
     gap: float,
+
     wg_width: float,
     wg_height: float,
+
     core_medium: td.Medium,
     substrate_medium: td.Medium,
+
     wavelength0: float,
-    span_angle_rad: float,   # In Radians
+
+    span_angle_rad: float,  # In Radians
     num_absorber_layers: int = 60,
+
     substrate_height: float = 4.0,
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
+
     fine_steps_per_wvl: float = 20,
     coarse_steps_per_wvl: float = 15,
+
     wg_length: Optional[float] = None,
+    run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
 ) -> partialRingResonator:
-    """
-    Constructs a passive simulation with the ring physically clipped to span_angle_rad.
+    """Constructs a passive simulation with the ring physically clipped to
+    span_angle_rad.
     """
 
     span_angle_deg = np.rad2deg(span_angle_rad)
 
-    if (span_angle_deg > 180.0):
-        raise ValueError(f"Received a span angle of {span_angle_deg:.1f}°. Span angles > 180° are not supported.")
-    elif (span_angle_deg == 180.0):
+    if span_angle_deg > 180.0:
+        raise ValueError(
+            f"Received a span angle of {span_angle_deg:.1f}°. Span angles > 180° are not supported."
+        )
+    elif span_angle_deg == 180.0:
         warnings.warn(
             "For a 180° span angle, using the 'half_ring_resonator' module is recommended for better performance.",
             UserWarning,
@@ -79,9 +95,15 @@ def get_passive_simulation(
     y_min = y_wg_center - (wg_width / 2.0) - 1.500
     y_max = y_arc_max + 1.500
 
-    domain_size_x = max(4.0, 2.0 * x_arc_max + 3.0)
+    domain_size_x = max(
+        4.0,
+        2.0 * x_arc_max + 3.0,
+    )
     if wg_length is not None:
-        domain_size_x = max(domain_size_x, wg_length)
+        domain_size_x = max(
+            domain_size_x,
+            wg_length,
+        )
 
     bus_length = domain_size_x + 2.0
     domain_size_y: float = y_max - y_min
@@ -110,22 +132,36 @@ def get_passive_simulation(
         )
         structures.append(cladding)
 
-    ring_outer_geom = td.Cylinder(
-        center=(0, 0, wg_height / 2.0),
-        radius=r_outer,
-        length=wg_height,
-        axis=2,
-    ) & clip_box
+    ring_outer_geom = (
+        td.Cylinder(
+            center=(0, 0, wg_height / 2.0),
+            radius=r_outer,
+            length=wg_height,
+            axis=2,
+        )
+        & clip_box
+    )
 
-    ring_inner_geom = td.Cylinder(
-        center=(0, 0, wg_height / 2.0),
-        radius=r_inner,
-        length=wg_height + 0.200,
-        axis=2,
-    ) & clip_box
+    ring_inner_geom = (
+        td.Cylinder(
+            center=(0, 0, wg_height / 2.0),
+            radius=r_inner,
+            length=wg_height + 0.200,
+            axis=2,
+        )
+        & clip_box
+    )
 
-    ring_outer = td.Structure(geometry=ring_outer_geom, medium=core_medium, name="Ring_Outer")
-    ring_inner = td.Structure(geometry=ring_inner_geom, medium=hole_medium, name="Ring_Inner_Hole")
+    ring_outer = td.Structure(
+        geometry=ring_outer_geom,
+        medium=core_medium,
+        name="Ring_Outer",
+    )
+    ring_inner = td.Structure(
+        geometry=ring_inner_geom,
+        medium=hole_medium,
+        name="Ring_Inner_Hole",
+    )
 
     bus_waveguide = td.Structure(
         geometry=td.Box(
@@ -141,7 +177,10 @@ def get_passive_simulation(
     # -- Grid & Run-time Optimization -- #
     max_path_length = domain_size_x + 2.0
     n_group_approx = 2.1
-    calculated_run_time = max(5e-13, (max_path_length / (td.C_0 / n_group_approx)) * 3.0)
+    calculated_run_time = max(
+        5e-13,
+        (max_path_length / (td.C_0 / n_group_approx)) * 3.0,
+    )
 
     freq0 = td.C_0 / wavelength0
     try:
@@ -160,6 +199,9 @@ def get_passive_simulation(
         enforce=True,
     )
 
+    if run_time is None:
+        run_time = calculated_run_time
+
     sim_passive = td.Simulation(
         center=(0.0, sim_center_y, wg_height / 2.0),
         size=(domain_size_x, domain_size_y, 3.000),
@@ -169,8 +211,8 @@ def get_passive_simulation(
             override_structures=[mesh_override],
         ),
         structures=structures,
-        run_time=calculated_run_time,
-        # Specify absorber layers 
+        run_time=run_time,
+        # Specify absorber layers
         boundary_spec=td.BoundarySpec(
             x=td.Boundary(
                 plus=td.Absorber(num_layers=num_absorber_layers),
@@ -195,7 +237,9 @@ def get_passive_simulation(
         core_medium=core_medium,
         substrate_medium=substrate_medium,
         substrate_height=substrate_height,
-        top_cladding_medium=top_cladding_medium if top_cladding_medium is not None else air_medium,
+        top_cladding_medium=(
+            top_cladding_medium if top_cladding_medium is not None else air_medium
+        ),
         top_cladding_height=top_cladding_height,
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
@@ -207,24 +251,45 @@ def get_passive_simulation(
 def get_active_simulation(
     radius: float,
     gap: float,
+
     wg_width: float,
     wg_height: float,
+
     core_medium: td.Medium,
     substrate_medium: td.Medium,
+
     wavelength0: float,
-    span_angle_rad: float = np.pi / 6.0,
+
+    span_angle_rad: float,
     num_absorber_layers: int = 60,
+
     substrate_height: float = 4.0,
+
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
+
     fine_steps_per_wvl: float = 20,
     coarse_steps_per_wvl: float = 15,
+
     wg_length: Optional[float] = None,
+    run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
 ) -> partialRingResonator:
+    """Add bus excitation and coupling monitors to the passive partial ring.
+    The span is the total angle; clipped ring ends require reflection checks.
     """
-    Constructs an active partial-ring simulation with mode sources and monitors.
-    """
-    resonator_obj = get_passive_simulation(
+    if not np.isfinite(span_angle_rad) or not 0 < span_angle_rad <= np.pi:
+        raise ValueError("span_angle_rad must be finite and in (0, pi].")
+    for name, value in [
+        ("radius", radius),
+        ("wg_width", wg_width),
+        ("wg_height", wg_height),
+        ("wavelength0", wavelength0),
+    ]:
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be finite and positive.")
+    if not np.isfinite(gap) or gap < 0 or radius <= wg_width / 2:
+        raise ValueError("Require gap >= 0 and radius > wg_width / 2.")
+    obj = get_passive_simulation(
         radius=radius,
         gap=gap,
         wg_width=wg_width,
@@ -240,82 +305,126 @@ def get_active_simulation(
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
         wg_length=wg_length,
+        run_time=run_time,
     )
-
-    sim_passive = resonator_obj.sim
-    freq0 = td.C_0 / wavelength0
-
+    sim = obj.sim
+    frequency = td.C_0 / wavelength0
     try:
-        n_eff = float(np.real(core_medium.n_complex(freq0)))
+        target_neff = float(np.real(core_medium.n_complex(frequency)))
     except Exception:
-        n_eff = 2.0
-
-    domain_size_x = sim_passive.size[0]
-    y_wg_center: float = -(radius + wg_width + gap)
-    mon_w = wg_width * 3.5
-    mon_h = wg_height * 2.5
-
+        target_neff = 2.0
+    mode_spec = td.ModeSpec(
+        num_modes=1,
+        target_neff=target_neff,
+    )
+    y_bus = -(radius + wg_width + gap)
+    z_core = wg_height / 2
+    mon_w, mon_h = 3.5 * wg_width, 2.5 * wg_height
+    x_edge = sim.size[0] / 2
+    # Ports lie outside the clipped ring's x extent, inside the domain.
+    x_ring = (radius + wg_width / 2) * np.sin(span_angle_rad / 2)
+    source_x = -(x_ring + 0.75 * (x_edge - x_ring))
+    input_x = -(x_ring + 0.35 * (x_edge - x_ring))
+    through_x = x_ring + 0.35 * (x_edge - x_ring)
     source = td.ModeSource(
-        center=(-domain_size_x / 2.0 + 1.0, y_wg_center, wg_height / 2.0),
+        center=(source_x, y_bus, z_core),
         size=(0, mon_w, mon_h),
         direction="+",
-        mode_spec=td.ModeSpec(num_modes=1, target_neff=n_eff),
-        source_time=td.GaussianPulse(freq0=freq0, fwidth=freq0 / 15),
-        name="Through_In",
-    )
-
-    monitor_thru = td.ModeMonitor(
-        center=(domain_size_x / 2.0 - 1.0, y_wg_center, wg_height / 2.0),
-        size=(0, mon_w, mon_h),
-        freqs=[freq0],
-        mode_spec=td.ModeSpec(num_modes=1, target_neff=n_eff),
-        name="Through_Out",
-    )
-
-    # Monitor along preserved arc segment
-    theta_drop = (abs(span_angle_rad) / 2.0) * 0.75
-    drop_x = radius * np.sin(theta_drop)
-    drop_y = -radius * np.cos(theta_drop)
-
-    mon_ring_drop = td.ModeMonitor(
-        center=(drop_x, drop_y, wg_height / 2.0),
-        size=(0, mon_w, mon_h),
-        freqs=[freq0],
-        mode_spec=td.ModeSpec(
-            num_modes=1,
-            target_neff=n_eff,
-            angle_theta=theta_drop,
-            bend_radius=radius,
-            bend_axis=1,
+        mode_spec=mode_spec,
+        source_time=td.GaussianPulse(
+            freq0=frequency,
+            fwidth=frequency / 10,
         ),
-        name="Ring_Drop_Out",
+        name="Bus_Source",
     )
-
-    monitor_field = td.FieldMonitor(
-        center=(0.0, sim_passive.center[1], wg_height / 2.0),
-        size=(td.inf, td.inf, 0),
-        freqs=[freq0],
-        name="coupling_field_map",
+    mon_h = min(
+        mon_h,
+        0.98 * sim.size[2],
     )
-
-    sim_active = sim_passive.updated_copy(
-        sources=[source],
-        monitors=[monitor_thru, mon_ring_drop, monitor_field],
+    monitors = [
+        td.ModeMonitor(
+            center=(input_x, y_bus, z_core),
+            size=(0, mon_w, mon_h),
+            freqs=[frequency],
+            mode_spec=mode_spec,
+            name="Through_In",
+        ),
+        td.ModeMonitor(
+            center=(through_x, y_bus, z_core),
+            size=(0, mon_w, mon_h),
+            freqs=[frequency],
+            mode_spec=mode_spec,
+            name="Through_Out",
+        ),
+    ]
+    # Diagnostic ring slices replace the absent 0°/180° ports of a half ring.
+    # At beta from the bottom, the +x tangent is (cos(beta), sin(beta), 0).
+    # For a yz mode plane, angle_phi=0 tilts toward +y, pi toward -y.
+    for name, beta in [
+        ("Ring_Out_Left", -0.4 * span_angle_rad),
+        ("Ring_Mon_270_Bot", 0.0),
+        ("Ring_Out_Right", 0.4 * span_angle_rad),
+    ]:
+        y_ring = -radius * np.cos(beta)
+        y_lower, y_upper = (
+            sim.center[1] - sim.size[1] / 2,
+            sim.center[1] + sim.size[1] / 2,
+        )
+        ring_mon_w = min(
+            mon_w / np.cos(beta),
+            1.96 * (y_ring - y_lower),
+            1.96 * (y_upper - y_ring),
+        )
+        monitors.append(
+            td.ModeMonitor(
+                center=(radius * np.sin(beta), y_ring, z_core),
+                size=(0, ring_mon_w, mon_h),
+                freqs=[frequency],
+                mode_spec=td.ModeSpec(
+                    num_modes=1,
+                    target_neff=target_neff,
+                    angle_theta=abs(beta),
+                    angle_phi=0.0 if beta >= 0 else float(np.pi),
+                ),
+                name=name,
+            )
+        )
+    monitors.append(
+        td.FieldMonitor(
+            center=(sim.center[0], sim.center[1], z_core),
+            size=(sim.size[0], sim.size[1], 0),
+            freqs=[frequency],
+            name="coupling_field_map",
+        )
     )
-
-    resonator_obj.sim = sim_active
-    return resonator_obj
+    obj.sim = sim.copy(
+        update={
+            "sources": [source],
+            "monitors": monitors,
+        }
+    )
+    warnings.warn(
+        "The supplied partial-ring geometry ends inside the simulation domain. "
+        "Check ring-port reflections and span convergence; its endpoints are not matched absorbers.",
+        UserWarning,
+        stacklevel=2,
+    )
+    return obj
 
 
 get_active_sim = get_active_simulation
+get_passive_sim = get_passive_simulation
 
 
 def get_optimal_plot_coords(sim: td.Simulation) -> Tuple[float, float, float]:
+    """Choose visualization slices through the waveguide core center.
+    Return the x, y, and z coordinates for this simulation geometry.
+    """
     x_coord = 0.0
     z_coord = float(sim.sources[0].center[2]) if sim.sources else float(sim.center[2])
     y_coord = float(sim.center[1])
 
-    print(
+    logger.info(
         f"[Visualizer] Locking All-Pass slice view onto coupling domain center: "
         f"X={x_coord:.3f}, Y={y_coord:.3f}, Z={z_coord:.3f}"
     )

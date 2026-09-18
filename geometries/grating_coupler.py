@@ -7,9 +7,13 @@ BUT properly supports a substrate layer when requested so your interference phys
 
 Author: Divyanshu Tiwari, Esraaj Sarkar Gupta
 Date: 2026
+
+Exposes: get_active_simulation(), get_ideal_coords().
 """
 
 from __future__ import annotations
+from tarang import get_logger
+
 from typing import TYPE_CHECKING
 import numpy as np
 import tidy3d as td
@@ -20,28 +24,33 @@ if TYPE_CHECKING:
     from gratingCoupler.grating_coupler import GratingCoupler
 
 
+logger = get_logger(__name__)
+
+
 def get_active_simulation(
     config: GratingConfig,
 
     core_medium: td.Medium,
     box_medium: td.Medium,
+
     substrate_medium: td.Medium,
     cladding_medium: td.Medium | None = None,  # Optional: Defaults to Air if None
 
     is_3d: bool = False,
 
     fine_steps_per_wvl: int = 20,
-    coarse_steps_per_wvl: int = 15
+    coarse_steps_per_wvl: int = 15,
+    run_time: float = 5e-12,  # Simulation duration in seconds.
 ) -> GratingCoupler:
     """
-    Constructs a Tidy3D simulation for the grating coupler and returns 
+    Constructs a Tidy3D simulation for the grating coupler and returns
     a wrapped GratingCoupler object.
     """
     freq0 = td.C_0 / config.wavelength_um
     freqs = np.linspace(
         td.C_0 / (config.wavelength_um + 0.01),
         td.C_0 / (config.wavelength_um - 0.01),
-        101
+        101,
     )
     fwidth = 0.5 * (np.max(freqs) - np.min(freqs))
 
@@ -52,7 +61,7 @@ def get_active_simulation(
         cladding_medium = td.Medium(permittivity=1.0)
 
     # -- 3D Check -- #
-    if is_3d:   # 3D Simulation
+    if is_3d:  # 3D Simulation
         y_size = config.w_grating
         y_min = -config.w_grating / 2
         y_max = config.w_grating / 2
@@ -62,19 +71,21 @@ def get_active_simulation(
         sim_y_size = config.w_grating + 2 * config.buffer
         source_y_size = 2 * config.mfd
 
-    else:   # 2D Simulation
+    else:  # 2D Simulation
         y_size = td.inf
         y_min = -inf_eff
         y_max = inf_eff
 
         y_boundary = td.Boundary.periodic()
 
-        sim_y_size = 0  
+        sim_y_size = 0
         source_y_size = td.inf
 
     # -- Theta Check -- #
     if config.theta_deg > 0:
-        print("[Simulation Builder]: Warning! Your theta is positive! I am correcting it automatically for you here.\n")
+        logger.warning(
+            "[Simulation Builder]: Warning! Your theta is positive! I am correcting it automatically for you here.\n"
+        )
         theta_deg = -abs(config.theta_deg)
     else:
         theta_deg = config.theta_deg
@@ -84,30 +95,30 @@ def get_active_simulation(
     box = td.Structure(
         geometry=td.Box.from_bounds(
             rmin=(-inf_eff, y_min, -config.box_height),
-            rmax=(inf_eff, y_max, 0)
+            rmax=(inf_eff, y_max, 0),
         ),
         medium=box_medium,
-        name="BOX"
+        name="BOX",
     )
-    
+
     # 2. Core Slab
     slab_waveguide = td.Structure(
         geometry=td.Box.from_bounds(
             rmin=(-inf_eff, y_min, 0),
-            rmax=(0, y_max, config.core_height)
+            rmax=(0, y_max, config.core_height),
         ),
         medium=core_medium,
-        name="Slab_Waveguide"
+        name="Slab_Waveguide",
     )
-    
+
     # 3. Etched Floor
     etched_waveguide = td.Structure(
         geometry=td.Box.from_bounds(
             rmin=(0, y_min, 0),
-            rmax=(inf_eff, y_max, config.core_height - config.etch_depth)
+            rmax=(inf_eff, y_max, config.core_height - config.etch_depth),
         ),
         medium=core_medium,
-        name="Etched_Waveguide"
+        name="Etched_Waveguide",
     )
 
     # 4. Grating Teeth
@@ -117,11 +128,11 @@ def get_active_simulation(
         tooth_center_z = config.core_height - (config.etch_depth / 2)
         tooth = td.Structure(
             geometry=td.Box(
-                center=(tooth_center_x, 0, tooth_center_z), 
-                size=(config.period * config.ff, y_size, config.etch_depth)
+                center=(tooth_center_x, 0, tooth_center_z),
+                size=(config.period * config.ff, y_size, config.etch_depth),
             ),
             medium=core_medium,
-            name=f"Tooth_{i}"
+            name=f"Tooth_{i}",
         )
         gratings.append(tooth)
 
@@ -129,39 +140,47 @@ def get_active_simulation(
     cladding = td.Structure(
         geometry=td.Box.from_bounds(
             rmin=(-inf_eff, y_min, 0),
-            rmax=(inf_eff, y_max, config.cladding_height)
+            rmax=(inf_eff, y_max, config.cladding_height),
         ),
         medium=cladding_medium,
-        name="Cladding"
+        name="Cladding",
     )
 
     structures = [cladding, etched_waveguide, slab_waveguide, box] + gratings
 
     l_grating = config.n_teeth * config.period
-    z_min_2d = -config.box_height - (config.substrate_height if substrate_medium is not None else config.buffer)
+    z_min_2d = -config.box_height - (
+        config.substrate_height if substrate_medium is not None else config.buffer
+    )
 
     # 6. Deep Silicon Substrate (If requested)
     if substrate_medium is not None:
         substrate = td.Structure(
             geometry=td.Box.from_bounds(
                 rmin=(-inf_eff, y_min, -config.box_height - config.substrate_height),
-                rmax=(inf_eff, y_max, -config.box_height)
+                rmax=(inf_eff, y_max, -config.box_height),
             ),
             medium=substrate_medium,
-            name="Substrate"
+            name="Substrate",
         )
-        structures.insert(0, substrate)
+        structures.insert(
+            0,
+            substrate,
+        )
 
     # ---- Source ---- #
     source = td.GaussianBeam(
         size=(2 * config.mfd, source_y_size, 0),
         center=[config.source_x, 0, config.cladding_height + config.source_gap],
-        source_time=td.GaussianPulse(freq0=freq0, fwidth=fwidth),
+        source_time=td.GaussianPulse(
+            freq0=freq0,
+            fwidth=fwidth,
+        ),
         angle_theta=np.deg2rad(theta_deg),
         direction="-",
         waist_radius=config.mfd / 2,
         pol_angle=config.pol_angle,
-        name="Fiber_Source"
+        name="Fiber_Source",
     )
 
     # ---- Monitors ---- #
@@ -169,29 +188,32 @@ def get_active_simulation(
         center=(-config.buffer / 2, 0, config.core_height / 2),
         size=(0, y_size, 6 * config.core_height),
         freqs=freqs,
-        mode_spec=td.ModeSpec(num_modes=1, target_neff=2.0),
-        name="mode monitor"
+        mode_spec=td.ModeSpec(
+            num_modes=1,
+            target_neff=2.0,
+        ),
+        name="mode monitor",
     )
 
     x_mon = td.FieldMonitor(
         center=(l_grating / 2, 0, config.core_height / 2),
         size=(0, sim_y_size, config.core_height + 3.0),
         freqs=[freq0],
-        name="field_x_plane"
+        name="field_x_plane",
     )
 
     y_mon = td.FieldMonitor(
         center=(l_grating / 2, 0, config.core_height / 2),
         size=(l_grating + 2.0 * config.buffer, 0, config.core_height + 3.0),
         freqs=[freq0],
-        name="field_y_plane"
+        name="field_y_plane",
     )
 
     z_mon = td.FieldMonitor(
         center=(l_grating / 2, 0, config.core_height / 2),
         size=(l_grating + 2.0 * config.buffer, sim_y_size, 0),
         freqs=[freq0],
-        name="field_z_plane"
+        name="field_z_plane",
     )
 
     x_pad = 3.0 * config.wavelength_um if not is_3d else 0.0
@@ -199,7 +221,11 @@ def get_active_simulation(
 
     sim_box = td.Box.from_bounds(
         rmin=(x_min_sim, -sim_y_size / 2 if is_3d else 0, z_min_2d),
-        rmax=(l_grating + config.buffer, sim_y_size / 2 if is_3d else 0, config.core_height + config.cladding_height + config.buffer),
+        rmax=(
+            l_grating + config.buffer,
+            sim_y_size / 2 if is_3d else 0,
+            config.core_height + config.cladding_height + config.buffer,
+        ),
     )
 
     n_core_approx = 2.0
@@ -208,30 +234,34 @@ def get_active_simulation(
     mesh_override = td.MeshOverrideStructure(
         geometry=td.Box(
             center=(l_grating / 2, 0, config.core_height / 2),
-            size=(l_grating + 2.0, sim_y_size, config.core_height + config.etch_depth + 1.0)
+            size=(
+                l_grating + 2.0,
+                sim_y_size,
+                config.core_height + config.etch_depth + 1.0,
+            ),
         ),
         dl=[dl_fine, dl_fine, dl_fine],
-        enforce=True
+        enforce=True,
     )
 
     sim = td.Simulation(
         center=sim_box.center,
         size=sim_box.size,
         grid_spec=td.GridSpec.auto(
-            min_steps_per_wvl=coarse_steps_per_wvl, 
+            min_steps_per_wvl=coarse_steps_per_wvl,
             wavelength=config.wavelength_um,
-            override_structures=[mesh_override]
+            override_structures=[mesh_override],
         ),
         structures=structures,
         sources=[source],
         monitors=[mode_monitor, x_mon, y_mon, z_mon],
-        run_time=5e-12,
+        run_time=run_time,
         boundary_spec=td.BoundarySpec(
             x=td.Boundary.pml(),
             y=y_boundary,
             z=td.Boundary.pml(),
         ),
-        medium=cladding_medium
+        medium=cladding_medium,
     )
 
     # Lazy import at runtime
@@ -246,13 +276,20 @@ def get_active_simulation(
         cladding_medium=cladding_medium,
         is_3d=is_3d,
         fine_steps_per_wvl=fine_steps_per_wvl,
-        coarse_steps_per_wvl=coarse_steps_per_wvl
+        coarse_steps_per_wvl=coarse_steps_per_wvl,
     )
 
+get_active_sim = get_active_simulation
 
 def get_ideal_coords(sim: td.Simulation) -> tuple[float, float, float]:
+    """Choose slice coordinates through the grating and input region.
+    Return the x, y, and z positions used for geometry visualization.
+    """
     x_coord = float(sim.center[0])
     y_coord = 0.0
-    wg_struct = next((s for s in sim.structures if s.name == "Slab_Waveguide"), None)
+    wg_struct = next(
+        (s for s in sim.structures if s.name == "Slab_Waveguide"),
+        None,
+    )
     z_coord = float(wg_struct.geometry.center[2]) if wg_struct else float(sim.center[2])
     return x_coord, y_coord, z_coord

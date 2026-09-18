@@ -3,9 +3,13 @@ geometries.half_ring_resonator
 
 Authors: Divyanshu Tiwari, Esraaj Sarkar Gupta
 Date: 2026
+
+Exposes: get_passive_simulation(), get_active_simulation(), get_optimal_plot_coords().
 """
 
 from __future__ import annotations
+from tarang import get_logger
+
 from typing import Optional, Tuple
 
 import numpy as np
@@ -13,24 +17,34 @@ import tidy3d as td
 
 from ringResonator.ring_resonator import halfringResonator
 
+logger = get_logger(__name__)
+
 
 def get_passive_simulation(
     radius: float,
     gap: float,
+
     wg_width: float,
     wg_height: float,
+
     core_medium: td.Medium,
     substrate_medium: td.Medium,
+
     wavelength0: float,
+
     substrate_height: float = 4.0,
+
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
+
     fine_steps_per_wvl: float = 20,
-    coarse_steps_per_wvl: float = 10,
+    coarse_steps_per_wvl: float = 15,
+
     wg_length: Optional[float] = None,
+    run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
 ) -> halfringResonator:
-    """
-    Constructs a truncated half-ring resonator passive simulation wrapped in a halfringResonator object.
+    """Constructs a truncated half-ring resonator passive simulation wrapped in a
+    halfringResonator object.
     """
     if wg_length is None:
         wg_length = 2 * radius + 5.000
@@ -112,7 +126,10 @@ def get_passive_simulation(
     max_path_length = wg_length + (np.pi * radius)
     n_group_approx = 2.1
     single_pass_time = max_path_length / (td.C_0 / n_group_approx)
-    calculated_run_time = max(5e-13, single_pass_time * 2.5)
+    calculated_run_time = max(
+        5e-13,
+        single_pass_time * 2.5,
+    )
 
     freq0 = td.C_0 / wavelength0
     try:
@@ -131,6 +148,9 @@ def get_passive_simulation(
         enforce=True,
     )
 
+    if run_time is None:
+        run_time = calculated_run_time
+
     sim_passive = td.Simulation(
         center=(0.0, sim_center_y, wg_height / 2.0),
         size=(domain_size_x, domain_size_y, 3.000),
@@ -140,7 +160,7 @@ def get_passive_simulation(
             override_structures=[mesh_override],
         ),
         structures=structures,
-        run_time=calculated_run_time,
+        run_time=run_time,
         boundary_spec=td.BoundarySpec(
             x=td.Boundary.pml(),
             y=td.Boundary.pml(),
@@ -158,7 +178,9 @@ def get_passive_simulation(
         core_medium=core_medium,
         substrate_medium=substrate_medium,
         substrate_height=substrate_height,
-        top_cladding_medium=top_cladding_medium if top_cladding_medium is not None else air_medium,
+        top_cladding_medium=(
+            top_cladding_medium if top_cladding_medium is not None else air_medium
+        ),
         top_cladding_height=top_cladding_height,
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
@@ -170,20 +192,28 @@ def get_passive_simulation(
 def get_active_simulation(
     radius: float,
     gap: float,
+
     wg_width: float,
     wg_height: float,
+
     core_medium: td.Medium,
     substrate_medium: td.Medium,
+
     wavelength0: float,
+
     substrate_height: float = 4.0,
+
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
-    fine_steps_per_wvl: float = 10,
-    coarse_steps_per_wvl: float = 8,
+
+    fine_steps_per_wvl: float = 20,
+    coarse_steps_per_wvl: float = 15,
+
     wg_length: Optional[float] = None,
+    run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
 ) -> halfringResonator:
-    """
-    Constructs an active half-ring simulation with mode sources and monitors.
+    """Constructs an active half-ring simulation with mode sources and monitors.
+    Return a wrapped device ready for explicit simulation execution.
     """
     resonator_obj = get_passive_simulation(
         radius=radius,
@@ -199,6 +229,7 @@ def get_active_simulation(
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
         wg_length=wg_length,
+        run_time=run_time,
     )
 
     sim_passive = resonator_obj.sim
@@ -220,8 +251,14 @@ def get_active_simulation(
         center=(-wg_length / 2.0 + 1.0, y_wg_center, wg_height / 2.0),
         size=(0, mon_w, mon_h),
         direction="+",
-        mode_spec=td.ModeSpec(num_modes=1, target_neff=n_eff),
-        source_time=td.GaussianPulse(freq0=freq0, fwidth=freq0 / 15),
+        mode_spec=td.ModeSpec(
+            num_modes=1,
+            target_neff=n_eff,
+        ),
+        source_time=td.GaussianPulse(
+            freq0=freq0,
+            fwidth=freq0 / 15,
+        ),
         name="Through_In",
     )
 
@@ -229,7 +266,10 @@ def get_active_simulation(
         center=(wg_length / 2.0 - 1.0, y_wg_center, wg_height / 2.0),
         size=(0, mon_w, mon_h),
         freqs=[freq0],
-        mode_spec=td.ModeSpec(num_modes=1, target_neff=n_eff),
+        mode_spec=td.ModeSpec(
+            num_modes=1,
+            target_neff=n_eff,
+        ),
         name="Through_Out",
     )
 
@@ -237,7 +277,10 @@ def get_active_simulation(
         center=(0.0, -radius, wg_height / 2.0),
         size=(0, mon_w, mon_h),
         freqs=[freq0],
-        mode_spec=td.ModeSpec(num_modes=1, target_neff=n_eff),
+        mode_spec=td.ModeSpec(
+            num_modes=1,
+            target_neff=n_eff,
+        ),
         name="Ring_Mon_270_Bot",
     )
 
@@ -245,7 +288,10 @@ def get_active_simulation(
         center=(radius, 0.0, wg_height / 2.0),
         size=(mon_w, 0, mon_h),
         freqs=[freq0],
-        mode_spec=td.ModeSpec(num_modes=1, target_neff=n_eff),
+        mode_spec=td.ModeSpec(
+            num_modes=1,
+            target_neff=n_eff,
+        ),
         name="Ring_Mon_0_Right",
     )
 
@@ -253,7 +299,10 @@ def get_active_simulation(
         center=(-radius, 0.0, wg_height / 2.0),
         size=(mon_w, 0, mon_h),
         freqs=[freq0],
-        mode_spec=td.ModeSpec(num_modes=1, target_neff=n_eff),
+        mode_spec=td.ModeSpec(
+            num_modes=1,
+            target_neff=n_eff,
+        ),
         name="Ring_Mon_180_Left",
     )
 
@@ -272,18 +321,21 @@ def get_active_simulation(
         monitor_field,
     ]
 
-    sim_active = sim_passive.updated_copy(sources=[source], monitors=monitors_list)
+    sim_active = sim_passive.updated_copy(
+        sources=[source],
+        monitors=monitors_list,
+    )
 
     resonator_obj.sim = sim_active
     return resonator_obj
 
 
 get_active_sim = get_active_simulation
-
+get_passive_sim = get_passive_simulation
 
 def get_optimal_plot_coords(sim: td.Simulation) -> Tuple[float, float, float]:
-    """
-    Slicing helper focused on the critical point-coupling window (X=0 cross section).
+    """Slicing helper focused on the critical point-coupling window (X=0 cross
+    section).
     """
     x_coord = 0.0
     if sim.sources:
@@ -293,7 +345,7 @@ def get_optimal_plot_coords(sim: td.Simulation) -> Tuple[float, float, float]:
         y_coord = float(sim.center[1])
         z_coord = float(sim.center[2])
 
-    print(
+    logger.info(
         f"[Visualizer] Locking All-Pass slice view onto coupling center: X={x_coord}, Y={y_coord}, Z={z_coord}"
     )
     return x_coord, y_coord, z_coord
