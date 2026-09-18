@@ -1,439 +1,604 @@
 """
-ringSearches/ring_gap_sweep.py
+ringResonator.ring_gap_sweep: gap sweeps using partial-ring geometry.
 
-Author: Esraaj Sarkar Gupta
-Date: 2026
+Original critical-coupling equations: Esraaj Sarkar Gupta, 2026.
+The first monotonic coupling branch is selected using the legacy peak/filter
+rule; intensity alone does not uniquely unwrap arbitrary coupling branches.
 
-Optimization:
-    -> Completely autonomous. Generates its own intrinsic metrics from scratch.
-    -> Bypasses argmin transmission hunting.
-    -> Unwraps T_thru = cos^2(theta) to extract the monotonic coupling phase theta(gap).
-    -> Fits theta(gap) to an exponential decay curve.
-    -> Solves for the exact analytic critical gap.
-    -> Self-caching. Future runs at the same radius/architecture just regenerate plots.
-    -> Sequential processing: Runs simulations one-by-one to avoid batch limits and saves HDF5 files.
-    -> Architecture & Geometry-aware caching: Local cache files explicitly track geometry and arc type.
+Exposes: ring_gap_sweep(), radius_gap_sweep().
 """
 
-import json
+from __future__ import annotations
+
+from functools import partial
 from pathlib import Path
-from typing import Optional, Tuple
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+
 import numpy as np
-
 import tidy3d as td
-from tidy3d import web
 
-from geometries.half_ring_resonator import get_active_simulation as get_half_ring_sim
-from geometries.partial_ring_resonator import get_active_simulation as get_partial_ring_sim
-from geometries.resonator_arc import get_active_simulation as get_arc_sim
+from tarang import get_logger
+from utilities.json_helpers import log_json, save_json as _save, snapshot as _snapshot
+from utilities.sweep_helpers import cache_dir as _cache_dir, r_squared as _r_squared
+from utilities.validation import (
+    check_object as _check_object,
+    positive as _positive,
+    values as _values,
+    resolve_span as _resolve_span,
+)
+
+logger = get_logger(__name__)
+_emit = partial(
+    log_json,
+    logger=logger,
+)
 
 
-def _extract_geometry_kwargs(kwargs: dict) -> dict:
+def _fit_coupling(
+    gaps,
+    transmissions,
+    radius,
+    qi,
+    volume,
+    wavelength,
+    ng,
+    *,
+    theta_fit_bounds_rad=(0.05, 1.5),
+    fit_after_peak=True,
+    min_fit_points=2,
+):
     """
-    Normalizes geometry keyword arguments across resonator modules.
-    Handles field aliasing (e.g. core_mat -> core_medium, cladding_mat -> top_cladding_medium).
+    Fit exponential gap-dependent coupling on the selected valid branch.
+    Return critical-gap predictions, quality factors, and fit diagnostics.
     """
-    clean_kwargs = dict(kwargs)
-    core = kwargs.get("core_medium", kwargs.get("core_mat"))
-    sub = kwargs.get("substrate_medium", kwargs.get("sub_mat", kwargs.get("substrate_mat")))
-    clad = kwargs.get(
-        "top_cladding_medium", 
-        kwargs.get("cladding_medium", kwargs.get("cladding_mat"))
-    )
-    height = kwargs.get("wg_height", kwargs.get("wg_thickness"))
-
-    # Cleanup aliases
-    for key in ["core_mat", "sub_mat", "substrate_mat", "cladding_mat", "cladding_medium", "wg_thickness"]:
-        clean_kwargs.pop(key, None)
-
-    if core is not None:
-        clean_kwargs["core_medium"] = core
-    if sub is not None:
-        clean_kwargs["substrate_medium"] = sub
-    if clad is not None:
-        clean_kwargs["top_cladding_medium"] = clad
-    if height is not None:
-        clean_kwargs["wg_height"] = height
-
-    return clean_kwargs
-
-
-def compute_intrinsic_metrics(
-    radius_um: float,
-    target_wavelength_um: float,
-    scattering_loss_db_cm: float,
-    base_output_dir: Path,
-    fine_steps_per_wvl: int = 20,
-    coarse_steps_per_wvl: int = 10,
-    bend_angles_deg: Tuple[int, ...] = (90, 180, 270),
-    **geometry_kwargs
-) -> dict:
-    """
-    Calculates bending loss and group index using a multi-angle cutback
-    regression over annular arcs (replaces the old 90-vs-180 two-point
-    subtraction, which is extremely sensitive to any constant per-simulation
-    offset since it divides by a tiny ~0.017 cm baseline).
-    """
-    print(f"[Metrics] Simulating annular arcs sequentially for R={radius_um} um...")
-
-    arc_kwargs = _extract_geometry_kwargs(geometry_kwargs)
-    # resonator_arc specifically expects cladding_medium instead of top_cladding_medium
-    if "top_cladding_medium" in arc_kwargs:
-        arc_kwargs["cladding_medium"] = arc_kwargs.pop("top_cladding_medium")
-
-    w_val = arc_kwargs.get("wg_width", "NA")
-    h_val = arc_kwargs.get("wg_height", "NA")
-    geom_str = f"R{radius_um}_w{w_val}_h{h_val}_res{fine_steps_per_wvl}_{coarse_steps_per_wvl}"
-
-    arc_cache_dir = base_output_dir / "arc_cache"
-    arc_cache_dir.mkdir(parents=True, exist_ok=True)
-
-    # --- PHASE 1: BUILD + RUN ALL ARC SIMULATIONS ---
-    sim_objs = {}
-    sim_data_dict = {}
-
-    for angle in bend_angles_deg:
-        name = f"Arc_{angle}_{geom_str}"
-        arc_obj = get_arc_sim(
-            radius=radius_um,
-            bend_angle_deg=angle,
-            wavelength0=target_wavelength_um,
-            fine_steps_per_wvl=fine_steps_per_wvl,
-            coarse_steps_per_wvl=coarse_steps_per_wvl,
-            **arc_kwargs
+    order = np.argsort(gaps)
+    gaps = np.asarray(
+        gaps,
+        dtype=float,
+    )[order]
+    transmission = np.asarray(
+        transmissions,
+        dtype=float,
+    )[order]
+    theta = np.arccos(
+        np.sqrt(
+            np.clip(
+                transmission,
+                0,
+                1,
+            )
         )
-        sim_objs[angle] = arc_obj
-
-        filepath = arc_cache_dir / f"{name}.hdf5"
-        if filepath.exists():
-            print(f"[Metrics] Loading cached FDTD data for {name} from {filepath}")
-            sim_data_dict[angle] = td.SimulationData.from_file(str(filepath))
-        else:
-            print(f"[Metrics] Submitting job for {name}...")
-            job = web.Job(simulation=arc_obj.sim, task_name=name)
-            try:
-                est_credits = job.estimate_cost()
-                print(f"[Cost Estimate] Estimated cost for {name}: {est_credits:.4f} Flex Credits")
-            except Exception as e:
-                print(f"[Cost Estimate] Could not retrieve cost estimate for {name}: {e}")
-            sim_data = job.run(path=str(filepath))
-            sim_data_dict[angle] = sim_data
-
-    # --- PHASE 2: LOCK A SINGLE, GLOBALLY-CONSISTENT PROPAGATION DIRECTION ---
-    # Old code called max(amp_plus, amp_minus) independently per simulation.
-    # That lets each sim silently pick a different "forward" direction, which
-    # is fatal for any comparison (subtraction, regression) across them. Here
-    # we sum power in each direction across every angle and commit to whichever
-    # direction dominates in total -- a real transmitted signal should stay
-    # dominant across all arc lengths, while a one-off flip from reflection or
-    # mode mismatch at a single angle won't be enough to hijack the total.
-    power_plus_total = 0.0
-    power_minus_total = 0.0
-    raw_amp_by_angle = {}
-
-    for angle, sim_data in sim_data_dict.items():
-        mon = sim_data['Mode Monitor']
-        amp_data = mon.amps.isel(f=1) if ("f" in mon.amps.dims and mon.amps.sizes.get("f", 1) > 1) else mon.amps
-
-        amp_plus = np.abs(amp_data.sel(direction="+", mode_index=0).item())**2
-        amp_minus = np.abs(amp_data.sel(direction="-", mode_index=0).item())**2
-
-        raw_amp_by_angle[angle] = (amp_plus, amp_minus)
-        power_plus_total += amp_plus
-        power_minus_total += amp_minus
-
-    propagation_direction = "+" if power_plus_total >= power_minus_total else "-"
-    print(f"[Metrics] Locked propagation direction = '{propagation_direction}' "
-          f"(total power +: {power_plus_total:.4e}, -: {power_minus_total:.4e})")
-
-    # --- PHASE 3: EXTRACT LOSS PER ANGLE USING THE FIXED DIRECTION ---
-    arc_lengths_cm = []
-    loss_db_values = []
-
-    for angle in bend_angles_deg:
-        amp_plus, amp_minus = raw_amp_by_angle[angle]
-        t = amp_plus if propagation_direction == "+" else amp_minus
-
-        assert 0.0 < t <= 1.05, f"Unphysical transmission T_{angle} = {t:.4f} (dir={propagation_direction})."
-
-        loss_db = -10 * np.log10(t)
-        length_cm = (np.deg2rad(angle) * radius_um) * 1e-4
-
-        arc_lengths_cm.append(length_cm)
-        loss_db_values.append(loss_db)
-
-        print(f"[Metrics] Angle={angle}deg | L={length_cm*1e4:.2f}um | T={t:.4f} | Loss={loss_db:.3f} dB")
-
-    arc_lengths_cm = np.array(arc_lengths_cm)
-    loss_db_values = np.array(loss_db_values)
-
-    # Linear regression: loss_dB(L) = alpha_bend * L + offset.
-    # The offset absorbs constant per-simulation mismatch (taper coupling,
-    # small reflections) instead of letting it leak into the slope, which a
-    # 2-point difference over a short baseline can't do.
-    slope, intercept = np.polyfit(arc_lengths_cm, loss_db_values, 1)
-
-    alpha_bend_db_cm = max(0.0, float(slope))
-    print(f"[Metrics] Cutback regression over {len(bend_angles_deg)} angles: "
-          f"alpha_bend = {alpha_bend_db_cm:.4f} dB/cm (facet/taper offset ~ {intercept:.3f} dB)")
-
-    alpha_total_db_cm = alpha_bend_db_cm + scattering_loss_db_cm
-    alpha_m = (alpha_total_db_cm * 100) / 4.343
-
-    # Group index solve uses any one of the arc sims as a reference geometry.
-    ref_arc_obj = sim_objs[bend_angles_deg[0]]
-    try:
-        n_group = float(ref_arc_obj.get_group_index(
-            target_neff=1.8,
-            mode_index=0,
-            use_bend_radius=True,
-            local=True
-        ))
-    except Exception as e:
-        print(f"[Error] Failed to calculate group index via mode solver: {e}")
-        raise RuntimeError(f"Group index calculation failed for R={radius_um} um arc: {e}") from e
-
-    q_intrinsic = (2 * np.pi * n_group) / ((target_wavelength_um * 1e-6) * alpha_m)
-
-    print(f"[Metrics] Calculated Q_intrinsic: {q_intrinsic:.1f} | n_group: {n_group:.4f}")
-
-    return {
-        "q_intrinsic": q_intrinsic,
-        "n_group": n_group,
-        "bend_loss_db_cm": alpha_bend_db_cm,
-        "total_loss_db_cm": alpha_total_db_cm,
-        "cutback_fit": {
-            "angles_deg": list(bend_angles_deg),
-            "lengths_cm": arc_lengths_cm.tolist(),
-            "loss_db": loss_db_values.tolist(),
-            "facet_offset_db": float(intercept),
-            "propagation_direction": propagation_direction,
-        },
-    }
-
-def run_gap_optimization_batch(
-    gap_sweep_array: np.ndarray,
-    radius_um: float, 
-    volume_um3: float,
-    target_wavelength_um: float,
-    scattering_loss_db_cm: float,
-    base_output_dir: Path,
-    architecture: str = "half_ring",
-    span_angle: Optional[float] = None,
-    fine_steps_per_wvl: int = 20,
-    coarse_steps_per_wvl: int = 15,
-    **geometry_kwargs
-) -> dict:
-    """
-    Executes a gap optimization sweep for either a half_ring or partial_ring architecture.
-    """
-    base_output_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = base_output_dir / "analytic_coupling_manifest.json"
-    field_maps_dir = base_output_dir / "field_maps"
-    field_maps_dir.mkdir(parents=True, exist_ok=True)
-    gap_cache_dir = base_output_dir / "gap_cache"
-    gap_cache_dir.mkdir(parents=True, exist_ok=True)
-    
-    clean_geometry_kwargs = _extract_geometry_kwargs(geometry_kwargs)
-
-    # Determine Architecture & Cache Tags
-    if span_angle is not None or architecture == "partial_ring":
-        architecture = "partial_ring"
-        span_angle = span_angle if span_angle is not None else 10.0
-        arch_tag = f"partial_{span_angle:.1f}deg"
-    else:
-        architecture = "half_ring"
-        arch_tag = "half_ring"
-
-    w_val = clean_geometry_kwargs.get("wg_width", "NA")
-    h_val = clean_geometry_kwargs.get("wg_height", "NA")
-    geom_str = f"{arch_tag}_R{radius_um}_w{w_val}_h{h_val}_res{fine_steps_per_wvl}_{coarse_steps_per_wvl}"
-
-    # --- CACHE HIT: BYPASS FDTD ---
-    if manifest_path.exists():
-        print(f"[Gap Solver] Cache hit at {manifest_path}. Bypassing FDTD compute, pulling existing data.")
-        with open(manifest_path, "r") as f:
-            cached_data = json.load(f)
-            return cached_data["critical_metrics"]
-
-    # --- PHASE 1: GENERATE INTRINSIC METRICS ---
-    metrics = compute_intrinsic_metrics(
-        radius_um=radius_um,
-        target_wavelength_um=target_wavelength_um,
-        scattering_loss_db_cm=scattering_loss_db_cm,
-        base_output_dir=base_output_dir,
-        fine_steps_per_wvl=fine_steps_per_wvl,
-        coarse_steps_per_wvl=coarse_steps_per_wvl,
-        # bend_angles_deg=(90, 180, 270),  # uncomment to override the default
-        **clean_geometry_kwargs
     )
-    
-    q_intrinsic = metrics["q_intrinsic"]
-    n_group = metrics["n_group"]
-
-    # --- PHASE 2: GAP SWEEP FDTD (SEQUENTIAL) ---
-    print(f"\n[Solver] Initializing sequential FDTD runs ({architecture}) for {len(gap_sweep_array)} gaps...")
-    
-    active_sim_data = {}
-    
-    for gap in gap_sweep_array:
-        sim_key = f"Gap_{gap:.3f}_{geom_str}"
-        filepath = gap_cache_dir / f"{sim_key}.hdf5"
-        
-        if architecture == "partial_ring":
-            resonator_obj = get_partial_ring_sim(
-                radius=radius_um,
-                gap=gap,
-                wavelength0=target_wavelength_um,
-                span_angle=span_angle,
-                fine_steps_per_wvl=fine_steps_per_wvl,     
-                coarse_steps_per_wvl=coarse_steps_per_wvl, 
-                **clean_geometry_kwargs
-            )
-        else:
-            resonator_obj = get_half_ring_sim(
-                radius=radius_um,
-                gap=gap,
-                wavelength0=target_wavelength_um,
-                fine_steps_per_wvl=fine_steps_per_wvl,     
-                coarse_steps_per_wvl=coarse_steps_per_wvl, 
-                **clean_geometry_kwargs
-            )
-        
-        if filepath.exists():
-            print(f"[Solver] Loading cached FDTD data for {sim_key}...")
-            sim_data = td.SimulationData.from_file(str(filepath))
-        else:
-            print(f"[Solver] Submitting job for {sim_key}...")
-            job = web.Job(simulation=resonator_obj.sim, task_name=sim_key)
-            sim_data = job.run(path=str(filepath))
-            
-        active_sim_data[sim_key] = sim_data
-
-    # --- PHASE 3: DATA EXTRACTION ---
-    raw_data = []
-    results_manifest = {}
-    
-    for sim_key, sim_data in active_sim_data.items():
-        # Parse gap value out of the formatted key string
-        gap_val = float(sim_key.split("_")[1])
-        
-        try:
-            amp_plus = np.abs(sim_data['Through_Out'].amps.sel(direction="+", mode_index=0).item())**2
-            amp_minus = np.abs(sim_data['Through_Out'].amps.sel(direction="-", mode_index=0).item())**2
-            T_thru = float(max(amp_plus, amp_minus))
-            T_thru = max(0.0, min(1.0, T_thru))
-            
-            raw_data.append((gap_val, T_thru))
-            
-            # Record internal track power if monitor exists
-            ring_power_bot = 0.0
-            if 'Ring_Mon_270_Bot' in sim_data:
-                amps_bot = sim_data['Ring_Mon_270_Bot'].amps.sel(direction="+", mode_index=0).item()
-                ring_power_bot = float(np.abs(amps_bot)**2)
-
-            results_manifest[sim_key] = {
-                "gap_um": gap_val,
-                "through_port_power": T_thru,
-                "ring_power_270_bot": ring_power_bot
-            }
-            
-            if 'coupling_field_map' in sim_data:
-                field_data = sim_data['coupling_field_map']
-                fig, ax = plt.subplots(figsize=(10, 4), dpi=300)
-                E_mag = np.sqrt(np.abs(field_data.Ex)**2 + np.abs(field_data.Ey)**2 + np.abs(field_data.Ez)**2)
-                E_mag.isel(f=0).plot(x='x', y='y', ax=ax, cmap='magma', robust=True)
-                ax.set_title(f"Field Intensity ({arch_tag}, R={radius_um}um, Gap={gap_val*1000:.0f}nm)", fontsize=10)
-                ax.set_aspect('equal')
-                fig.tight_layout()
-                plt.savefig(field_maps_dir / f"field_map_{sim_key}.png")
-                plt.close(fig)
-                
-        except Exception as e:
-            print(f"[Warning] Data extraction failed for {sim_key}: {e}")
-
-    # --- PHASE 4: ANALYTIC MATH ---
-    raw_data.sort(key=lambda x: x[0])
-    gaps = np.array([d[0] for d in raw_data])
-    t_thrus = np.array([d[1] for d in raw_data])
-    
-    theta_raw = np.arccos(np.sqrt(t_thrus))
-    
-    peak_idx = np.argmax(theta_raw)
-    valid_idx = np.zeros_like(theta_raw, dtype=bool)
-    valid_idx[peak_idx:] = True
-    valid_idx &= (theta_raw > 0.05) & (theta_raw < 1.5) 
-    
-    fit_gaps = gaps[valid_idx]
-    fit_theta = theta_raw[valid_idx]
-
-    poly = np.polyfit(fit_gaps, np.log(fit_theta), 1)
-    gamma = -poly[0]
-    theta_0 = np.exp(poly[1])
-    
-    L_um = 2 * np.pi * radius_um
-    a = np.exp(-np.pi * n_group * L_um / (q_intrinsic * target_wavelength_um))
-    
-    target_cross_power = 1.0 - a**2
-    theta_target = np.arcsin(np.sqrt(target_cross_power))
-    
-    critical_gap = -(1.0 / gamma) * np.log(theta_target / theta_0)
-    
-    q_loaded = q_intrinsic / 2.0
-    fom = (q_loaded**2) / volume_um3
-    
-    critical_metrics = {
-        "architecture": architecture,
-        "span_angle": span_angle,
-        "radius_um": radius_um,
+    lower, upper = theta_fit_bounds_rad
+    valid = (
+        np.arange(len(gaps)) >= np.argmax(theta)
+        if fit_after_peak
+        else np.ones(
+            len(gaps),
+            dtype=bool,
+        )
+    )
+    valid &= (theta > lower) & (theta < upper)
+    if np.count_nonzero(valid) < min_fit_points:
+        raise ValueError(
+            f"Need {min_fit_points} points within theta bounds "
+            f"{theta_fit_bounds_rad}; extend the gap sweep or adjust fit arguments."
+        )
+    slope, intercept = np.polyfit(
+        gaps[valid],
+        np.log(theta[valid]),
+        1,
+    )
+    gamma, theta_0 = float(-slope), float(np.exp(intercept))
+    if not np.isfinite(gamma) or gamma <= 0 or not np.isfinite(theta_0):
+        raise ValueError(
+            "Coupling fit must have finite theta_0 and positive decay gamma."
+        )
+    length = 2 * np.pi * radius
+    log_a = -np.pi * ng * length / (qi * wavelength)
+    a = float(np.exp(log_a))
+    cross_power = float(-np.expm1(2 * log_a))
+    theta_target = float(np.arcsin(np.sqrt(cross_power)))
+    critical_gap = float((intercept - np.log(theta_target)) / gamma)
+    fit_min, fit_max = float(gaps[valid].min()), float(gaps[valid].max())
+    q_loaded = qi / 2
+    return {
+        "radius_um": radius,
+        "wavelength_um": wavelength,
+        "n_group": ng,
         "critical_gap_um": critical_gap,
+        "critical_gap_nonnegative": critical_gap >= 0,
+        "critical_gap_extrapolated": not fit_min <= critical_gap <= fit_max,
+        "round_trip_length_um": length,
         "round_trip_a": a,
-        "target_cross_power": target_cross_power,
-        "q_intrinsic": q_intrinsic,
+        "round_trip_power_survival": a**2,
+        "round_trip_loss_db": float(-20 * log_a / np.log(10)),
+        "target_cross_power": cross_power,
+        "target_through_power": a**2,
+        "theta_target_rad": theta_target,
+        "q_intrinsic": qi,
         "q_loaded": q_loaded,
-        "volume_um3": volume_um3,
-        "fom_raw": fom,
-        "fit_params": {"theta_0": theta_0, "gamma": gamma},
-        "bend_metrics": metrics
+        "q_coupling_at_critical": qi,
+        "volume_um3": volume,
+        "fom_raw": q_loaded**2 / volume,
+        "fit_params": {
+            "theta_0": theta_0,
+            "gamma": gamma,
+            "gamma_units": "1/um",
+        },
+        "fit_r_squared_log_theta": _r_squared(
+            np.log(theta[valid]),
+            slope * gaps[valid] + intercept,
+        ),
+        "fit_point_count": int(valid.sum()),
+        "fit_gap_range_um": [fit_min, fit_max],
+        "sorted_gaps_um": gaps.tolist(),
+        "theta_raw_rad": theta.tolist(),
+        "fit_mask": valid.tolist(),
     }
+
+
+def ring_gap_sweep(
+    gaps_sweep_list : list[float],  # Distinct nonnegative ring-to-bus gaps to simulate (um; at least two).
+
+    output_dir : Path|str,  # Directory for reports, plots, and any simulation cache.
+
+    radius_um : float,  # Ring radius for this gap sweep (um).
+
+    q_intrinsic : float,  # Positive intrinsic ring quality factor (dimensionless).
+    volume_um3 : float,  # Positive full-ring volume for the Q_loaded^2/V figure of merit (um^3).
+
+    core_medium : td.Medium,  # Tidy3D material used for the waveguide core.
+    substrate_medium : td.Medium,  # Tidy3D material beneath the waveguide.
+
+    wg_width : float,  # Waveguide core width (um).
+    wg_height : float,  # Waveguide core height (um).
+
+    wavelength_um : float,  # Central vacuum wavelength (um).
+
+    span_angle_deg: float | None = None,  # Total partial-ring span in degrees; defaults to 45 if neither angle is given.
+    *,
+    span_angle_rad: float | None = None,  # Alternative total span in radians (0 < span <= π); excludes span_angle_deg.
+
+    n_group : float | None =None,  # Positive group index; None computes it with the mode solver.
+
+    substrate_height : float = 4.0,  # Substrate thickness below the waveguide (um).
+
+    top_cladding_medium : td.Medium | None = None,  # Optional upper cladding material; None leaves the air background.
+    top_cladding_height : float = 0.0,              # Upper cladding thickness measured from z=0 (um); zero omits the layer.
+
+    fine_steps_per_wvl : int = 20,      # Mesh resolution in the core region (steps per wavelength).
+    coarse_steps_per_wvl : int = 15,    # Background mesh resolution (steps per wavelength).
+
+    num_absorber_layers : int = 60,  # Number of absorbing boundary layers in the FDTD geometry.
+
+    wg_length: float | None = None,  # Optional minimum bus/domain length along propagation (um); None sizes automatically.
+
+    group_index_kwargs = None,  # Options passed to get_group_index, e.g. local=True or mode_index.
+
+    force_rerun : bool = False,     # Rerun FDTD even when cached simulation data exist.
+    verbose     : bool = False,     # Enable detailed simulation execution output.
+    save_plots  : bool = True,      # Save analysis plots to output_dir.
+    save_field_maps : bool = True,  # Save a field-map image for each simulated sweep point.
+
+    partial_builder = None,  # Custom active partial-ring factory; None uses the standard builder.
+
+    through_monitor : str = "Through_Out",  # Mode monitor from which through-port power is read.
+    through_direction : str = "+",          # Modal propagation direction to read: forward (+) or backward (-).
+
+
+    clip_through_power : bool = True,  # Clip normalized through power to [0, 1]; otherwise reject values above one.
+
+    theta_fit_bounds_rad : tuple = (0.05, 1.5),  # Accepted coupling-angle interval for the exponential fit (radians).
+
+    fit_after_peak : bool = True,  # Fit only points at or beyond the peak coupling angle in increasing gap order.
+    min_fit_points : int = 2,      # Minimum number of accepted points needed for the coupling fit (at least two).
+
+    field_monitor : str = "coupling_field_map",  # Field monitor used for saved field-map images.
+
+    builder_kwargs = None,  # Extra geometry-builder options; must not duplicate explicit arguments.
+
+    manifest_filename : str = "analytic_coupling_manifest.json",  # JSON report filename relative to output_dir.
+
+    plot_sample_count : int = 200,  # Number of gap samples used to draw the fitted coupling curve (at least two).
+    plot_dpi : int = 150,           # Resolution of displayed and saved figures (dots per inch).
+):
+    """Fit gap-dependent coupling and critical coupling for one ring radius.
+    Return metrics and save raw fluxes; volume_um3 must be supplied explicitly.
+    """
+    gaps = _values("gaps_sweep_list", gaps_sweep_list, 2, True)
     
-    # --- PHASE 5: CREATE THE CACHE ---
-    with open(manifest_path, "w") as f:
-        json.dump({"critical_metrics": critical_metrics, "raw_sweep": results_manifest}, f, indent=4)
-        
-    # --- PHASE 6: PLOTTING ---
-    smooth_gaps = np.linspace(min(gaps) - 0.05, max(gaps) + 0.05, 100)
-    smooth_theta = theta_0 * np.exp(-gamma * smooth_gaps)
-    smooth_t_thru = np.cos(smooth_theta)**2
-    
-    fig, ax1 = plt.subplots(figsize=(9, 6), dpi=300)
-    color = 'tab:gray'
-    ax1.set_xlabel("Coupling Gap ($\mu m$)", fontsize=12)
-    ax1.set_ylabel("$T_{thru}$ (Raw FDTD Transmission)", color=color, fontsize=12)
-    ax1.plot(gaps, t_thrus, 'ko', markersize=6, alpha=0.5, label='Raw $T_{thru}$')
-    ax1.plot(smooth_gaps, smooth_t_thru, '--', color=color, alpha=0.5, label='Fitted $T_{thru}$')
-    ax1.tick_params(axis='y', labelcolor=color)
-    ax1.set_ylim(-0.05, 1.05)
-    
-    ax2 = ax1.twinx()
-    color = 'tab:purple'
-    ax2.set_ylabel("Integrated Coupling Phase $\\theta(d)$ [rad]", color=color, fontsize=12)
-    ax2.plot(gaps, theta_raw, 's', color='tab:blue', markersize=8, label='Extracted $\\theta$')
-    ax2.plot(smooth_gaps, smooth_theta, '-', color=color, linewidth=2.5, label=f'Fit: $\\theta_0 e^{{-\\gamma d}}$')
-    ax2.axhline(theta_target, color='teal', linestyle=':', linewidth=2, label=f'Target $\\theta$ = {theta_target:.3f}')
-    ax2.axvline(critical_gap, color='crimson', linestyle='--', linewidth=2, label=f'Analytic Critical Gap = {critical_gap*1000:.1f} nm')
-    ax2.tick_params(axis='y', labelcolor=color)
-    ax2.set_yscale('log')
-    
-    fig.suptitle(f"Analytic Critical Coupling ({arch_tag}, R={radius_um} $\mu m$)", fontsize=14)
-    fig.legend(loc="upper right", bbox_to_anchor=(0.9, 0.88), bbox_transform=ax1.transAxes)
-    ax1.grid(True, alpha=0.3)
-    
-    plt.savefig(base_output_dir / f"analytic_coupling_fit_{arch_tag}_R_{radius_um}.png", dpi=300)
-    plt.close()
-    
-    print(f"[Analytic Solver] {arch_tag} | R={radius_um} | Crit Gap: {critical_gap:.3f} um | Q_loaded: {q_loaded:.1e}")
-    return critical_metrics
+    radius = _positive("radius_um", radius_um)
+    qi = _positive("q_intrinsic", q_intrinsic)
+    volume = _positive("volume_um3", volume_um3)
+    wavelength = _positive("wavelength_um", wavelength_um)
+
+    span = _resolve_span(span_angle_deg, span_angle_rad)
+
+    bounds = tuple(float(v) for v in theta_fit_bounds_rad)
+
+    if (
+        len(bounds) != 2
+        or not all(np.isfinite(bounds))
+        or not 0 <= bounds[0] < bounds[1] <= np.pi / 2
+    ):
+        raise ValueError(
+            "theta_fit_bounds_rad must satisfy 0 <= lower < upper <= pi/2."
+        )
+    for name, value in [
+        ("min_fit_points", min_fit_points),
+        ("plot_sample_count", plot_sample_count),
+    ]:
+        if (
+            isinstance(
+                value,
+                bool,
+            )
+            or not isinstance(
+                value,
+                (int, np.integer),
+            )
+            or value < 2
+        ):
+            raise ValueError(f"{name} must be an integer >= 2.")
+
+    extra_builder_args = dict(builder_kwargs or {})
+
+    _positive("wg_width", wg_width)
+    _positive("wg_height", wg_height)
+
+    if span > np.pi:
+        raise ValueError("span_angle_rad must be in (0, pi].")
+    if through_direction not in ("+", "-"):
+        raise ValueError("through_direction must be + or -.")
+    if n_group is not None:
+        n_group = _positive(
+            "n_group",
+            n_group,
+        )
+
+    if partial_builder is None:
+        from geometries.partial_ring_resonator import get_active_simulation
+
+        partial_builder = get_active_simulation
+    output_dir = Path(output_dir)
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    path = output_dir / manifest_filename
+    report = {
+        "status": "running",
+        "parameters": {
+            "radius_um": radius,
+            "gaps_um": gaps,
+            "span_angle_rad": span,
+            "span_angle_deg": float(np.rad2deg(span)),
+            "q_intrinsic": qi,
+            "volume_um3": volume,
+            "n_group_supplied": n_group,
+            "group_index_kwargs": dict(group_index_kwargs or {}),
+            "through_monitor": through_monitor,
+            "through_direction": through_direction,
+            "normalization": "through modal power referenced to the normalized simulation source",
+            "force_rerun": force_rerun,
+            "verbose": verbose,
+            "save_plots": save_plots,
+            "save_field_maps": save_field_maps,
+            "branch_filter_theta_rad": bounds,
+            "fit_after_peak": fit_after_peak,
+            "min_fit_points": min_fit_points,
+            "clip_through_power": clip_through_power,
+            "field_monitor": field_monitor,
+            "builder_kwargs": extra_builder_args,
+            "manifest_filename": manifest_filename,
+            "plot_sample_count": plot_sample_count,
+            "plot_dpi": plot_dpi,
+        },
+        "critical_metrics": {},
+        "raw_sweep": {},
+        "errors": [],
+        "warnings": [
+            "Short-arc truncation and span convergence must be checked before interpreting critical coupling."
+        ],
+    }
+    _emit(report["parameters"])
+    _save(
+        path,
+        report,
+    )
+    try:
+        wrappers = []
+        for gap in gaps:
+            obj = partial_builder(
+                radius=radius,
+                gap=gap,
+                wavelength0=wavelength,
+                span_angle_rad=span,
+                wg_width=wg_width,
+                wg_height=wg_height,
+                core_medium=core_medium,
+                substrate_medium=substrate_medium,
+                substrate_height=substrate_height,
+                top_cladding_medium=top_cladding_medium,
+                top_cladding_height=top_cladding_height,
+                fine_steps_per_wvl=fine_steps_per_wvl,
+                coarse_steps_per_wvl=coarse_steps_per_wvl,
+                num_absorber_layers=num_absorber_layers,
+                wg_length=wg_length,
+                **extra_builder_args,
+            )
+            _check_object(
+                obj,
+                radius=radius,
+                gap=gap,
+                span_angle_rad=span,
+                wavelength0=wavelength,
+            )
+            if through_monitor not in {m.name for m in obj.sim.monitors}:
+                raise ValueError(f"Missing through monitor {through_monitor!r}.")
+            wrappers.append(obj)
+        if n_group is None:
+            n_group = _positive(
+                "n_group",
+                wrappers[0].get_group_index(**dict(group_index_kwargs or {})),
+            )
+        report["parameters"]["n_group_used"] = n_group
+        powers = []
+        for obj in wrappers:
+            cache = _cache_dir(
+                output_dir,
+                obj,
+            )
+            record = {
+                "gap_um": obj.gap,
+                "parameters": _snapshot(obj),
+                "cache_dir": str(cache),
+            }
+            _emit(record)
+            fluxes = obj.get_mode_fluxes(
+                output_dir=cache,
+                verbose=verbose,
+                force_rerun=force_rerun,
+            )
+            # Use the specified propagation direction, not the method's dominant-flux shortcut.
+            key = "flux_forward" if through_direction == "+" else "flux_backward"
+            absolute_power = float(fluxes[through_monitor][key])
+            power = absolute_power
+            if not np.isfinite(power) or power < 0:
+                raise ValueError("Through power must be finite and nonnegative.")
+            if not clip_through_power and power > 1:
+                raise ValueError(
+                    "Normalized through power exceeds one with clipping disabled."
+                )
+            clipped = (
+                float(
+                    np.clip(
+                        power,
+                        0,
+                        1,
+                    )
+                )
+                if clip_through_power
+                else power
+            )
+            record.update(
+                through_port_power_absolute=absolute_power,
+                through_port_power=clipped,
+                through_port_power_unclipped=power,
+                through_power_clipped=power != clipped,
+                mode_fluxes=fluxes,
+                missing_mode_monitors=[
+                    m.name
+                    for m in obj.sim.monitors
+                    if hasattr(
+                        m,
+                        "mode_spec",
+                    )
+                    and m.name not in fluxes
+                ],
+            )
+            if power != clipped:
+                report["warnings"].append(
+                    f"Gap {obj.gap}: T={power} clipped to [0,1] for legacy theta extraction."
+                )
+            powers.append(clipped)
+            report["raw_sweep"][str(obj.gap)] = record
+            _emit({k: v for k, v in record.items() if k != "parameters"})
+            _save(
+                path,
+                report,
+            )
+            if save_field_maps:
+                field_path = output_dir / "field_maps" / f"field_map_gap_{obj.gap}.png"
+                try:
+                    obj.plot_field(
+                        output_dir=cache,
+                        monitor_name=field_monitor,
+                        output_path=field_path,
+                        show=False,
+                        save=True,
+                        verbose=verbose,
+                        force_rerun=False,
+                        plot_dpi=plot_dpi,
+                    )
+                    record["field_map_path"] = str(field_path)
+                except Exception as exc:
+                    record["field_map_error"] = str(exc)
+                    logger.warning(f"[Warning] Field plot failed: {exc}")
+        metrics = _fit_coupling(
+            gaps,
+            powers,
+            radius,
+            qi,
+            volume,
+            wavelength,
+            n_group,
+            theta_fit_bounds_rad=bounds,
+            fit_after_peak=fit_after_peak,
+            min_fit_points=min_fit_points,
+        )
+        metrics.update(
+            span_angle_rad=span,
+            span_angle_deg=float(np.rad2deg(span)),
+        )
+        if metrics["critical_gap_extrapolated"]:
+            report["warnings"].append(
+                "Critical gap is outside the fitted gap interval."
+            )
+        if not metrics["critical_gap_nonnegative"]:
+            report["warnings"].append(
+                "Fit predicts a negative gap; no physical nonnegative critical gap was found."
+            )
+        report["critical_metrics"] = metrics
+        _emit(metrics)
+        for warning in report["warnings"]:
+            logger.warning(f"[Warning] {warning}")
+        _save(
+            path,
+            report,
+        )
+        if save_plots:
+            try:
+                import matplotlib.pyplot as plt
+
+                fig, ax = plt.subplots(dpi=plot_dpi)
+                smooth = np.linspace(
+                    min(gaps),
+                    max(gaps),
+                    plot_sample_count,
+                )
+                theta_fit = metrics["fit_params"]["theta_0"] * np.exp(
+                    -metrics["fit_params"]["gamma"] * smooth
+                )
+                ax.scatter(
+                    gaps,
+                    powers,
+                    label="Through power",
+                )
+                ax.plot(
+                    smooth,
+                    np.cos(theta_fit) ** 2,
+                    label="Coupling fit",
+                )
+                ax.axvline(
+                    metrics["critical_gap_um"],
+                    ls="--",
+                    label="Predicted critical gap",
+                )
+                ax.set(
+                    xlabel="Gap (um)",
+                    ylabel="Through power",
+                    title=f"R = {radius:g} um, span = {np.rad2deg(span):g}°",
+                )
+                ax.legend()
+                fig.savefig(
+                    output_dir / f"analytic_coupling_fit_R_{radius}.png",
+                    bbox_inches="tight",
+                    dpi=plot_dpi,
+                )
+                plt.close(fig)
+            except Exception as exc:
+                report["warnings"].append(f"Fit plot failed: {exc}")
+        report["status"] = "complete"
+    except Exception as exc:
+        report["status"] = "failed"
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        raise
+    finally:
+        _save(
+            path,
+            report,
+        )
+    return report["critical_metrics"]
+
+
+def radius_gap_sweep(
+    radius_results,  # Radius-keyed physics results returned by either radius sweep function.
+    gaps_sweep_list,  # Distinct nonnegative ring-to-bus gaps to simulate (um; at least two).
+    output_dir,  # Directory for reports, plots, and any simulation cache.
+    volume_um3_by_radius,  # Required full-ring volumes (um³): numeric/string radius mapping or callable.
+    span_angle_deg: float | None = None,  # Total partial-ring span in degrees; defaults to 45 if neither angle is given.
+    *,
+    span_angle_rad: float | None = None,  # Alternative total span in radians (0 < span <= π); excludes span_angle_deg.
+    manifest_filename="radius_gap_sweep_manifest.json",  # JSON report filename relative to output_dir.
+    plot_dpi: int = 150,  # Resolution of displayed and saved figures (dots per inch).
+    **geometry_kwargs,  # Additional ring_gap_sweep options, including materials and waveguide dimensions.
+):
+    """Run gap sweeps using the in-memory results returned by radius_sweep.
+    Forward geometry settings and validate the wavelength for each radius.
+    """
+    span = _resolve_span(
+        span_angle_deg,
+        span_angle_rad,
+    )
+    output_dir = Path(output_dir)
+    report = {
+        "status": "running",
+        "radius_results": radius_results,
+        "parameters": {
+            "span_angle_rad": span,
+            "span_angle_deg": float(np.rad2deg(span)),
+            "gaps_um": list(gaps_sweep_list),
+            "geometry_kwargs": geometry_kwargs,
+            "plot_dpi": plot_dpi,
+        },
+        "results": {},
+        "errors": [],
+    }
+    gaps = report["parameters"]["gaps_um"]
+    path = output_dir / manifest_filename
+    _save(
+        path,
+        report,
+    )
+    try:
+        if not radius_results:
+            raise ValueError("radius_results must not be empty.")
+        for physics in radius_results.values():
+            radius = physics["radius_um"]
+            if callable(volume_um3_by_radius):
+                volume = volume_um3_by_radius(radius)
+            else:
+                volume = (
+                    volume_um3_by_radius[radius]
+                    if radius in volume_um3_by_radius
+                    else volume_um3_by_radius[str(radius)]
+                )
+            kwargs = dict(geometry_kwargs)
+            if "wavelength_um" in kwargs and not np.isclose(
+                kwargs["wavelength_um"],
+                physics["wavelength_um"],
+            ):
+                raise ValueError("Radius and gap sweep wavelengths must match.")
+            kwargs.setdefault(
+                "wavelength_um",
+                physics["wavelength_um"],
+            )
+            result = ring_gap_sweep(
+                gaps,
+                output_dir / f"R_{radius}",
+                radius,
+                physics["q_intrinsic"],
+                volume,
+                span_angle_rad=span,
+                n_group=physics["n_group"],
+                plot_dpi=plot_dpi,
+                **kwargs,
+            )
+            report["results"][str(radius)] = result
+            _save(
+                path,
+                report,
+            )
+        report["status"] = "complete"
+    except Exception as exc:
+        report["status"] = "failed"
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        raise
+    finally:
+        _save(
+            path,
+            report,
+        )
+    _emit(report["results"])
+    return report["results"]
