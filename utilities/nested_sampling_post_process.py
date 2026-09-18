@@ -3,36 +3,35 @@ utilities.nested_sampling_post_process.py
 
 Standalone Post-Processing and Visualizer for MultiNest Grating Coupler Runs.
 
-Provides post_process_run() to parse output directories, recover raw chains from 
-completed or manually killed runs, render GetDist corner plots, and extract 
+Provides post_process_run() to parse output directories, recover raw chains from
+completed or manually killed runs, render GetDist corner plots, and extract
 posterior summary statistics as a dictionary.
 
 Author: Esraaj Sarkar Gupta
 Date: 2026
+
+Exposes: post_process_run().
 """
 
+from tarang import get_logger
+
 import json
-import logging
 from pathlib import Path
 import numpy as np
 
-import matplotlib
-#matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+from .corner_plot import load_multinest_samples, plot_corner
 
-import pymultinest
-from getdist import mcsamples, plots
-
-logger = logging.getLogger(__name__)
-
-DEFAULT_PARAM_NAMES = ['period', 'fill_factor', 'etch_depth', 'num_periods', 'source_x']
+DEFAULT_PARAM_NAMES = ["period", "fill_factor", "etch_depth", "num_periods", "source_x"]
 DEFAULT_PARAM_LABELS = [
-    r'\Lambda\ (\mu\mathrm{m})', 
-    r'\mathrm{FF}', 
-    r't_{\mathrm{etch}}\ (\mu\mathrm{m})', 
-    r'N', 
-    r'X_{\mathrm{src}}\ (\mu\mathrm{m})'
+    r"\Lambda\ (\mu\mathrm{m})",
+    r"\mathrm{FF}",
+    r"t_{\mathrm{etch}}\ (\mu\mathrm{m})",
+    r"N",
+    r"X_{\mathrm{src}}\ (\mu\mathrm{m})",
 ]
+
+
+logger = get_logger(__name__)
 
 
 def post_process_run(
@@ -40,17 +39,19 @@ def post_process_run(
     param_names: list[str] = None,
     param_labels: list[str] = None,
     sigma: float = 0.02,
-    plot_filename: str = "bayesian_structural_corner_plot.png"
+    plot_filename: str = "bayesian_structural_corner_plot.png",
+    show: bool = True,
+    *,
+    plot_dpi: int = 150,  # Resolution of displayed and saved figures (dots per inch).
 ) -> dict:
-    """
-    Parses a MultiNest output directory and extracts posterior results.
-    
-    Generates a GetDist triangle/corner plot and returns a results dictionary,
-    guaranteeing standard key schema even if the run was killed or incomplete.
+    """Parse MultiNest chains and generate a GetDist corner plot.
+    Return a consistent posterior summary for complete or interrupted runs.
     """
     out_path = Path(output_dir)
     if not out_path.exists():
-        raise FileNotFoundError(f"Specified output directory does not exist: {out_path}")
+        raise FileNotFoundError(
+            f"Specified output directory does not exist: {out_path}"
+        )
 
     param_names = param_names or DEFAULT_PARAM_NAMES
     param_labels = param_labels or DEFAULT_PARAM_LABELS
@@ -68,7 +69,7 @@ def post_process_run(
         "parameter_space_variance": {},
         "top_candidates": [],
         "corner_plot_path": None,
-        "error": None
+        "error": None,
     }
 
     # 1. Recover Tracker / Budget Metadata if present
@@ -77,134 +78,182 @@ def post_process_run(
 
     if tracker_file.exists():
         try:
-            with open(tracker_file, "r") as f:
+            with open(
+                tracker_file,
+                "r",
+            ) as f:
                 t_data = json.load(f)
-                results_summary["total_credits_used"] = float(t_data.get("total_credits_used", 0.0))
-                results_summary["total_evaluations"] = int(t_data.get("total_evaluations", 0))
-                results_summary["top_candidates"] = t_data.get("top_10_runs", [])
+                results_summary["total_credits_used"] = float(
+                    t_data.get(
+                        "total_credits_used",
+                        0.0,
+                    )
+                )
+                results_summary["total_evaluations"] = int(
+                    t_data.get(
+                        "total_evaluations",
+                        0,
+                    )
+                )
+                results_summary["top_candidates"] = t_data.get(
+                    "top_10_runs",
+                    [],
+                )
         except Exception as e:
             logger.warning(f"Could not load tracker file: {e}")
 
     if not results_summary["top_candidates"] and top_10_file.exists():
         try:
-            with open(top_10_file, "r") as f:
+            with open(
+                top_10_file,
+                "r",
+            ) as f:
                 s_data = json.load(f)
-                results_summary["top_candidates"] = s_data.get("top_10_candidates", [])
+                results_summary["top_candidates"] = s_data.get(
+                    "top_10_candidates",
+                    [],
+                )
         except Exception as e:
             logger.warning(f"Could not load top 10 file: {e}")
 
     # Pre-seed metrics from leaderboard if available (useful if chains are missing/empty)
     if results_summary["top_candidates"]:
         best_cand = results_summary["top_candidates"][0]
-        results_summary["max_efficiency"] = float(best_cand.get("efficiency", 0.0))
-        results_summary["peak_loss_db"] = float(best_cand.get("peak_loss_db", -120.0))
-        cfg = best_cand.get("config", {})
+        results_summary["max_efficiency"] = float(
+            best_cand.get(
+                "efficiency",
+                0.0,
+            )
+        )
+        results_summary["peak_loss_db"] = float(
+            best_cand.get(
+                "peak_loss_db",
+                -120.0,
+            )
+        )
+        cfg = best_cand.get(
+            "config",
+            {},
+        )
         if cfg:
             results_summary["optimal_vector"] = [
-                float(cfg.get("period", 0.0)),
-                float(cfg.get("ff", 0.0)),
-                float(cfg.get("etch_depth", 0.0)),
-                float(cfg.get("n_teeth", 0.0)),
-                float(cfg.get("source_x", 0.0))
+                float(
+                    cfg.get(
+                        "period",
+                        0.0,
+                    )
+                ),
+                float(
+                    cfg.get(
+                        "ff",
+                        0.0,
+                    )
+                ),
+                float(
+                    cfg.get(
+                        "etch_depth",
+                        0.0,
+                    )
+                ),
+                float(
+                    cfg.get(
+                        "n_teeth",
+                        0.0,
+                    )
+                ),
+                float(
+                    cfg.get(
+                        "source_x",
+                        0.0,
+                    )
+                ),
             ]
 
-    # 2. Locate Chain Files with fallback logic
-    chn_dir = out_path / "chains"
-    basename = str(chn_dir / "grating_") if chn_dir.exists() else str(out_path / "grating_")
-    
-    candidate_files = [
-        Path(f"{basename}.txt"),
-        Path(f"{basename}_post_equal_weights.dat"),
-        Path(f"{basename}_live.points")
-    ]
-    
-    chain_file = next((f for f in candidate_files if f.exists() and f.stat().st_size > 0), None)
-
-    if chain_file is None:
-        print(f"[PostProcessor] Warning: No non-empty chain files found in {out_path}")
+    # Use the same reader for completed posterior files and live snapshots.
+    try:
+        chain = load_multinest_samples(out_path)
+    except FileNotFoundError as exc:
         results_summary["status"] = "NO_CHAIN_DATA_FOUND"
-        results_summary["error"] = "Missing or empty chain files."
+        results_summary["error"] = str(exc)
+        logger.warning(
+            "%s",
+            exc,
+        )
         return results_summary
-
-    # 3. Load Raw Chain Data
-    try:
-        raw_chain_data = np.loadtxt(chain_file)
-        if raw_chain_data.ndim == 1 and raw_chain_data.size > 0:
-            raw_chain_data = raw_chain_data.reshape(1, -1)
-
-        if raw_chain_data.ndim < 2 or raw_chain_data.shape[0] < 5:
-            results_summary["status"] = "INSUFFICIENT_SAMPLES"
-            results_summary["total_samples_collected"] = int(raw_chain_data.shape[0]) if raw_chain_data.ndim > 0 else 0
-            results_summary["error"] = f"Only {results_summary['total_samples_collected']} samples collected; GetDist requires >= 5."
-            return results_summary
-    except Exception as e:
+    except ValueError as exc:
         results_summary["status"] = "CHAIN_READ_ERROR"
-        results_summary["error"] = str(e)
+        results_summary["error"] = str(exc)
         return results_summary
 
-    weights = raw_chain_data[:, 0]
-    loglikes = -0.5 * raw_chain_data[:, 1]
-    samples_matrix = raw_chain_data[:, 2:]
-    results_summary["total_samples_collected"] = int(samples_matrix.shape[0])
+    samples_matrix = chain.samples
+    weights = chain.weights / np.sum(chain.weights)
+    results_summary["total_samples_collected"] = len(samples_matrix)
+    results_summary["chain_source"] = chain.kind
+    results_summary["chain_file"] = str(chain.path)
+    if len(param_names) != samples_matrix.shape[1]:
+        raise ValueError("Parameter names do not match the chain's physical columns")
+    if len(samples_matrix) < 5:
+        results_summary["status"] = "INSUFFICIENT_SAMPLES"
+        results_summary["error"] = "At least 5 complete samples are required."
+        return results_summary
 
-    # 4. Generate GetDist Corner Plot
-    corner_plot_path = out_path / plot_filename
-    plot_generated = False
-    
     try:
-        gd_samples = mcsamples.MCSamples(
-            samples=samples_matrix,
-            weights=weights,
-            loglikes=loglikes,
-            names=param_names,
-            labels=param_labels,
-            name_tag="GratingCoupler"
+        plotted = plot_corner(
+            out_path,
+            prefix=chain.prefix,
+            source=chain.kind,
+            param_names=param_names,
+            param_labels=param_labels,
+            output_path=out_path / plot_filename,
+            show=show,
+            plot_dpi=plot_dpi,
+        )
+        results_summary["corner_plot_path"] = plotted["output_path"]
+    except (ImportError, ValueError, RuntimeError, OSError) as exc:
+        results_summary["corner_plot_error"] = str(exc)
+        logger.warning(
+            "Corner plot could not be generated: %s",
+            exc,
         )
 
-        g = plots.get_subplot_plotter(width_inch=10)
-        g.settings.num_plot_contours = 2
-        g.triangle_plot(gd_samples, filled=True, cmap="viridis")
-        g.export(str(corner_plot_path))
-        plot_generated = True
-        results_summary["corner_plot_path"] = str(corner_plot_path)
-        print(f"[PostProcessor] Corner plot rendered: {corner_plot_path.name}")
-    except Exception as e:
-        print(f"[PostProcessor] GetDist plot generation failed: {e}")
+    mean = np.average(
+        samples_matrix,
+        weights=weights,
+        axis=0,
+    )
+    variance = np.average(
+        (samples_matrix - mean) ** 2,
+        weights=weights,
+        axis=0,
+    )
+    results_summary["parameter_space_variance"] = {
+        name: {
+            "marginalized_mean": float(mean[index]),
+            "standard_deviation": float(np.sqrt(variance[index])),
+        }
+        for index, name in enumerate(param_names)
+    }
+    best_index = int(np.argmax(chain.log_likelihood))
+    max_loglike = float(chain.log_likelihood[best_index])
+    results_summary["optimal_vector"] = samples_matrix[best_index].tolist()
+    if max_loglike <= 0:
+        efficiency = float(
+            np.clip(
+                1.0 - sigma * np.sqrt(-2.0 * max_loglike),
+                0.0,
+                1.0,
+            )
+        )
+        results_summary["max_efficiency"] = efficiency
+        results_summary["peak_loss_db"] = float(10.0 * np.log10(efficiency + 1e-12))
+    results_summary["status"] = "LIVE_SNAPSHOT" if chain.kind == "live" else "RECOVERED"
 
-    # 5. Extract Marginal Posterior Statistics
-    space_variance_measures = {}
-    try:
-        marge_stats = gd_samples.getMargeStats()
-        for name in param_names:
-            p_stat = marge_stats.parWithName(name)
-            space_variance_measures[name] = {
-                "marginalized_mean": float(p_stat.mean),
-                "standard_deviation": float(p_stat.err)
-            }
-        results_summary["parameter_space_variance"] = space_variance_measures
-    except Exception as e:
-        logger.warning(f"Failed to compute marginal statistics: {e}")
-
-    # 6. Isolate Maximum Likelihood Coordinates
-    max_lnL = float(np.max(loglikes))
-    try:
-        analyzer = pymultinest.Analyzer(n_params=len(param_names), outputfiles_basename=basename)
-        best_stats = analyzer.get_best_fit()
-        results_summary["optimal_vector"] = [float(x) for x in best_stats['parameters']]
-        max_lnL = float(best_stats['log_likelihood'])
-    except Exception:
-        best_idx = np.argmax(loglikes)
-        results_summary["optimal_vector"] = [float(x) for x in samples_matrix[best_idx, :len(param_names)]]
-
-    if max_lnL <= 0:
-        results_summary["max_efficiency"] = float(1.0 - (sigma * np.sqrt(-2.0 * max_lnL)))
-        results_summary["peak_loss_db"] = float(10.0 * np.log10(results_summary["max_efficiency"] + 1e-12))
-
-    results_summary["status"] = "RECOVERED"
-
-    # Save recovered summary to disk
     parsed_json_file = out_path / "post_processed_results.json"
-    with open(parsed_json_file, "w") as f:
-        json.dump(results_summary, f, indent=4)
-
+    parsed_json_file.write_text(
+        json.dumps(
+            results_summary,
+            indent=4,
+        ),
+        encoding="utf-8",
+    )
     return results_summary
