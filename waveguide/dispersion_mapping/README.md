@@ -45,6 +45,7 @@ print(r["D_TE0"], r["guided_TE"], r["neff_TE"][0] - r["neff_TM"][0])
 - **Data safety.** Result files are append-only and named by their settings (cladding, core, mesh, wavelength, bend radius, index shift), and finished points are skipped on rerun. Plot and report folders get `_v2`, `_v3`, … instead of being overwritten unless `--overwrite` is given.
 - **Mesh.** At least 50 steps/λ in the core for maps and 70 for decisions. The TARANG default of 20 is about 25 % off in D.
 - **SiO₂ data.** `sio2` now points to the standard Malitson fused-silica data (n = 1.444 at 1550 nm). The previous dataset (Nyakuchena; n = 1.420, 1.10–1.65 µm only) remains available as `sio2_nyakuchena` for reproducing older results.
+- **Regime classes.** By default the maps use three classes: normal (D < 0, grey), target (D ≥ 0 with exactly one guided TE mode, green) and multimode (D ≥ 0 with two or more guided TE modes, red). The package applies no dispersion safety margin. To apply your own (for example, from a calibration against measured devices), pass `--dmargin X` to `maps` or `report`; geometries with 0 ≤ D < X then form a yellow class.
 - **Bends.** Guided-mode counts are not meaningful in bends (`guided_counts_valid: false`), because the solver returns cladding modes there. Take single-mode decisions from straight guides.
 
 ## Validation

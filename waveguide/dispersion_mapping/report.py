@@ -141,7 +141,8 @@ def main():
     ap.add_argument("--bends", default=None, help='glob, e.g. "results/*_R*um_finalists.jsonl"')
     ap.add_argument("--finalists", required=True, help="HxW list in um; first = baseline")
     ap.add_argument("--tol", default="0.05,0.02", help="dW,dH in um")
-    ap.add_argument("--dmargin", type=float, default=100.0)
+    ap.add_argument("--dmargin", type=float, default=0.0,
+                    help="optional user safety margin on D [ps/(nm km)]; 0 (default) = none")
     ap.add_argument("--deg-tol", dest="deg_tol", type=float, default=0.01)
     ap.add_argument("--alpha-scat", type=float, default=0.3, help="dB/cm")
     ap.add_argument("--alpha-abs", type=float, default=0.1, help="dB/cm")
@@ -230,7 +231,9 @@ def main():
                     fmt="o", ms=9, capsize=8, color=cols[i], lw=2)
         ax.annotate(f"{r['D']:.0f}\n[{r['D_min_tol']:.0f}–{r['D_max_tol']:.0f}]",
                     (i, r["D"]), xytext=(12, -10), textcoords="offset points", fontsize=8)
-    ax.axhline(a.dmargin, ls=":", color="k"); ax.axhline(0, ls="--", color="b")
+    if a.dmargin > 0:
+        ax.axhline(a.dmargin, ls=":", color="k")
+    ax.axhline(0, ls="--", color="b")
     ax.set_xticks(x, names); ax.set_ylabel("D(TE00) straight [ps/(nm·km)]")
     ax.set_title(f"Straight D with fabrication range (W±{dW*1e3:.0f} nm, H±{dH*1e3:.0f} nm)",
                  fontsize=10)
@@ -256,7 +259,9 @@ def main():
             ax.plot(Rs, [b["D_bend"] for b in br], "-o", color=cols[i], label=r["name"])
             ax.axhline(r["D"], color=cols[i], ls=":", lw=1)
             ax2.plot(Rs, [b["Pth_mW"] for b in br], "-o", color=cols[i], label=r["name"])
-        ax.axhline(a.dmargin, ls=":", color="k"); ax.axhline(0, ls="--", color="b")
+        if a.dmargin > 0:
+            ax.axhline(a.dmargin, ls=":", color="k")
+        ax.axhline(0, ls="--", color="b")
         ax.set_xscale("log"); ax.set_xlabel("Ring radius R (µm)")
         ax.set_ylabel("D(TE00) in bend [ps/(nm·km)]")
         ax.set_title("Bend dispersion (dotted = straight value)", fontsize=10)
@@ -291,7 +296,8 @@ def main():
             bx[1, 0].plot(Rs, [b["D2_2pi_MHz"] for b in br], "-", **kw)
             bx[1, 1].plot(Rs, [abs(b["dn_TE_TM"]) for b in br], "-", **kw)
             bx[1, 1].axhline(abs(r["dn_TE_TM"]), color=cols[i], ls=":", lw=1)
-        bx[0, 0].axhline(a.dmargin, color="k", ls="--", lw=0.8)
+        if a.dmargin > 0:
+            bx[0, 0].axhline(a.dmargin, color="k", ls="--", lw=0.8)
         bx[0, 0].set_ylabel("D(TE00) in bend [ps/(nm·km)]")
         bx[0, 0].set_title("Bend dispersion (dotted = straight guide)", fontsize=10, pad=34)
         bx[0, 1].axhline(0, color="k", lw=0.8)
@@ -320,7 +326,8 @@ def main():
     L = [f"# Finalist comparison (baseline = {base['name']} nm)", "",
          f"Straight-waveguide data: {base['steps']} steps/λ. Tolerance: W ± {dW*1e3:.0f} nm, "
          f"H ± {dH*1e3:.0f} nm (source: {', '.join(sorted({r['tol_source'] for r in rows}))}).",
-         f"Classes use D ≥ {a.dmargin:g} ps/(nm·km) as 'safely anomalous' and "
+         (f"Classes use D ≥ {a.dmargin:g} ps/(nm·km) (user margin) as 'safely anomalous' and "
+          if a.dmargin > 0 else "Classes use D ≥ 0 as anomalous (no margin applied) and ") +
          f"|Δn(TE0,TM0)| ≥ {a.deg_tol} as 'non-degenerate'.", "",
          "| Geometry | D | worst-case D | dD/dW (per nm) | dD/dH (per nm) | guided TE/TM | "
          "|Δn TE–TM| | TE1 margin | centre class | all neighbours TARGET? |",

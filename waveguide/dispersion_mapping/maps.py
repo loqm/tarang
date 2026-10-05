@@ -2,7 +2,7 @@
 waveguide.dispersion_mapping.maps -- figures from dispersion_mapping.sweep results
 ==========================================================
     python -m waveguide.dispersion_mapping.maps --data results/air_sweep_50steps.jsonl
-    python -m waveguide.dispersion_mapping.maps --data results/air_sweep_50steps.jsonl --dmargin 100 --show
+    python -m waveguide.dispersion_mapping.maps --data results/air_sweep_50steps.jsonl --show
 
 Writes to results/plots_<name>/ :
   D_vs_width/H_XXXnm.png    one per height  (dispersion regime map along width)
@@ -13,14 +13,14 @@ Writes to results/plots_<name>/ :
   target_geometries.csv     every point classified TARGET, sorted by margin
 
 Classification of each (H, W) point  (TE00 is the pump mode):
-  NORMAL      D < 0
-  MARGINAL    0 <= D < dmargin        (sign not trustworthy within model error)
-  TARGET      D >= dmargin and exactly 1 guided TE mode
-  MULTIMODE   D >= dmargin and >= 2 guided TE modes
+  NORMAL      D < 0                                  (grey)
+  TARGET      D >= 0 and exactly 1 guided TE mode    (green)
+  MULTIMODE   D >= 0 and >= 2 guided TE modes        (red)
   Extra flag  |n_TE0 - n_TM0| < deg_tol  -> TE/TM near-degenerate (hybridises in bends)
 
-dmargin default 100 ps/(nm km): straight-waveguide model vs NIST measurement differed
-by ~80 ps/(nm km) (bending, sidewall angle, film index are not modelled).
+Optional: --dmargin X (ps/(nm km)) adds a fourth class, MARGINAL (0 <= D < X, yellow),
+for users who want to apply their OWN safety margin (e.g. from a measured calibration).
+The default is 0, so no margin is assumed by the package.
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def _stack(r) -> str:
 CLASS_COL = {"NORMAL": "#d9d9d9", "MARGINAL": "#fff2b3",
              "TARGET": "#b8e6b0", "MULTIMODE": "#f7b6b2"}
 CLASS_LBL = {"NORMAL": "Normal dispersion (D < 0)",
-             "MARGINAL": "Anomalous but within model error",
+             "MARGINAL": "Anomalous but below user margin (--dmargin)",
              "TARGET": "TARGET: anomalous + single TE mode",
              "MULTIMODE": "Anomalous + multimode (TE)"}
 
@@ -102,10 +102,11 @@ def shade(ax, xs, classes):
         ax.axvspan(a, b, color=CLASS_COL[c], alpha=0.8, lw=0, zorder=0)
 
 
-def legend_patches():
+def legend_patches(dmargin=0.0):
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
-    h = [Patch(color=CLASS_COL[k], label=CLASS_LBL[k]) for k in CLASS_COL]
+    h = [Patch(color=CLASS_COL[k], label=CLASS_LBL[k]) for k in CLASS_COL
+         if k != "MARGINAL" or dmargin > 0]
     h.append(Line2D([], [], marker="v", ls="", color="purple", label="TE/TM near-degenerate"))
     return h
 
@@ -118,7 +119,7 @@ def plot_D(series, xkey, fixed_lbl, fname, a, plt):
     fig, ax = plt.subplots(figsize=(10.5, 5), dpi=140)
     shade(ax, xs, cls)
     ax.axhline(0, color="b", ls="--", lw=1)
-    for y in (a.dmargin, -a.dmargin):
+    for y in ((a.dmargin, -a.dmargin) if a.dmargin > 0 else ()):
         ax.axhline(y, color="0.4", ls=":", lw=1)
     ax.plot(xs, D, "k-o", lw=1.8, ms=5, label="TE00", zorder=3)
     if a.tm:
@@ -134,7 +135,7 @@ def plot_D(series, xkey, fixed_lbl, fname, a, plt):
     ax.set_title(f"{_stack(series[0])} — {fixed_lbl}   "
                  f"(numbers = guided TE modes, {series[0]['steps']} steps/λ)", fontsize=10)
     ax.grid(alpha=0.3)
-    h = legend_patches()
+    h = legend_patches(a.dmargin)
     ax.legend(handles=ax.get_legend_handles_labels()[0] + h, fontsize=7,
               loc="upper left", bbox_to_anchor=(1.01, 1.0))
     fig.tight_layout()
@@ -204,11 +205,13 @@ def plot_map(rows, outdir, a, plt):
     im = axs[0].pcolormesh(Ws, Hs, np.clip(Dm, -lim, lim), cmap="RdBu_r",
                            norm=TwoSlopeNorm(0, -lim, lim), shading="nearest")
     if len(Hs) > 1 and len(Ws) > 1:
-        cs = axs[0].contour(Ws, Hs, Dm, levels=[0, a.dmargin], colors=["k", "k"],
-                            linestyles=["-", "--"])
+        lv = [0.0] + ([a.dmargin] if a.dmargin > 0 else [])
+        cs = axs[0].contour(Ws, Hs, Dm, levels=lv, colors=["k"] * len(lv),
+                            linestyles=["-", "--"][:len(lv)])
         axs[0].clabel(cs, fmt="%g", fontsize=8)
     fig.colorbar(im, ax=axs[0], extend="min", label="D(TE00) [ps/(nm·km)], clipped")
-    axs[0].set_title("D(TE00): solid = 0, dashed = dmargin", fontsize=10)
+    axs[0].set_title("D(TE00): solid contour = zero dispersion"
+                     + (f", dashed = {a.dmargin:g}" if a.dmargin > 0 else ""), fontsize=10)
     axs[1].pcolormesh(Ws, Hs, Cm, cmap=ListedColormap([CLASS_COL[k] for k in order]),
                       vmin=-0.5, vmax=len(order) - 0.5, shading="nearest")
     for (H, W), r in idx.items():
@@ -217,7 +220,7 @@ def plot_map(rows, outdir, a, plt):
         if degenerate(r, a.deg_tol):
             axs[1].plot(W + ((Ws[1] - Ws[0]) * 0.33 if len(Ws) > 1 else 0.03), H + ((Hs[1] - Hs[0]) * 0.30 if len(Hs) > 1 else 0.015), "v", color="purple", ms=7)
     axs[1].set_title("Regime (text: D, guided TE count; ▽ TE/TM degenerate)", fontsize=10)
-    axs[1].legend(handles=legend_patches(), fontsize=7, loc="upper center",
+    axs[1].legend(handles=legend_patches(a.dmargin), fontsize=7, loc="upper center",
                   bbox_to_anchor=(0.5, -0.13), ncol=3)
     for ax in axs:
         ax.set_xlabel("Width W (µm)")
@@ -317,8 +320,9 @@ def plot_extra_maps(rows, outdir, a, plt):
     fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
     _heat(ax, Ws, Hs, np.clip(Dm, -lim, lim), "RdBu_r", TwoSlopeNorm(0, -lim, lim),
           "D(TE00) [ps/(nm·km)], clipped", fig, fmt=lambda v: f"{v:.0f}",
-          contours=[(0, "k", "-"), (a.dmargin, "k", "--")], extend="min", text_M=Dm)
-    ax.set_title("1. Dispersion D of the pump mode (solid 0, dashed = margin)", fontsize=10)
+          contours=[(0, "k", "-")] + ([(a.dmargin, "k", "--")] if a.dmargin > 0 else []),
+          extend="min", text_M=Dm)
+    ax.set_title("1. Dispersion D of the pump mode (solid contour = zero dispersion)", fontsize=10)
     save(fig, "map1_dispersion_D.png")
 
     # 2  TE-TM splitting (signed)
@@ -369,7 +373,8 @@ def plot_extra_maps(rows, outdir, a, plt):
         ax.text(W, H, f"{r['D_TE0']:.0f}", ha="center", va="center", fontsize=6,
                 color="w" if rc[(H, W)] == "ROBUST" else "k")
     from matplotlib.patches import Patch
-    lbl = {"NOT_TARGET": "not target (normal/marginal/multimode/degenerate)",
+    lbl = {"NOT_TARGET": ("not target (normal/marginal/multimode/degenerate)" if a.dmargin > 0
+                         else "not target (normal/multimode/degenerate)"),
            "EDGE": "target, but a grid neighbour fails", "BORDER": "target at grid border",
            "ROBUST": "ROBUST: target and all 4 neighbours target"}
     ax.legend(handles=[Patch(color=c, label=lbl[o]) for o, c in zip(order, cols)], fontsize=7,
@@ -424,8 +429,9 @@ def plot_extra_maps(rows, outdir, a, plt):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, type=Path)
-    ap.add_argument("--dmargin", type=float, default=100.0,
-                    help="min D [ps/(nm km)] counted as safely anomalous")
+    ap.add_argument("--dmargin", type=float, default=0.0,
+                    help="optional user safety margin on D [ps/(nm km)]; 0 (default) = none. "
+                         "If > 0, points with 0 <= D < margin form a yellow MARGINAL class")
     ap.add_argument("--deg-tol", dest="deg_tol", type=float, default=0.01,
                     help="|n_TE0 - n_TM0| below this is flagged degenerate")
     ap.add_argument("--single-mode", dest="sm", choices=["strict", "margin"], default="strict",
