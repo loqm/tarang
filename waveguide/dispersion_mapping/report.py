@@ -1,7 +1,7 @@
 """
-finalist_report.py -- compare candidate geometries against the 800 x 800 nm baseline
+waveguide.dispersion_mapping.report -- compare candidate geometries against a baseline
 =====================================================================================
-    python scripts/finalist_report.py --straight results/air_sweep_70steps_finalists.jsonl --bends "results/air_sweep_70steps_R*um_finalists.jsonl" --finalists 0.80x0.80,0.80x1.00,0.70x1.00,0.65x1.10 --tol 0.05,0.02
+    python -m waveguide.dispersion_mapping.report --straight results/air_sweep_70steps_finalists.jsonl --bends "results/air_sweep_70steps_R*um_finalists.jsonl" --finalists 0.80x0.80,0.80x1.00,0.70x1.00,0.65x1.10 --tol 0.05,0.02
 
 The FIRST finalist is the baseline (your initial 800 x 800 nm selection); every other
 geometry is reported relative to it.  Writes results/finalist_report/:
@@ -207,6 +207,9 @@ def main():
                 bend_rows.append(bm)
 
     base = rows[0]
+    r0 = next(iter(straight.values()))
+    stack = (f"{r0.get('core', 'si3n4')} core / {r0.get('cladding') or 'air'} top / "
+             f"{r0.get('box', 4.0):g} µm {r0.get('substrate', 'sio2')}")
     # ---------------- CSV
     with open(out / "finalists.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
@@ -269,8 +272,8 @@ def main():
                      va="center", transform=axx.transAxes)
     for axx in axs.flat:
         axx.grid(alpha=0.3)
-    fig.suptitle(f"Finalists vs baseline {base['name']} nm (air-clad SiN / 4 µm SiO2 / Si, "
-                 f"1550 nm)", fontsize=12)
+    fig.suptitle(f"Finalists vs baseline {base['name']} nm ({stack}, "
+                 f"{r0.get('wl0', 1.55) * 1e3:.0f} nm)", fontsize=12)
     fig.tight_layout(); fig.savefig(out / "finalists_comparison.png")
 
     # ---------------- dedicated bend-dispersion figure
@@ -310,8 +313,7 @@ def main():
             "top", functions=(lambda R: C / (2 * math.pi * ng0 * np.maximum(R, 1e-3) * 1e-6) / 1e9,
                               lambda f: C / (2 * math.pi * ng0 * np.maximum(f, 1e-3) * 1e9) * 1e6))
         sec.set_xlabel(f"≈ FSR (GHz) for n_g = {ng0:.2f}")
-        fb.suptitle("Bent-waveguide dispersion of the finalists (local mode solver, "
-                    "air / SiN / 4 µm SiO2)", fontsize=12)
+        fb.suptitle(f"Bent-waveguide dispersion of the finalists ({stack})", fontsize=12)
         fb.tight_layout(); fb.savefig(out / "bend_dispersion.png")
 
     # ---------------- markdown report
