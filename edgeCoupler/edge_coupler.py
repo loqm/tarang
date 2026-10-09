@@ -12,9 +12,8 @@ edgeCoupler.get_efficiency(), edgeCoupler.get_loss_db(), edgeCoupler.plot_fields
 
 from __future__ import annotations
 from tarang import get_logger
-from tarang._logging import tidy3d_verbose
+from utilities.cloud_run import CloudCachedDevice
 
-import os
 import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional, List, TYPE_CHECKING, Union, Tuple
@@ -22,12 +21,11 @@ from typing import Dict, Any, Optional, List, TYPE_CHECKING, Union, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 import tidy3d as td
-from tidy3d import web
 
 logger = get_logger(__name__)
 
 
-class edgeCoupler:
+class edgeCoupler(CloudCachedDevice):
     """
     Wrapper class representing an edge coupler simulation domain.
 
@@ -117,10 +115,23 @@ class edgeCoupler:
     # Cache & Execution Management
     # --------------------------------
 
-    def get_dir_name(self) -> str:
-        """Generates a clean, unique parameter-based identifier containing an MD5 hash
-        for cache safety.
-        """
+    _task_prefix = "edge_coupler"
+
+    def _readable_name(self) -> str:
+        """Short, human-readable cache stem; the fingerprint is appended."""
+        if self.in_coupling:
+            mode_str = "incouple"
+        elif self.out_coupling:
+            mode_str = "outcouple"
+        else:
+            mode_str = "passive"
+        sym_str = f"sym{self.symmetry[0]}{self.symmetry[1]}{self.symmetry[2]}"
+        return (f"coupler_Wtip{self.tip_width:.3f}um_Ltaper{self.taper_length:.2f}um_"
+                f"{mode_str}_{sym_str}_{self.wavelength0:.3f}um")
+
+    def _legacy_dir_name(self) -> str:
+        """Directory name used before v0.1.0. Results found there are reused only
+        after the simulation stored with them is verified against this one."""
         if self.in_coupling:
             mode_str = "incouple"
         elif self.out_coupling:
@@ -140,54 +151,8 @@ class edgeCoupler:
         sym_str = f"sym{self.symmetry[0]}{self.symmetry[1]}{self.symmetry[2]}"
         return f"coupler_Wtip{self.tip_width:.2f}um_Ltaper{self.taper_length:.2f}um_{mode_str}_{sym_str}_{self.wavelength0:.3f}um_{h}"
 
-    def _run_sim(
-        self,
-        output_dir: Union[str, Path],
-        verbose: bool = False,
-        force_rerun: bool = False,
-    ) -> td.SimulationData:
-        """Private method: Checks for local cached HDF5 simulation data or executes via
-        cloud.
-        """
-        if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-            logger.warning(
-                "[Warning] TIDY3D_API_KEY not found in environment variables."
-            )
-
-        param_dir = self.get_dir_name()
-        full_output_dir = Path(output_dir) / param_dir
-        full_output_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        hdf5_target_path = full_output_dir / "raw_simulation_data.hdf5"
-
-        if hdf5_target_path.exists() and not force_rerun:
-            logger.info(
-                f"Cache hit. Loading existing simulation data from {hdf5_target_path}..."
-            )
-            return td.SimulationData.from_file(str(hdf5_target_path))
-
-        logger.info(
-            f"Cache miss. Uploading {param_dir} to Tidy3D cloud infrastructure..."
-        )
-        task_name = f"edge_coupler_{param_dir}"
-        sim_data = web.run(
-            self.sim,
-            task_name=task_name,
-            verbose=tidy3d_verbose(verbose),
-        )
-
-        logger.info(
-            f"Execution complete. Serializing data to {hdf5_target_path}..."
-        )
-        sim_data.to_file(str(hdf5_target_path))
-
-        return sim_data
-
     # Alias for method name consistency
-    _run_simulation = _run_sim
+    _run_simulation = CloudCachedDevice._run_sim
 
     # --------------------------------
     # Execution and Analysis Methods

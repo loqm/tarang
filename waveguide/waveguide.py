@@ -127,9 +127,14 @@ class RidgeWaveguide:
     def get_modes(
         self,
         num_modes: int = 8,
+        require_guided: bool = False,
     ) -> Dict[str, Any]:
         """Solve optical modes and return effective indices and polarization fractions.
         Include TE/TM classifications and guiding conditions in the result.
+
+        The result always carries ``has_guided_mode``. If no mode has
+        n_eff > n_cutoff, a warning is logged and every row has is_guided=False;
+        with ``require_guided=True`` a WaveguideModeError is raised instead.
         """
         freq0 = td.C_0 / self.wavelength_um
         n_core = float(np.real(np.sqrt(self.core_medium.eps_model(freq0))))
@@ -181,11 +186,16 @@ class RidgeWaveguide:
                 }
             )
 
-        if not any(m["is_guided"] for m in modes_info):
-            # raise WaveguideModeError(f"No guided modes found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
-            logger.error(
-                f"No guided modes found for W={self.width:.3f} μm, H={self.height:.3f} μm."
+        has_guided = any(m["is_guided"] for m in modes_info)
+        if not has_guided:
+            msg = (
+                f"No guided modes for W={self.width:.3f} μm, H={self.height:.3f} μm at "
+                f"{self.wavelength_um:.4f} μm: all n_eff <= n_cutoff = {n_cut:.4f}. "
+                "The listed modes are radiation/cladding modes, not waveguide modes."
             )
+            if require_guided:
+                raise WaveguideModeError(msg)
+            logger.warning(msg)
 
         return {
             "width_um": self.width,
@@ -195,6 +205,7 @@ class RidgeWaveguide:
             "n_core": n_core,
             "n_sub": n_sub,
             "n_cutoff": n_cut,
+            "has_guided_mode": has_guided,
             "modes": modes_info,
             "raw_mode_data": mode_data,
         }

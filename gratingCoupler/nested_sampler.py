@@ -27,13 +27,10 @@ GratingCouplerBayesianOptimizer.execute_search_with_budget().
 """
 
 from tarang import get_logger
-from tarang._logging import tidy3d_verbose
 
 import json
 import time
 import sys
-import io
-import contextlib
 from pathlib import Path
 from dataclasses import asdict
 import numpy as np
@@ -44,9 +41,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 import tidy3d as td
-from tidy3d import web
 
 from gratingCoupler.grating_coupler import GratingConfig, GratingCoupler
+from utilities.cloud_run import CostLimitExceededError
 from geometries.grating_coupler import get_ideal_coords
 from utilities.sim_plotter import display_2d, display_3d
 from utilities.nested_sampling_post_process import post_process_run
@@ -326,42 +323,28 @@ class GratingCouplerBayesianOptimizer:
             )
 
             dir_name = sim_wrapper.get_dir_name()
-            target_hdf5 = self.cache_dir / dir_name / "raw_simulation_data.hdf5"
 
-            if target_hdf5.exists():
-                cost = 0.0
-            else:
-                with contextlib.redirect_stdout(
-                    io.StringIO()
-                ), contextlib.redirect_stderr(io.StringIO()):
-                    task_id = web.upload(
-                        sim_wrapper.sim,
-                        task_name=f"gc_eval_{dir_name[:25]}",
-                        verbose=tidy3d_verbose(False),
-                    )
-                    cost = float(
-                        web.estimate_cost(
-                            task_id,
-                            verbose=tidy3d_verbose(),
-                        )
-                    )
-
-                if (
-                    self.credit_limit is not None
-                    and (self.total_credits_used + cost) > self.credit_limit
-                ):
-                    logger.warning(
-                        f"\n[Budget Warden] Credit limit reached! Next run needs {cost:.4f}, but only "
-                        f"{(self.credit_limit - self.total_credits_used):.4f} credits remain."
-                    )
-                    raise BudgetExceededError(
-                        f"FlexCredit limit of {self.credit_limit} exceeded! Current spent: {self.total_credits_used:.4f} credits."
-                    )
-
-            efficiency = sim_wrapper.get_efficiency(
-                output_dir=self.cache_dir,
-                verbose=False,
-            )
+            # Budget guard: the run is cost-estimated before it starts, and it is
+            # not started if it would exceed the remaining credit (audit C6). A
+            # cached evaluation costs nothing.
+            if self.credit_limit is not None:
+                sim_wrapper.max_cost = max(0.0, self.credit_limit - self.total_credits_used)
+            try:
+                efficiency = sim_wrapper.get_efficiency(
+                    output_dir=self.cache_dir,
+                    verbose=False,
+                )
+            except CostLimitExceededError as exc:
+                logger.warning(
+                    f"\n[Budget Warden] Credit limit reached! Next run needs {exc.estimated:.4f}, "
+                    f"but only {exc.limit:.4f} credits remain."
+                )
+                raise BudgetExceededError(
+                    f"FlexCredit limit of {self.credit_limit} exceeded! "
+                    f"Current spent: {self.total_credits_used:.4f} credits."
+                ) from exc
+            run = sim_wrapper.last_run
+            cost = 0.0 if (run is None or run.from_cache) else float(run.estimated_cost)
 
             logger.info(
                 f"[FDTD Run Audit] Period: {p_period:.4f} μm | FF: {p_dc:.4f} | "

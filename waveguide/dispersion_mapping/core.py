@@ -33,18 +33,12 @@ import numpy as np
 import tidy3d as td
 from tidy3d.plugins.mode import ModeSolver
 
-from tarang import configure_logging
+from tarang import configure_logging, set_tidy3d_log_level
 from media.medium_helper import get_medium
 from geometries import ridge_waveguide as rw
 
 configure_logging(level="WARNING")
-try:                                   # tidy3d >= 2.12
-    td.config.logging.level = "ERROR"
-except Exception:                      # older tidy3d
-    try:
-        td.config.logging_level = "ERROR"
-    except Exception:
-        pass
+set_tidy3d_log_level("ERROR")
 
 C_UM_PS = td.C_0 / 1e12                # speed of light in um/ps
 SI_HANDLE = td.Medium(permittivity=3.4757 ** 2)

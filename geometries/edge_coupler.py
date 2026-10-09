@@ -13,6 +13,8 @@ from typing import Optional, Tuple
 import numpy as np
 import tidy3d as td
 
+from geometries._modes import core_target_neff
+
 from edgeCoupler import edgeCoupler
 from media.medium_helper import get_medium
 
@@ -373,7 +375,7 @@ def get_active_simulation(
             freqs=[freq0],
             mode_spec=td.ModeSpec(
                 num_modes=1,
-                target_neff=2.0,
+                target_neff=core_target_neff(core_medium, freq0),
             ),
             name="mode_transmission",
         )
@@ -389,7 +391,7 @@ def get_active_simulation(
             direction="-",
             mode_spec=td.ModeSpec(
                 num_modes=1,
-                target_neff=2.0,
+                target_neff=core_target_neff(core_medium, freq0),
             ),
             mode_index=0,
         )

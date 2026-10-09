@@ -7,15 +7,15 @@ Author: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: 2026
 
 Exposes: GratingConfig, GratingCoupler, GratingCoupler.from_config(),
-GratingCoupler.get_dir_name(), GratingCoupler.get_efficiency(),
-GratingCoupler.get_fields().
+GratingCoupler.get_dir_name(), GratingCoupler.is_cached(),
+GratingCoupler.get_efficiency(), GratingCoupler.get_fields().
+Set ``GratingCoupler.max_cost`` (FlexCredits) to cap cloud runs.
 """
 
 from __future__ import annotations
 from tarang import get_logger
-from tarang._logging import tidy3d_verbose
+from utilities.cloud_run import CloudCachedDevice
 
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -24,7 +24,6 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 import tidy3d as td
-from tidy3d import web
 
 if TYPE_CHECKING:
     from geometries.grating_coupler import get_active_simulation
@@ -61,7 +60,7 @@ class GratingConfig:
     buffer: float
 
 
-class GratingCoupler:
+class GratingCoupler(CloudCachedDevice):
     """
     Wraps a Tidy3D Simulation object for grating couplers, binding
     its GratingConfig parameters and material media directly to the object.
@@ -126,68 +125,34 @@ class GratingCoupler:
     # --------------------------------
     # Execution and Analysis Methods
     # --------------------------------
-    def get_dir_name(self) -> str:
-        """Build a parameter-based directory name for simulation results.
-        Include the geometry settings used by this device cache.
-        """
-        dim = "3D" if self.is_3d else "2D"
+    _task_prefix = "gc"
 
+    def _readable_name(self) -> str:
+        """Short, human-readable cache stem; the full parameter set is stored in
+        simulation.json beside the results and in the fingerprint."""
         cfg = self.config
-        param_dir_name = (
+        dim = "3D" if self.is_3d else "2D"
+        return (
+            f"gc{dim}_p{cfg.period:.4f}_ff{cfg.ff:.4f}_e{cfg.etch_depth:.4f}_"
+            f"n{cfg.n_teeth}_sx{cfg.source_x:.4f}_{cfg.wavelength_um:.3f}um"
+        )
+
+    def _legacy_dir_name(self) -> str:
+        """Directory name used before v0.1.0 (geometry only, no media). Results
+        found there are reused only after their stored simulation is verified."""
+        dim = "3D" if self.is_3d else "2D"
+        cfg = self.config
+        return (
             f"{dim}_p_{cfg.period:.4f}_dc_{cfg.ff:.4f}_e_{cfg.etch_depth:.4f}_"
             f"n_{cfg.n_teeth}_w_{cfg.w_grating:.4f}_ch_{cfg.core_height:.4f}_"
             f"clh_{cfg.cladding_height:.4f}_bh_{cfg.box_height:.4f}_sh_{cfg.substrate_height:.4f}_"
             f"t_{cfg.theta_deg:.4f}_mfd_{cfg.mfd:.4f}_sx_{cfg.source_x:.4f}_sg_{cfg.source_gap:.4f}_"
             f"wl_{cfg.wavelength_um:.4f}_pol_{cfg.pol_angle:.4f}_b_{cfg.buffer:.4f}"
         )
-        return param_dir_name
 
-    def _run_sim(
-        self,
-        output_dir: Path,
-        verbose: bool = False,
-    ) -> td.SimulationData:
-        """
-        Private method: Checks for API key, ensures the output directory exists,
-        and either runs the FDTD simulation on the cloud or loads existing HDF5 data.
-        """
-
-        if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-            logger.warning("[Warning] TIDY3D_API_KEY not found in environment.")
-
-        cfg = self.config
-        param_dir_name = self.get_dir_name()
-
-        full_output_dir = Path(output_dir) / param_dir_name
-        full_output_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        hdf5_target_path = full_output_dir / "raw_simulation_data.hdf5"
-
-        if hdf5_target_path.exists():
-            logger.info(
-                f"[Profiler] Cache hit. Loading existing simulation data from {hdf5_target_path}..."
-            )
-            return td.SimulationData.from_file(str(hdf5_target_path))
-
-        logger.info(
-            "[Profiler] Cache miss. Uploading architecture to Tidy3D cloud infrastructure..."
-        )
-        task_name = f"gc_sim_{cfg.wavelength_um}um"
-        sim_data = web.run(
-            self.sim,
-            task_name=task_name,
-            verbose=tidy3d_verbose(verbose),
-        )
-
-        logger.info(
-            f"[Profiler] Execution complete. Serializing data to {hdf5_target_path}..."
-        )
-        sim_data.to_file(str(hdf5_target_path))
-
-        return sim_data
+    # get_dir_name(), is_cached() and _run_sim() come from CloudCachedDevice:
+    # the cache key is the full simulation fingerprint (geometry, media, mesh,
+    # sources, monitors), and every cloud run is cost-estimated first.
 
     def get_efficiency(
         self,

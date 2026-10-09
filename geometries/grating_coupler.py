@@ -19,6 +19,7 @@ import numpy as np
 import tidy3d as td
 
 from gratingCoupler.grating_coupler import GratingConfig
+from geometries._modes import core_target_neff
 
 if TYPE_CHECKING:
     from gratingCoupler.grating_coupler import GratingCoupler
@@ -190,7 +191,7 @@ def get_active_simulation(
         freqs=freqs,
         mode_spec=td.ModeSpec(
             num_modes=1,
-            target_neff=2.0,
+            target_neff=core_target_neff(core_medium, freq0),
         ),
         name="mode monitor",
     )

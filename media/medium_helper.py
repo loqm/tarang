@@ -151,51 +151,38 @@ def get_medium(
     if not csv_path.exists():
         raise FileNotFoundError(f"Raw data CSV not found at {csv_path}!")
 
-    # 1. Safely Parse Numeric CSV Data (Catches stacked headers/strings early)
+    # 1. Safely Parse Numeric CSV Data (Catches stacked headers/strings early).
+    #    A stacked n/k export is merged in memory; the source file is never
+    #    modified (audit C5). Use media.format_csv.fix_stacked_csv() to write a
+    #    clean copy if you want one on disk.
     try:
         df = pd.read_csv(csv_path)
-        wvl_um = pd.to_numeric(
-            df["wl"],
-            errors="raise",
-        ).to_numpy(dtype=float)
-        n_data = pd.to_numeric(
-            df["n"],
-            errors="raise",
-        ).to_numpy(dtype=float)
-
-        if force_zero_k or "k" not in df.columns:
-            k_data = np.zeros_like(n_data)
-        else:
-            k_data = pd.to_numeric(
-                df["k"],
-                errors="raise",
-            ).to_numpy(dtype=float)
-
+        wvl_um = pd.to_numeric(df["wl"], errors="raise").to_numpy(dtype=float)
+        n_data = pd.to_numeric(df["n"], errors="raise").to_numpy(dtype=float)
+        k_col = None if (force_zero_k or "k" not in df.columns) else df["k"]
+        k_data = (np.zeros_like(n_data) if k_col is None
+                  else pd.to_numeric(k_col, errors="raise").to_numpy(dtype=float))
     except Exception as e:
-        if try_reformat:
-            logger.error(
-                f": CSV formatting check failed for {medium_key} ({e}). Running reformatter..."
-            )
-            format_question_mark = format_csv.fix_stacked_csv(str(csv_path))
-
-            if format_question_mark:
-                return get_medium(
-                    medium_key=medium_key,
-                    wl_range=wl_range,
-                    tolerance=tolerance,
-                    max_num_poles=max_num_poles,
-                    force_zero_k=force_zero_k,
-                    use_cache=use_cache,
-                    try_reformat=False,
-                )
-            else:
-                raise RuntimeError(
-                    f": Failed to reformat CSV for {medium_key}. You're on your own here."
-                )
-        else:
+        if not try_reformat:
             raise RuntimeError(
-                f": Unrecoverable numeric parsing error in {csv_path.name}: {e}"
-            )
+                f"[{medium_key}] Unrecoverable numeric parsing error in {csv_path.name}: {e}"
+            ) from e
+        logger.warning(
+            f"[{medium_key}] {csv_path.name} is not a plain wl,n,k table ({e}); "
+            "trying the stacked refractiveindex.info layout (file is not modified)..."
+        )
+        df = format_csv.read_stacked_csv(csv_path)
+        if df is None:
+            raise RuntimeError(
+                f"[{medium_key}] Could not read {csv_path.name} as a plain or stacked "
+                "wl,n,k table. Fix the file or pass force_zero_k=True."
+            ) from e
+        wvl_um = df["wl"].to_numpy(dtype=float)
+        n_data = df["n"].to_numpy(dtype=float)
+        k_data = (np.zeros_like(n_data) if force_zero_k
+                  else df["k"].fillna(0.0).to_numpy(dtype=float))
+        ok = np.isfinite(wvl_um) & np.isfinite(n_data)
+        wvl_um, n_data, k_data = wvl_um[ok], n_data[ok], k_data[ok]
 
     # 2. Resolve Dynamic Wavelength Range & Validate Coverage
     data_wl_min, data_wl_max = float(np.min(wvl_um)), float(np.max(wvl_um))
@@ -215,6 +202,16 @@ def get_medium(
             raise ValueError(
                 f"[{medium_key}] Requested wl_range {wl_range} μm has ZERO data points in '{csv_path.name}'. "
                 f"The available dataset wavelength range is [{data_wl_min:.4f}, {data_wl_max:.4f}] μm."
+            )
+        # Partial coverage: the pole fit is only constrained where there is data,
+        # and outside it the fitted index is an extrapolation (audit C3).
+        if wl_range[0] < data_wl_min - eps_bounds or wl_range[1] > data_wl_max + eps_bounds:
+            logger.warning(
+                f"[{medium_key}] Requested wl_range ({wl_range[0]:.4f}, {wl_range[1]:.4f}) μm "
+                f"extends beyond the data in '{csv_path.name}' "
+                f"([{data_wl_min:.4f}, {data_wl_max:.4f}] μm). Outside the data the fitted "
+                f"index is an extrapolation and may be unphysical; prefer a dataset that "
+                f"covers the full simulation band."
             )
 
     # 3. Manifest and Hashing Setup
@@ -323,20 +320,9 @@ def get_medium(
             wvl_range=wl_range,
         )
     except ValidationError as e:
-        if try_reformat:
-            logger.error(f": Fitter validation failed. Attempting reformat...")
-            format_csv.fix_stacked_csv(str(csv_path))
-            return get_medium(
-                medium_key=medium_key,
-                wl_range=wl_range,
-                tolerance=tolerance,
-                max_num_poles=max_num_poles,
-                force_zero_k=force_zero_k,
-                use_cache=use_cache,
-                try_reformat=False,
-            )
-        else:
-            raise
+        raise RuntimeError(
+            f"[{medium_key}] Dispersion fitter rejected the data in {csv_path.name}: {e}"
+        ) from e
 
     # 8. Execute Local Fit
     logger.info(

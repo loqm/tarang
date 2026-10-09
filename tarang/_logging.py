@@ -1,6 +1,7 @@
 """Initialize library logging without configuring the host application.
 
-Exposes get_logger(), configure_logging(), set_tidy3d_output(), and tidy3d_verbose().
+Exposes get_logger(), configure_logging(), set_tidy3d_output(),
+set_tidy3d_log_level(), and tidy3d_verbose().
 """
 
 import logging
@@ -139,6 +140,23 @@ def set_tidy3d_output(enabled: bool = True) -> None:
             # Notify Python that warning registries must re-evaluate their filters.
             warnings._filters_mutated()
             _tidy3d_state = None
+
+
+def set_tidy3d_log_level(level: str = "ERROR") -> None:
+    """Set Tidy3D's own log level on any supported Tidy3D version.
+
+    Tidy3D 2.12 removed ``td.config.logging_level`` in favour of
+    ``td.config.logging.level``; this helper tries the new form first.
+    """
+    import tidy3d as td
+
+    level = str(level).upper()
+    try:
+        td.config.logging.level = level        # tidy3d >= 2.12
+        return
+    except AttributeError:
+        pass
+    td.config.logging_level = level            # tidy3d < 2.12
 
 
 def tidy3d_verbose(requested: bool = True) -> bool:

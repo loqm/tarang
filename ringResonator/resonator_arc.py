@@ -10,17 +10,14 @@ resonatorArc.get_efficiency(), resonatorArc.get_loss(), resonatorArc.plot_field(
 
 from __future__ import annotations
 from tarang import get_logger
-from tarang._logging import tidy3d_verbose
 
 from pathlib import Path
 from typing import Optional, Union, Any
-import os
 import hashlib
 
 import matplotlib.pyplot as plt
 import numpy as np
 import tidy3d as td
-from tidy3d import web
 
 from ringResonator.ring_resonator import BaseResonator
 
@@ -65,60 +62,17 @@ class resonatorArc(BaseResonator):
         self.cladding_medium = cladding_medium
         self.mode_direction = "+"
 
-    def get_dir_name(self) -> str:
-        """Generates a clean, unique parameter-based identifier containing an MD5 hash
-        for cache safety.
-        """
+    _task_prefix = "arc_sim"
+
+    def _readable_name(self) -> str:
+        """Short, human-readable cache stem; the fingerprint is appended."""
+        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength0:.3f}um"
+
+    def _legacy_dir_name(self) -> str:
+        """Directory name used before v0.1.0 (verified before reuse)."""
         sig = f"{self.wg_width:.4f}_{self.wg_height:.4f}_{self.core_medium}_{self.cladding_medium}_{self.substrate_medium}"
         h = hashlib.md5(sig.encode()).hexdigest()[:8]
         return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength0:.3f}um_{h}"
-
-    def _run_sim(
-        self,
-        output_dir: Union[str, Path],
-        verbose: bool = False,
-        force_rerun: bool = False,
-    ) -> td.SimulationData:
-        """Private method: Checks for local cached HDF5 simulation data.
-        Run on the Tidy3D cloud and save results when missing or force_rerun is set.
-        """
-        if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-            logger.warning(
-                "[Warning] TIDY3D_API_KEY not found in environment variables."
-            )
-
-        param_dir = self.get_dir_name()
-        full_output_dir = Path(output_dir) / param_dir
-        full_output_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        hdf5_target_path = full_output_dir / "raw_simulation_data.hdf5"
-
-        if hdf5_target_path.exists() and not force_rerun:
-            logger.info(
-                f"[Profiler] Cache hit. Loading existing simulation data from {hdf5_target_path}..."
-            )
-            return td.SimulationData.from_file(str(hdf5_target_path))
-
-        logger.info(
-            f"[Profiler] Cache miss. Uploading {param_dir} to Tidy3D cloud infrastructure..."
-        )
-        task_name = f"arc_sim_{param_dir}"
-        sim_data = web.run(
-            self.sim,
-            task_name=task_name,
-            verbose=tidy3d_verbose(verbose),
-            folder_name="default",
-        )
-
-        logger.info(
-            f"[Profiler] Execution complete. Serializing data to {hdf5_target_path}..."
-        )
-        sim_data.to_file(str(hdf5_target_path))
-
-        return sim_data
 
     # --------------------------------
     # Execution and Analysis Methods

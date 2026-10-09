@@ -22,6 +22,8 @@ import warnings
 import numpy as np
 import tidy3d as td
 
+from geometries._modes import core_target_neff
+
 from ringResonator.ring_resonator import partialRingResonator
 
 logger = get_logger(__name__)
@@ -309,10 +311,7 @@ def get_active_simulation(
     )
     sim = obj.sim
     frequency = td.C_0 / wavelength0
-    try:
-        target_neff = float(np.real(core_medium.n_complex(frequency)))
-    except Exception:
-        target_neff = 2.0
+    target_neff = core_target_neff(core_medium, frequency)
     mode_spec = td.ModeSpec(
         num_modes=1,
         target_neff=target_neff,
