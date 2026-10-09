@@ -1,13 +1,18 @@
 """
 gratingCoupler/nested_sampler.py
 
-Bayesian Parameter Space Explorer for Grating Couplers using MultiNest Nested Sampling.
+Bayesian Parameter Space Explorer for Grating Couplers using nested sampling.
+
+Backends (see utilities.nested_backends): MultiNest via PyMultiNest (Linux/macOS)
+or dynesty (pure Python, also Windows). backend="auto" picks MultiNest when its
+native library loads and dynesty otherwise. Both write MultiNest-format chains,
+so the post-processing and corner plots are identical.
 
 Available Search Pipelines:
 ---------------------------
 1. execute_search():
     Traditional nested sampling execution. Runs until statistical evidence
-    convergence (or native MultiNest stopping criteria) without budget caps.
+    convergence (evidence_tolerance) without budget caps.
 
 2. execute_search_with_budget():
     Budget-aware nested sampling execution. Enforces a strict FlexCredit limit,
@@ -44,6 +49,7 @@ import tidy3d as td
 
 from gratingCoupler.grating_coupler import GratingConfig, GratingCoupler
 from utilities.cloud_run import CostLimitExceededError
+from utilities.nested_backends import run_nested
 from geometries.grating_coupler import get_ideal_coords
 from utilities.sim_plotter import display_2d, display_3d
 from utilities.nested_sampling_post_process import post_process_run
@@ -60,7 +66,8 @@ class BudgetExceededError(Exception):
 
 class GratingCouplerBayesianOptimizer:
     """
-    Bayesian parameter space optimizer for SiN/Silicon grating couplers using MultiNest.
+    Bayesian parameter space optimizer for SiN/Silicon grating couplers using
+    nested sampling (MultiNest or dynesty; see utilities.nested_backends).
     """
 
     def __init__(
@@ -108,6 +115,7 @@ class GratingCouplerBayesianOptimizer:
 
         self.total_credits_used = 0.0
         self.total_evaluations = 0
+        self.last_sampler_run = None
         self.top_10_runs: list[dict] = []
         self._load_tracker_state()
 
@@ -434,10 +442,16 @@ class GratingCouplerBayesianOptimizer:
         n_live_points: int = 150,
         evidence_tolerance: float = 0.3,
         *,
+        backend: str = "auto",
+        seed: int | None = None,
+        dynesty_kwargs: dict | None = None,
         plot_dpi: int = 150,  # Resolution of displayed and saved figures (dots per inch).
     ) -> dict:
-        """Execute an unbudgeted MultiNest search or load existing results.
+        """Execute an unbudgeted nested-sampling search or load existing results.
         Post-process completed chains into the returned summary dictionary.
+
+        backend: "auto" (MultiNest if installed, else dynesty), "multinest" or
+        "dynesty". seed: reproducible dynesty runs (stored for resuming).
         """
         self.credit_limit = None
 
@@ -453,23 +467,20 @@ class GratingCouplerBayesianOptimizer:
                 return json.load(f)
 
         logger.info(
-            f"\n[Bayesian Engine] Launching standard MultiNest space extraction ({self.dimensions})..."
+            f"\n[Bayesian Engine] Launching nested sampling ({self.dimensions}, backend={backend})..."
         )
 
-        import pymultinest
-
-        pymultinest.run(
-            LogLikelihood=self.log_likelihood,
-            Prior=self.prior,
-            n_dims=5,
-            n_params=5,
-            outputfiles_basename=self.basename,
-            n_live_points=n_live_points,
+        self.last_sampler_run = run_nested(
+            self.log_likelihood,
+            self.prior,
+            5,
+            self.basename,
+            backend=backend,
+            n_live=n_live_points,
             evidence_tolerance=evidence_tolerance,
-            importance_nested_sampling=False,
-            multimodal=True,
             resume=True,
-            verbose=False,
+            seed=seed,
+            dynesty_kwargs=dynesty_kwargs,
         )
 
         return self._post_process_results(
@@ -483,10 +494,17 @@ class GratingCouplerBayesianOptimizer:
         n_live_points: int = 150,
         evidence_tolerance: float = 0.3,
         *,
+        backend: str = "auto",
+        seed: int | None = None,
+        dynesty_kwargs: dict | None = None,
         plot_dpi: int = 150,  # Resolution of displayed and saved figures (dots per inch).
     ) -> dict:
-        """Run or resume MultiNest within the supplied credit limit.
+        """Run or resume nested sampling within the supplied credit limit.
         Save progress and return a paused status when the budget is exhausted.
+
+        Resuming with a higher credit_limit continues the run. MultiNest resumes
+        from its resume file; dynesty replays from the stored seed, and every
+        earlier evaluation is a free cache hit.
         """
         self.credit_limit = credit_limit
 
@@ -502,34 +520,31 @@ class GratingCouplerBayesianOptimizer:
                 return json.load(f)
 
         logger.info(
-            f"\n[Bayesian Engine] Launching budget-aware MultiNest space extraction ({self.dimensions})..."
+            f"\n[Bayesian Engine] Launching budget-aware nested sampling ({self.dimensions}, backend={backend})..."
         )
         logger.info(
             f"[Budget Warden] Active Cap: {self.credit_limit:.4f} FlexCredits | Spent So Far: {self.total_credits_used:.4f} FlexCredits"
         )
 
-        import pymultinest
-
         budget_halted = False
         try:
-            pymultinest.run(
-                LogLikelihood=self.log_likelihood,
-                Prior=self.prior,
-                n_dims=5,
-                n_params=5,
-                outputfiles_basename=self.basename,
-                n_live_points=n_live_points,
+            self.last_sampler_run = run_nested(
+                self.log_likelihood,
+                self.prior,
+                5,
+                self.basename,
+                backend=backend,
+                n_live=n_live_points,
                 evidence_tolerance=evidence_tolerance,
-                importance_nested_sampling=False,
-                multimodal=True,
                 resume=True,
-                verbose=False,
+                seed=seed,
+                dynesty_kwargs=dynesty_kwargs,
             )
         except BudgetExceededError as e:
             budget_halted = True
             logger.warning(f"\n[Budget Warden] Execution paused cleanly: {e}")
             logger.info(
-                "[Budget Warden] MultiNest chains and credit ledger are saved. Pass a higher limit to resume."
+                "[Budget Warden] Chains and credit ledger are saved. Pass a higher limit to resume."
             )
 
         self.report_top_configurations()
@@ -662,6 +677,12 @@ class GratingCouplerBayesianOptimizer:
                 )
 
         summary["status"] = "CONVERGED"
+        run = getattr(self, "last_sampler_run", None)
+        if run is not None:
+            summary["sampler_backend"] = run.backend
+            summary["log_evidence"] = run.log_evidence
+            summary["log_evidence_err"] = run.log_evidence_err
+            summary["sampler_seed"] = run.seed
         with open(
             result_file,
             "w",
