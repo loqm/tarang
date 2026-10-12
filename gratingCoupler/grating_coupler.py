@@ -17,16 +17,12 @@ from tarang import get_logger
 from utilities.cloud_run import CloudCachedDevice
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
 import tidy3d as td
-
-if TYPE_CHECKING:
-    from geometries.grating_coupler import get_active_simulation
 
 
 logger = get_logger(__name__)

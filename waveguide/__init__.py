@@ -16,11 +16,3 @@ __all__ = [
     "confinement_in_geometry",
     "dispersion_in_geometry",
 ]
-
-
-__all__ = [
-    "RidgeWaveguide",
-    "modes_in_geometry",
-    "confinement_in_geometry",
-    "dispersion_in_geometry",
-]

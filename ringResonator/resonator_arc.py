@@ -4,6 +4,11 @@ ringResonator.resonator_arc
 Author: Esraaj Sarkar Gupta
 Date: 2026
 
+Role: ANALYSIS WRAPPER for a waveguide bend. Holds a built Simulation, runs it
+through the verified cloud cache, and extracts transmission and bend loss. The
+Simulation itself is built by ``geometries.resonator_arc`` (same file name,
+different role: geometries/* builds, the device packages analyse).
+
 Exposes: resonatorArc, resonatorArc.get_dir_name(), resonatorArc.get_mode_data(),
 resonatorArc.get_efficiency(), resonatorArc.get_loss(), resonatorArc.plot_field().
 """

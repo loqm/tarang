@@ -34,18 +34,10 @@ GratingCouplerBayesianOptimizer.execute_search_with_budget().
 from tarang import get_logger
 
 import json
-import time
-import sys
 from pathlib import Path
 from dataclasses import asdict
 import numpy as np
 
-import matplotlib
-
-# matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-import tidy3d as td
 
 from gratingCoupler.grating_coupler import GratingConfig, GratingCoupler
 from utilities.cloud_run import CostLimitExceededError

@@ -3,6 +3,11 @@ geometries.resonator_arc.py
 Authors: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: 2026
 
+Role: GEOMETRY BUILDER. Builds the Tidy3D Simulation for a waveguide bend (arc)
+and returns it wrapped in the analysis class from ``ringResonator.resonator_arc``,
+which runs the simulation and extracts bend loss. The two modules share a file
+name on purpose: geometries/* builds, the device packages analyse.
+
 Refactored to follow the mode-monitor bend-loss measurement pattern used in
 Tidy3D's own "Euler Waveguide Bend" example notebook: a ModeSource launches
 the fundamental mode into a straight lead, and a ModeMonitor placed close to

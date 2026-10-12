@@ -23,7 +23,7 @@ from utilities.cloud_run import CloudCachedDevice
 
 import hashlib
 from pathlib import Path
-from typing import Dict, Any, Optional, List, TYPE_CHECKING, Union
+from typing import Dict, Any, Optional, Union
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -31,20 +31,6 @@ import tidy3d as td
 
 from tidy3d.plugins.mode import ModeSolver
 from tidy3d.plugins.mode.web import run as run_mode_solver
-
-if TYPE_CHECKING:
-    from geometries.half_ring_resonator import (
-        get_active_simulation as get_active_half_sim,
-        get_passive_simulation as get_passive_half_sim,
-    )
-    from geometries.full_ring_resonator import (
-        get_active_simulation as get_active_full_sim,
-        get_passive_simulation as get_passive_full_sim,
-    )
-    from geometries.partial_ring_resonator import (
-        get_active_simulation as get_active_partial_sim,
-        get_passive_simulation as get_passive_partial_sim,
-    )
 
 
 logger = get_logger(__name__)

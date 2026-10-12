@@ -17,7 +17,7 @@ from tarang import get_logger
 from utilities.validation import positive as _positive, values as _values, integer as _integer
 
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 import numpy as np
 import tidy3d as td

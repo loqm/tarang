@@ -27,7 +27,6 @@ import csv
 import json
 import multiprocessing as mp
 import os
-import sys
 import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
