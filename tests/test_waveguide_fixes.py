@@ -25,9 +25,9 @@ def media():
 def make_wg(media, width, height, clad=False, steps=30):
     return rw.get_passive_simulation(
         width=width, height=height, length=2.0, core_medium=media["sin"],
-        sub_medium=media["sio2"], wavelength_um=1.55, substrate_height=4.0,
+        box_medium=media["sio2"], wavelength_um=1.55, box_height=4.0,
         top_cladding_medium=media["sio2"] if clad else None,
-        top_cladding_height=2.0 if clad else 0.0, fine_min_steps_per_wvl=steps)
+        top_cladding_height=2.0 if clad else 0.0, fine_steps_per_wvl=steps)
 
 
 def test_fix5_sio2_is_fused_silica():
@@ -71,7 +71,7 @@ def test_fix2_fix4_dispersion_in_geometry_options(media, tmp_path):
     """Sweep accepts a top cladding and mesh setting, and skips failures instead of crashing."""
     res = dispersion_in_geometry(
         sweep_heights=[0.80], sweep_widths=[0.80], core_medium=media["sin"],
-        sub_medium=media["sio2"], output_dir_name=tmp_path, wavelength_um=1.55,
-        substrate_height=4.0, display_results=False,
-        top_cladding_medium=None, fine_min_steps_per_wvl=30)
+        box_medium=media["sio2"], output_dir_name=tmp_path, wavelength_um=1.55,
+        box_height=4.0, display_results=False,
+        top_cladding_medium=None, fine_steps_per_wvl=30)
     assert res, "sweep returned no results"

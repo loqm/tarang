@@ -11,7 +11,7 @@ import pytest
 import tidy3d as td
 
 import utilities.cloud_run as cr
-from gratingCoupler.grating_coupler import GratingConfig, GratingCoupler
+from grating_coupler.grating_coupler import GratingConfig, GratingCoupler
 
 
 def _medium(n):
@@ -22,7 +22,7 @@ SIN, SIO2_A, SIO2_B, AIR = _medium(1.996), _medium(1.444), _medium(1.420), _medi
 
 CFG = GratingConfig(
     wavelength_um=1.55, theta_deg=-12.0, mfd=10.4, source_x=3.84, source_gap=2.0,
-    core_height=0.8, cladding_height=2.0, box_height=4.0, substrate_height=8.0,
+    core_height=0.8, top_cladding_height=2.0, box_height=4.0, handle_height=8.0,
     etch_depth=0.5, period=0.82, ff=0.51, n_teeth=22, w_grating=10.4,
     pol_angle=np.pi / 2, buffer=3.0,
 )
@@ -177,12 +177,12 @@ def test_partial_download_is_not_a_cache_hit(tmp_path, fake_web):
 def test_nested_sampler_budget_uses_single_upload(tmp_path, fake_web):
     """The sampler used to upload each design twice (once only to price it)."""
     pytest.importorskip("matplotlib")
-    from gratingCoupler.nested_sampler import GratingCouplerBayesianOptimizer, BudgetExceededError
+    from grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer, BudgetExceededError
 
-    fixed = dict(wavelength0_um=1.55, theta_deg=-12.0, mfd=10.4, source_gap=2.0,
-                 core_height=0.8, cladding_height=2.0, box_height=4.0, substrate_height=8.0,
+    fixed = dict(wavelength_um=1.55, theta_deg=-12.0, mfd=10.4, source_gap=2.0,
+                 core_height=0.8, top_cladding_height=2.0, box_height=4.0, handle_height=8.0,
                  w_grating=10.4, buffer=3.0, pol_angle=np.pi / 2, fine_steps=10, coarse_steps=8)
-    mats = dict(core_medium=SIN, box_medium=SIO2_A, sub_medium=None, cladding_medium=AIR)
+    mats = dict(core_medium=SIN, box_medium=SIO2_A, handle_medium=None, top_cladding_medium=AIR)
     bounds = dict(period=[0.80, 0.84], fill_factor=[0.48, 0.55], etch_depth=[0.48, 0.55],
                   num_periods=[18.0, 26.0], source_x=[3.5, 4.2])
     opt = GratingCouplerBayesianOptimizer(fixed_params=fixed, materials=mats,

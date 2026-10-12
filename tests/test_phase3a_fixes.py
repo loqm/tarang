@@ -37,7 +37,7 @@ def build_edge(core=SIN, sub=SIO2, out=True):
     from geometries import edge_coupler as g
     return g.get_active_simulation(
         tip_width=0.2, taper_length=10.0, wg_width=0.8, wg_height=0.8, core_medium=core,
-        substrate_medium=sub, wavelength0=WL, top_cladding_medium=AIR,
+        box_medium=sub, wavelength_um=WL, top_cladding_medium=AIR,
         fine_steps_per_wvl=8, coarse_steps_per_wvl=6,
         in_coupling=not out, out_coupling=out)
 
@@ -46,23 +46,23 @@ def build_ring(core=SIN, sub=SIO2):
     from geometries import partial_ring_resonator as g
     return g.get_active_simulation(
         radius=20.0, gap=0.3, wg_width=0.8, wg_height=0.8, core_medium=core,
-        substrate_medium=sub, wavelength0=WL, span_angle_rad=np.pi / 6,
+        box_medium=sub, wavelength_um=WL, span_angle_rad=np.pi / 6,
         fine_steps_per_wvl=8, coarse_steps_per_wvl=6)
 
 
 def build_arc(core=SIN, sub=SIO2):
     from geometries import resonator_arc as g
     return g.get_active_simulation(
-        wavelength0=WL, radius=20.0, wg_width=0.8, wg_height=0.8, core_medium=core,
-        substrate_medium=sub, cladding_medium=AIR, bend_angle_deg=30.0,
+        wavelength_um=WL, radius=20.0, wg_width=0.8, wg_height=0.8, core_medium=core,
+        box_medium=sub, top_cladding_medium=AIR, bend_angle_deg=30.0,
         fine_steps_per_wvl=8, coarse_steps_per_wvl=6)
 
 
 def build_gc(core=SIN, sub=SIO2):
-    from gratingCoupler.grating_coupler import GratingConfig, GratingCoupler
+    from grating_coupler.grating_coupler import GratingConfig, GratingCoupler
     cfg = GratingConfig(wavelength_um=WL, theta_deg=-12.0, mfd=10.4, source_x=3.84,
-                        source_gap=2.0, core_height=0.8, cladding_height=2.0, box_height=4.0,
-                        substrate_height=8.0, etch_depth=0.5, period=0.82, ff=0.51,
+                        source_gap=2.0, core_height=0.8, top_cladding_height=2.0, box_height=4.0,
+                        handle_height=8.0, etch_depth=0.5, period=0.82, ff=0.51,
                         n_teeth=22, w_grating=10.4, pol_angle=np.pi / 2, buffer=3.0)
     return GratingCoupler.from_config(cfg, core, sub, None, AIR,
                                       fine_steps_per_wvl=8, coarse_steps_per_wvl=6)
@@ -72,7 +72,7 @@ BUILDERS = {"edge": build_edge, "ring": build_ring, "arc": build_arc, "gc": buil
 
 
 @pytest.mark.parametrize("name", list(BUILDERS))
-def test_every_wrapper_cache_key_tracks_substrate_medium(name):
+def test_every_wrapper_cache_key_tracks_box_medium(name):
     a = BUILDERS[name]()
     b = BUILDERS[name](sub=_medium(1.420))
     assert a.get_dir_name() != b.get_dir_name()
@@ -186,8 +186,8 @@ def test_c4_get_modes_flags_unguided(caplog):
     from waveguide.waveguide import WaveguideModeError
     # 150 nm x 100 nm SiN on SiO2 at 1.55 um: far below cutoff.
     wg = rw.get_passive_simulation(
-        width=0.15, height=0.10, length=2.0, core_medium=SIN, sub_medium=SIO2,
-        wavelength_um=WL, substrate_height=2.0, fine_min_steps_per_wvl=20)
+        width=0.15, height=0.10, length=2.0, core_medium=SIN, box_medium=SIO2,
+        wavelength_um=WL, box_height=2.0, fine_steps_per_wvl=20)
     with caplog.at_level(logging.WARNING, logger="tarang"):
         r = wg.get_modes(num_modes=2)
     assert r["has_guided_mode"] is False

@@ -4,7 +4,7 @@ Authors: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: 2026
 
 Role: GEOMETRY BUILDER. Builds the Tidy3D Simulation for a waveguide bend (arc)
-and returns it wrapped in the analysis class from ``ringResonator.resonator_arc``,
+and returns it wrapped in the analysis class from ``ring_resonator.resonator_arc``,
 which runs the simulation and extracts bend loss. The two modules share a file
 name on purpose: geometries/* builds, the device packages analyse.
 
@@ -30,12 +30,13 @@ get_optimal_plot_coords().
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import renamed_params
 
 from typing import Optional, Tuple
 import warnings
 import numpy as np
 import tidy3d as td
-from ringResonator.resonator_arc import resonatorArc
+from ring_resonator.resonator_arc import ResonatorArc
 from media import get_medium
 
 logger = get_logger(__name__)
@@ -55,8 +56,9 @@ def _transform_pt(
     return xr + radius * np.sin(theta_rad), yr + radius * np.cos(theta_rad)
 
 
+@renamed_params(substrate_medium="box_medium", cladding_medium="top_cladding_medium", wavelength0="wavelength_um")
 def get_passive_simulation(
-    wavelength0: float,
+    wavelength_um: float,
 
     radius: float,
 
@@ -64,8 +66,8 @@ def get_passive_simulation(
     wg_height: float,
 
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
-    cladding_medium: td.Medium = get_medium("air"),
+    box_medium: td.Medium,
+    top_cladding_medium: td.Medium = get_medium("air"),
 
     bend_angle_deg: float = 90,
 
@@ -77,8 +79,8 @@ def get_passive_simulation(
     wg_in_length: float = 4.0,
     wg_out_length: float = 4.0,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
-) -> resonatorArc:
-    """Constructs a passive arc resonator simulation wrapped in a resonatorArc object.
+) -> ResonatorArc:
+    """Constructs a passive arc resonator simulation wrapped in a ResonatorArc object.
     Include the bent core and straight leads without excitation or monitors.
     """
     if not (0 < bend_angle_deg <= 180):
@@ -88,7 +90,7 @@ def get_passive_simulation(
         )
     if not all(
         np.isfinite(v) and v > 0
-        for v in (wavelength0, radius, wg_width, wg_height, wg_in_length, wg_out_length)
+        for v in (wavelength_um, radius, wg_width, wg_height, wg_in_length, wg_out_length)
     ):
         raise ValueError(
             "Wavelength, radius, waveguide dimensions and lead lengths must be positive."
@@ -116,7 +118,7 @@ def get_passive_simulation(
             center=(0, 0, -1.000),
             size=(td.inf, td.inf, 2.000),
         ),
-        medium=substrate_medium,
+        medium=box_medium,
         name="Substrate",
     )
     # -- Dynamic Arc Generation via Boolean Subtraction -- #
@@ -231,11 +233,11 @@ def get_passive_simulation(
     structures = [ring_arc, substrate, wg_in, wg_out]
     # -- Grid Overrides & Solver Setup -- #
     try:
-        freq0 = td.C_0 / wavelength0
+        freq0 = td.C_0 / wavelength_um
         n_core_approx = float(np.real(core_medium.n_complex(freq0)))
     except Exception:
         n_core_approx = 2.0
-    dl_fine = wavelength0 / (n_core_approx * fine_steps_per_wvl)
+    dl_fine = wavelength_um / (n_core_approx * fine_steps_per_wvl)
     mesh_override_ring = td.MeshOverrideStructure(
         geometry=ring_arc.geometry,
         dl=[dl_fine] * 3,
@@ -284,7 +286,7 @@ def get_passive_simulation(
         size=(domain_size_x, domain_size_y, z_max - z_min),
         grid_spec=td.GridSpec.auto(
             min_steps_per_wvl=coarse_steps_per_wvl,
-            wavelength=wavelength0,
+            wavelength=wavelength_um,
             override_structures=[
                 mesh_override_ring,
                 mesh_override_in,
@@ -294,20 +296,20 @@ def get_passive_simulation(
         structures=structures,
         run_time=run_time,
         boundary_spec=boundary_spec,
-        medium=cladding_medium,
+        medium=top_cladding_medium,
     )
-    return resonatorArc(
+    return ResonatorArc(
         sim=sim_passive,
         radius=radius,
         wg_width=wg_width,
         wg_height=wg_height,
         core_medium=core_medium,
-        cladding_medium=cladding_medium,
-        substrate_medium=substrate_medium,
+        top_cladding_medium=top_cladding_medium,
+        box_medium=box_medium,
         bend_angle_deg=bend_angle_deg,
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
-        wavelength0=wavelength0,
+        wavelength_um=wavelength_um,
     )
 
 
@@ -411,8 +413,9 @@ def _validate_port_positions(
     }
 
 
+@renamed_params(substrate_medium="box_medium", cladding_medium="top_cladding_medium", wavelength0="wavelength_um")
 def get_active_simulation(
-    wavelength0: float,
+    wavelength_um: float,
 
     radius: float,
 
@@ -420,8 +423,8 @@ def get_active_simulation(
     wg_height: float,
 
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
-    cladding_medium: td.Medium = get_medium("air"),
+    box_medium: td.Medium,
+    top_cladding_medium: td.Medium = get_medium("air"),
 
     bend_angle_deg: float = 90,
 
@@ -441,11 +444,11 @@ def get_active_simulation(
     min_source_monitor_spacing_um: float = 0.5,
     junction_clearance_um: float = 0.5,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
-) -> resonatorArc:
+) -> ResonatorArc:
     """Build an active arc with independently positioned sources and monitors.
     Validate lead clearances; see docs/API_NOTES.md for placement conventions.
     """
-    freq0 = td.C_0 / wavelength0
+    freq0 = td.C_0 / wavelength_um
     df = freq0 * 0.02
     if port_buffer_um is not None:
         if (
@@ -462,7 +465,7 @@ def get_active_simulation(
         warnings.warn(
             "port_buffer_um is deprecated; use independent monitor/source distances.",
             DeprecationWarning,
-            stacklevel=2,
+            stacklevel=3,  # caller of the @renamed_params wrapper
         )
 
     positions = _validate_port_positions(
@@ -481,13 +484,13 @@ def get_active_simulation(
     except Exception:
         n_eff = 2.0
     resonator_obj = get_passive_simulation(
-        wavelength0=wavelength0,
+        wavelength_um=wavelength_um,
         radius=radius,
         wg_width=wg_width,
         wg_height=wg_height,
         core_medium=core_medium,
-        cladding_medium=cladding_medium,
-        substrate_medium=substrate_medium,
+        top_cladding_medium=top_cladding_medium,
+        box_medium=box_medium,
         bend_angle_deg=bend_angle_deg,
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
@@ -586,7 +589,7 @@ def get_active_simulation(
 
 def compute_arc_loss(
     sim_data: td.SimulationData,
-    resonator_obj: resonatorArc,
+    resonator_obj: ResonatorArc,
     mode_index: int = 0,
     straight_loss_db_per_cm: float = 0.0,
 ) -> dict:

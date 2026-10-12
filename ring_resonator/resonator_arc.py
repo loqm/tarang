@@ -1,5 +1,5 @@
 """
-ringResonator.resonator_arc
+ring_resonator.resonator_arc
 
 Author: Esraaj Sarkar Gupta
 Date: 2026
@@ -9,12 +9,13 @@ through the verified cloud cache, and extracts transmission and bend loss. The
 Simulation itself is built by ``geometries.resonator_arc`` (same file name,
 different role: geometries/* builds, the device packages analyse).
 
-Exposes: resonatorArc, resonatorArc.get_dir_name(), resonatorArc.get_mode_data(),
-resonatorArc.get_efficiency(), resonatorArc.get_loss(), resonatorArc.plot_field().
+Exposes: ResonatorArc, ResonatorArc.get_dir_name(), ResonatorArc.get_mode_data(),
+ResonatorArc.get_efficiency(), ResonatorArc.get_loss(), ResonatorArc.plot_field().
 """
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import deprecated_module_names, renamed_params
 
 from pathlib import Path
 from typing import Optional, Union, Any
@@ -24,12 +25,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tidy3d as td
 
-from ringResonator.ring_resonator import BaseResonator
+from ring_resonator.ring_resonator import BaseResonator
 
 logger = get_logger(__name__)
 
 
-class resonatorArc(BaseResonator):
+class ResonatorArc(BaseResonator):
+    _renamed_attrs = {**BaseResonator._renamed_attrs, "cladding_medium": "top_cladding_medium"}
+
+    @renamed_params(substrate_medium="box_medium", cladding_medium="top_cladding_medium", wavelength0="wavelength_um")
     def __init__(
         self,
         sim: td.Simulation,
@@ -37,12 +41,12 @@ class resonatorArc(BaseResonator):
         wg_width: float,
         wg_height: float,
         core_medium: td.Medium,
-        cladding_medium: td.Medium,
-        substrate_medium: td.Medium,
+        top_cladding_medium: td.Medium,
+        box_medium: td.Medium,
         bend_angle_deg: float,
         fine_steps_per_wvl: float,
         coarse_steps_per_wvl: float,
-        wavelength0: float,
+        wavelength_um: float,
     ):
         """Initialize the device wrapper with its simulation and physical settings.
         Store the parameters used by subsequent analysis and geometry conversion.
@@ -54,30 +58,30 @@ class resonatorArc(BaseResonator):
             wg_width=wg_width,
             wg_height=wg_height,
             core_medium=core_medium,
-            substrate_medium=substrate_medium,
-            substrate_height=2.5,  # Fixed to match Z-bounds of passive sim (-2.5 to 1.5)
-            top_cladding_medium=cladding_medium,
+            box_medium=box_medium,
+            box_height=2.5,  # Fixed to match Z-bounds of passive sim (-2.5 to 1.5)
+            top_cladding_medium=top_cladding_medium,
             top_cladding_height=1.5,  # Fixed to match Z-bounds
             fine_steps_per_wvl=fine_steps_per_wvl,
             coarse_steps_per_wvl=coarse_steps_per_wvl,
             wg_length=0.0,
-            wavelength0=wavelength0,
+            wavelength_um=wavelength_um,
         )
         self.bend_angle_deg = bend_angle_deg
-        self.cladding_medium = cladding_medium
+        self.top_cladding_medium = top_cladding_medium
         self.mode_direction = "+"
 
     _task_prefix = "arc_sim"
 
     def _readable_name(self) -> str:
         """Short, human-readable cache stem; the fingerprint is appended."""
-        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength0:.3f}um"
+        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength_um:.3f}um"
 
     def _legacy_dir_name(self) -> str:
         """Directory name used before v0.1.0 (verified before reuse)."""
-        sig = f"{self.wg_width:.4f}_{self.wg_height:.4f}_{self.core_medium}_{self.cladding_medium}_{self.substrate_medium}"
+        sig = f"{self.wg_width:.4f}_{self.wg_height:.4f}_{self.core_medium}_{self.top_cladding_medium}_{self.box_medium}"
         h = hashlib.md5(sig.encode()).hexdigest()[:8]
-        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength0:.3f}um_{h}"
+        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength_um:.3f}um_{h}"
 
     # --------------------------------
     # Execution and Analysis Methods
@@ -122,7 +126,7 @@ class resonatorArc(BaseResonator):
             force_rerun=force_rerun,
         )
 
-        target_freq = td.C_0 / self.wavelength0
+        target_freq = td.C_0 / self.wavelength_um
         output_monitor = sim_data[monitor_name]
         normal_axis = output_monitor.monitor.size.index(0.0)
 
@@ -284,3 +288,7 @@ class resonatorArc(BaseResonator):
             plt.show()
         else:
             plt.close(fig)
+
+
+# Pre-v0.1.0 class names keep working (with a DeprecationWarning) until v0.2.0.
+__getattr__ = deprecated_module_names(globals(), {'resonatorArc': 'ResonatorArc'})

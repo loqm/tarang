@@ -14,6 +14,7 @@ Set ``GratingCoupler.max_cost`` (FlexCredits) to cap cloud runs.
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import RenamedAttributes, renamed_params
 from utilities.cloud_run import CloudCachedDevice
 
 from dataclasses import dataclass
@@ -29,7 +30,14 @@ logger = get_logger(__name__)
 
 
 @dataclass
-class GratingConfig:
+class GratingConfig(RenamedAttributes):
+    """Grating-coupler geometry and excitation (lengths in um, angles in degrees).
+
+    Layer stack, top to bottom: top cladding (top_cladding_height) / SiN core
+    (core_height) / buried oxide (box_height) / optional Si handle
+    (handle_height, used only when a handle_medium is given).
+    """
+
     wavelength_um: float
 
     theta_deg: float
@@ -37,11 +45,11 @@ class GratingConfig:
     source_x: float
     source_gap: float
 
-    # Substrate geometry
+    # Layer stack
     core_height: float
-    cladding_height: float
+    top_cladding_height: float  # Cladding above the core (was cladding_height)
     box_height: float  # Isolating oxide layer beneath core
-    substrate_height: float  # Deep silicon handle
+    handle_height: float  # Deep silicon handle (was substrate_height)
 
     # Coupler geometry
     etch_depth: float
@@ -55,21 +63,36 @@ class GratingConfig:
 
     buffer: float
 
+    _renamed_attrs = {"cladding_height": "top_cladding_height",
+                      "substrate_height": "handle_height"}
 
-class GratingCoupler(CloudCachedDevice):
+
+GratingConfig.__init__ = renamed_params(
+    cladding_height="top_cladding_height", substrate_height="handle_height"
+)(GratingConfig.__init__)
+
+
+class GratingCoupler(CloudCachedDevice, RenamedAttributes):
     """
     Wraps a Tidy3D Simulation object for grating couplers, binding
     its GratingConfig parameters and material media directly to the object.
+
+    Media: core_medium, box_medium (oxide under the core), handle_medium (Si
+    wafer; None terminates the domain in the BOX), top_cladding_medium (None = air).
     """
 
+    _renamed_attrs = {"substrate_medium": "handle_medium",
+                      "cladding_medium": "top_cladding_medium"}
+
+    @renamed_params(substrate_medium="handle_medium", cladding_medium="top_cladding_medium")
     def __init__(
         self,
         sim: td.Simulation,
         config: GratingConfig,
         core_medium: td.Medium,
         box_medium: td.Medium,
-        substrate_medium: td.Medium,
-        cladding_medium: td.Medium | None = None,  # Defaults to "air" if None
+        handle_medium: td.Medium,
+        top_cladding_medium: td.Medium | None = None,  # Defaults to "air" if None
         is_3d: bool = False,
         fine_steps_per_wvl: int = 20,
         coarse_steps_per_wvl: int = 15,
@@ -82,8 +105,8 @@ class GratingCoupler(CloudCachedDevice):
 
         self.core_medium = core_medium
         self.box_medium = box_medium
-        self.substrate_medium = substrate_medium
-        self.cladding_medium = cladding_medium
+        self.handle_medium = handle_medium
+        self.top_cladding_medium = top_cladding_medium
 
         self.is_3d = is_3d
 
@@ -91,13 +114,14 @@ class GratingCoupler(CloudCachedDevice):
         self.coarse_steps_per_wvl = coarse_steps_per_wvl
 
     @classmethod
+    @renamed_params(substrate_medium="handle_medium", cladding_medium="top_cladding_medium")
     def from_config(
         cls,
         config: GratingConfig,
         core_medium: td.Medium,
         box_medium: td.Medium,
-        substrate_medium: td.Medium | None = None,
-        cladding_medium: td.Medium | None = None,
+        handle_medium: td.Medium | None = None,
+        top_cladding_medium: td.Medium | None = None,
         is_3d: bool = False,
         fine_steps_per_wvl: int = 15,
         coarse_steps_per_wvl: int = 10,
@@ -111,8 +135,8 @@ class GratingCoupler(CloudCachedDevice):
             config=config,
             core_medium=core_medium,
             box_medium=box_medium,
-            substrate_medium=substrate_medium,
-            cladding_medium=cladding_medium,
+            handle_medium=handle_medium,
+            top_cladding_medium=top_cladding_medium,
             is_3d=is_3d,
             fine_steps_per_wvl=fine_steps_per_wvl,
             coarse_steps_per_wvl=coarse_steps_per_wvl,
@@ -141,7 +165,7 @@ class GratingCoupler(CloudCachedDevice):
         return (
             f"{dim}_p_{cfg.period:.4f}_dc_{cfg.ff:.4f}_e_{cfg.etch_depth:.4f}_"
             f"n_{cfg.n_teeth}_w_{cfg.w_grating:.4f}_ch_{cfg.core_height:.4f}_"
-            f"clh_{cfg.cladding_height:.4f}_bh_{cfg.box_height:.4f}_sh_{cfg.substrate_height:.4f}_"
+            f"clh_{cfg.top_cladding_height:.4f}_bh_{cfg.box_height:.4f}_sh_{cfg.handle_height:.4f}_"
             f"t_{cfg.theta_deg:.4f}_mfd_{cfg.mfd:.4f}_sx_{cfg.source_x:.4f}_sg_{cfg.source_gap:.4f}_"
             f"wl_{cfg.wavelength_um:.4f}_pol_{cfg.pol_angle:.4f}_b_{cfg.buffer:.4f}"
         )

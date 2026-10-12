@@ -1,17 +1,18 @@
 """
-edgeCoupler.edge_coupler
+edge_coupler.edge_coupler
 
-Defines the edgeCoupler wrapper class for photonics simulations.
+Defines the EdgeCoupler wrapper class for photonics simulations.
 
 Author: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: 2026
 
-Exposes: edgeCoupler, edgeCoupler.get_dir_name(), edgeCoupler.get_mode_data(),
-edgeCoupler.get_efficiency(), edgeCoupler.get_loss_db(), edgeCoupler.plot_fields().
+Exposes: EdgeCoupler, EdgeCoupler.get_dir_name(), EdgeCoupler.get_mode_data(),
+EdgeCoupler.get_efficiency(), EdgeCoupler.get_loss_db(), EdgeCoupler.plot_fields().
 """
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import RenamedAttributes, deprecated_module_names, renamed_params
 from utilities.cloud_run import CloudCachedDevice
 
 import hashlib
@@ -25,7 +26,10 @@ import tidy3d as td
 logger = get_logger(__name__)
 
 
-class edgeCoupler(CloudCachedDevice):
+class EdgeCoupler(CloudCachedDevice, RenamedAttributes):
+    _renamed_attrs = {"substrate_medium": "box_medium", "substrate_height": "box_height",
+                      "wavelength0": "wavelength_um"}
+
     """
     Wrapper class representing an edge coupler simulation domain.
 
@@ -39,6 +43,7 @@ class edgeCoupler(CloudCachedDevice):
             visualizing refractive index cross-sections or boundary layouts.
     """
 
+    @renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
     def __init__(
         self,
         sim: td.Simulation,
@@ -47,10 +52,10 @@ class edgeCoupler(CloudCachedDevice):
         wg_width: float,
         wg_height: float,
         core_medium: td.Medium,
-        substrate_medium: td.Medium,
+        box_medium: td.Medium,
         top_cladding_medium: td.Medium,
-        wavelength0: float,
-        substrate_height: float,
+        wavelength_um: float,
+        box_height: float,
         top_cladding_height: float,
         fine_steps_per_wvl: int,
         coarse_steps_per_wvl: int,
@@ -73,14 +78,14 @@ class edgeCoupler(CloudCachedDevice):
 
         # Device media
         self.core_medium = core_medium
-        self.substrate_medium = substrate_medium
+        self.box_medium = box_medium
         self.top_cladding_medium = top_cladding_medium
 
         # Wavelength of interest
-        self.wavelength0 = wavelength0
+        self.wavelength_um = wavelength_um
 
         # Isolating layer thicknesses
-        self.substrate_height = substrate_height
+        self.box_height = box_height
         self.top_cladding_height = top_cladding_height
 
         # Meshing resolution
@@ -127,7 +132,7 @@ class edgeCoupler(CloudCachedDevice):
             mode_str = "passive"
         sym_str = f"sym{self.symmetry[0]}{self.symmetry[1]}{self.symmetry[2]}"
         return (f"coupler_Wtip{self.tip_width:.3f}um_Ltaper{self.taper_length:.2f}um_"
-                f"{mode_str}_{sym_str}_{self.wavelength0:.3f}um")
+                f"{mode_str}_{sym_str}_{self.wavelength_um:.3f}um")
 
     def _legacy_dir_name(self) -> str:
         """Directory name used before v0.1.0. Results found there are reused only
@@ -141,15 +146,15 @@ class edgeCoupler(CloudCachedDevice):
 
         sig = (
             f"{self.tip_width:.6f}_{self.taper_length:.6f}_{self.wg_width:.6f}_{self.wg_height:.6f}_"
-            f"{self.core_medium}_{self.substrate_medium}_{self.top_cladding_medium}_{mode_str}_"
-            f"{self.wavelength0:.6f}_{self.substrate_height:.6f}_{self.top_cladding_height:.6f}_"
+            f"{self.core_medium}_{self.box_medium}_{self.top_cladding_medium}_{mode_str}_"
+            f"{self.wavelength_um:.6f}_{self.box_height:.6f}_{self.top_cladding_height:.6f}_"
             f"{self.fine_steps_per_wvl}_{self.coarse_steps_per_wvl}_{self.settling_buffer_length:.6f}_"
             f"{self.symmetry[0]}_{self.symmetry[1]}_{self.symmetry[2]}"
         )
         h = hashlib.md5(sig.encode()).hexdigest()[:8]
 
         sym_str = f"sym{self.symmetry[0]}{self.symmetry[1]}{self.symmetry[2]}"
-        return f"coupler_Wtip{self.tip_width:.2f}um_Ltaper{self.taper_length:.2f}um_{mode_str}_{sym_str}_{self.wavelength0:.3f}um_{h}"
+        return f"coupler_Wtip{self.tip_width:.2f}um_Ltaper{self.taper_length:.2f}um_{mode_str}_{sym_str}_{self.wavelength_um:.3f}um_{h}"
 
     # Alias for method name consistency
     _run_simulation = CloudCachedDevice._run_sim
@@ -217,7 +222,7 @@ class edgeCoupler(CloudCachedDevice):
             f"Extracting transmission metrics from '{monitor_name}'..."
         )
         try:
-            target_freq = td.C_0 / self.wavelength0
+            target_freq = td.C_0 / self.wavelength_um
             monitor_data = sim_data[monitor_name]
 
             if hasattr(
@@ -392,3 +397,7 @@ class edgeCoupler(CloudCachedDevice):
             plt.show()
         else:
             plt.close(fig)
+
+
+# Pre-v0.1.0 class names keep working (with a DeprecationWarning) until v0.2.0.
+__getattr__ = deprecated_module_names(globals(), {'edgeCoupler': 'EdgeCoupler'})

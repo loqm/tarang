@@ -1,5 +1,5 @@
 """
-gratingCoupler/nested_sampler.py
+grating_coupler/nested_sampler.py
 
 Bayesian Parameter Space Explorer for Grating Couplers using nested sampling.
 
@@ -39,7 +39,7 @@ from dataclasses import asdict
 import numpy as np
 
 
-from gratingCoupler.grating_coupler import GratingConfig, GratingCoupler
+from grating_coupler.grating_coupler import GratingConfig, GratingCoupler
 from utilities.cloud_run import CostLimitExceededError
 from utilities.nested_backends import run_nested
 from geometries.grating_coupler import get_ideal_coords
@@ -48,6 +48,28 @@ from utilities.nested_sampling_post_process import post_process_run
 from utilities.corner_plot import plot_corner
 
 logger = get_logger(__name__)
+
+
+# Pre-v0.1.0 dictionary keys -> current names (accepted with a DeprecationWarning).
+_FIXED_KEYS = {"wavelength0_um": "wavelength_um", "cladding_height": "top_cladding_height",
+               "substrate_height": "handle_height"}
+_MATERIAL_KEYS = {"sub_medium": "handle_medium", "cladding_medium": "top_cladding_medium"}
+
+
+def _renamed_keys(d: dict, old_to_new: dict, what: str) -> dict:
+    """Copy ``d`` with deprecated keys mapped to their new names."""
+    import warnings
+
+    out = dict(d)
+    for old, new in old_to_new.items():
+        if old in out:
+            if new in out:
+                raise ValueError(f"{what} has both '{old}' (deprecated) and '{new}'; keep only '{new}'.")
+            warnings.warn(
+                f"{what} key '{old}' is deprecated and will be removed in TARANG v0.2.0; "
+                f"use '{new}' instead.", DeprecationWarning, stacklevel=3)
+            out[new] = out.pop(old)
+    return out
 
 
 class BudgetExceededError(Exception):
@@ -76,8 +98,8 @@ class GratingCouplerBayesianOptimizer:
         """Initialize search bounds, output directories, and budget tracking.
         Restore previous credit usage when a tracker exists.
         """
-        self.fixed_params = fixed_params
-        self.materials = materials
+        self.fixed_params = _renamed_keys(fixed_params, _FIXED_KEYS, "fixed_params")
+        self.materials = _renamed_keys(materials, _MATERIAL_KEYS, "materials")
         self.output_dir = Path(output_dir)
         self.sigma = sigma
         self.is_3d = is_3d
@@ -284,14 +306,14 @@ class GratingCouplerBayesianOptimizer:
 
         try:
             config = GratingConfig(
-                wavelength_um=self.fixed_params["wavelength0_um"],
+                wavelength_um=self.fixed_params["wavelength_um"],
                 theta_deg=self.fixed_params["theta_deg"],
                 mfd=self.fixed_params["mfd"],
                 source_gap=self.fixed_params["source_gap"],
                 core_height=self.fixed_params["core_height"],
-                cladding_height=self.fixed_params["cladding_height"],
+                top_cladding_height=self.fixed_params["top_cladding_height"],
                 box_height=self.fixed_params["box_height"],
-                substrate_height=self.fixed_params["substrate_height"],
+                handle_height=self.fixed_params["handle_height"],
                 w_grating=self.fixed_params["w_grating"],
                 buffer=self.fixed_params["buffer"],
                 period=p_period,
@@ -309,8 +331,8 @@ class GratingCouplerBayesianOptimizer:
                 config=config,
                 core_medium=self.materials.get("core_medium"),
                 box_medium=self.materials.get("box_medium"),
-                substrate_medium=self.materials.get("sub_medium"),
-                cladding_medium=self.materials.get("cladding_medium"),
+                handle_medium=self.materials.get("handle_medium"),
+                top_cladding_medium=self.materials.get("top_cladding_medium"),
                 is_3d=self.is_3d,
                 fine_steps_per_wvl=self.fixed_params.get(
                     "fine_steps",
@@ -602,14 +624,14 @@ class GratingCouplerBayesianOptimizer:
         if space_variance and all(k in space_variance for k in required_keys):
             try:
                 opt_config = GratingConfig(
-                    wavelength_um=self.fixed_params["wavelength0_um"],
+                    wavelength_um=self.fixed_params["wavelength_um"],
                     theta_deg=self.fixed_params["theta_deg"],
                     mfd=self.fixed_params["mfd"],
                     source_gap=self.fixed_params["source_gap"],
                     core_height=self.fixed_params["core_height"],
-                    cladding_height=self.fixed_params["cladding_height"],
+                    top_cladding_height=self.fixed_params["top_cladding_height"],
                     box_height=self.fixed_params["box_height"],
-                    substrate_height=self.fixed_params["substrate_height"],
+                    handle_height=self.fixed_params["handle_height"],
                     w_grating=self.fixed_params["w_grating"],
                     buffer=self.fixed_params["buffer"],
                     period=space_variance["period"]["marginalized_mean"],
@@ -629,8 +651,8 @@ class GratingCouplerBayesianOptimizer:
                     config=opt_config,
                     core_medium=self.materials.get("core_medium"),
                     box_medium=self.materials.get("box_medium"),
-                    substrate_medium=self.materials.get("sub_medium"),
-                    cladding_medium=self.materials.get("cladding_medium"),
+                    handle_medium=self.materials.get("handle_medium"),
+                    top_cladding_medium=self.materials.get("top_cladding_medium"),
                     is_3d=self.is_3d,
                     fine_steps_per_wvl=25,
                     coarse_steps_per_wvl=15,

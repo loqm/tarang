@@ -1,5 +1,5 @@
 """
-ringResonator.ring_resonator
+ring_resonator.ring_resonator
 
 Wrap ring geometries with simulation caching, modal analysis, and FSR estimates.
 
@@ -10,14 +10,15 @@ Exposes: BaseResonator, BaseResonator.get_dir_name(), BaseResonator.load_sim_dat
 BaseResonator.get_mode_data(), BaseResonator.get_mode_fluxes(),
 BaseResonator.plot_field(), BaseResonator.compute_fsr_nm(),
 BaseResonator.compute_fsr_ghz(), BaseResonator.get_group_index(),
-BaseResonator.get_fsr_nm(), BaseResonator.get_fsr_ghz(), halfringResonator,
-halfringResonator.to_full_ring(), ringResonator, ringResonator.to_half_ring(),
-partialRingResonator, partialRingResonator.to_half_ring(),
-partialRingResonator.to_full_ring().
+BaseResonator.get_fsr_nm(), BaseResonator.get_fsr_ghz(), HalfRingResonator,
+HalfRingResonator.to_full_ring(), RingResonator, RingResonator.to_half_ring(),
+PartialRingResonator, PartialRingResonator.to_half_ring(),
+PartialRingResonator.to_full_ring().
 """
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import RenamedAttributes, deprecated_module_names, renamed_params
 from tarang._logging import tidy3d_verbose
 from utilities.cloud_run import CloudCachedDevice
 
@@ -36,7 +37,12 @@ from tidy3d.plugins.mode.web import run as run_mode_solver
 logger = get_logger(__name__)
 
 
-class BaseResonator(CloudCachedDevice):
+class BaseResonator(CloudCachedDevice, RenamedAttributes):
+    _renamed_attrs = {"substrate_medium": "box_medium", "substrate_height": "box_height",
+                      "wavelength0": "wavelength_um"}
+    _cache_label = "BaseResonator"   # subclasses freeze their pre-v0.1.0 names
+
+    @renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
     def __init__(
         self,
         sim: td.Simulation,
@@ -45,14 +51,14 @@ class BaseResonator(CloudCachedDevice):
         wg_width: float,
         wg_height: float,
         core_medium: td.Medium,
-        substrate_medium: td.Medium,
-        substrate_height: float,
+        box_medium: td.Medium,
+        box_height: float,
         top_cladding_medium: td.Medium,
         top_cladding_height: float,
         fine_steps_per_wvl: float,
         coarse_steps_per_wvl: float,
         wg_length: float,
-        wavelength0: float,
+        wavelength_um: float,
     ):
         """Initialize the device wrapper with its simulation and physical settings.
         Store the parameters used by subsequent analysis and geometry conversion.
@@ -64,24 +70,24 @@ class BaseResonator(CloudCachedDevice):
         self.wg_height = wg_height
         self.wg_length = wg_length
         self.core_medium = core_medium
-        self.substrate_medium = substrate_medium
+        self.box_medium = box_medium
         self.top_cladding_medium = top_cladding_medium
-        self.substrate_height = substrate_height
+        self.box_height = box_height
         self.top_cladding_height = top_cladding_height
         self.fine_steps_per_wvl = fine_steps_per_wvl
         self.coarse_steps_per_wvl = coarse_steps_per_wvl
-        self.wavelength0 = wavelength0
+        self.wavelength_um = wavelength_um
 
     def _readable_name(self) -> str:
         """Short, human-readable cache stem; the fingerprint is appended."""
-        return (f"{self.__class__.__name__}_R{self.radius:.2f}um_"
-                f"gap{self.gap*1000:.0f}nm_{self.wavelength0:.3f}um")
+        return (f"{self._cache_label}_R{self.radius:.2f}um_"
+                f"gap{self.gap*1000:.0f}nm_{self.wavelength_um:.3f}um")
 
     def _legacy_dir_name(self) -> str:
         """Directory name used before v0.1.0 (verified before reuse)."""
-        res_type = self.__class__.__name__
+        res_type = self._cache_label
 
-        # Capture span_angle_rad if dealing with a partialRingResonator
+        # Capture span_angle_rad if dealing with a PartialRingResonator
         span_angle = getattr(
             self,
             "span_angle_rad",
@@ -90,11 +96,11 @@ class BaseResonator(CloudCachedDevice):
 
         sig = (
             f"{self.radius:.4f}_{self.gap:.6f}_{self.wg_width:.4f}_{self.wg_height:.4f}_"
-            f"{self.wg_length:.4f}_{self.substrate_height:.4f}_{self.top_cladding_height:.4f}_"
-            f"{span_angle:.4f}_{self.core_medium}_{self.substrate_medium}_{self.top_cladding_medium}"
+            f"{self.wg_length:.4f}_{self.box_height:.4f}_{self.top_cladding_height:.4f}_"
+            f"{span_angle:.4f}_{self.core_medium}_{self.box_medium}_{self.top_cladding_medium}"
         )
         h = hashlib.md5(sig.encode()).hexdigest()[:8]
-        return f"{res_type}_R{self.radius:.2f}um_gap{self.gap*1000:.0f}nm_{self.wavelength0:.3f}um_{h}"
+        return f"{res_type}_R{self.radius:.2f}um_gap{self.gap*1000:.0f}nm_{self.wavelength_um:.3f}um_{h}"
 
     @staticmethod
     def load_sim_data(filepath: Union[str, Path]) -> td.SimulationData:
@@ -149,7 +155,7 @@ class BaseResonator(CloudCachedDevice):
             force_rerun=force_rerun,
         )
 
-        target_freq = td.C_0 / self.wavelength0
+        target_freq = td.C_0 / self.wavelength_um
         flux_results = {}
 
         logger.info(
@@ -318,7 +324,7 @@ class BaseResonator(CloudCachedDevice):
         Default to this device's radius and central wavelength when overrides are omitted.
         """
         r = radius_um if radius_um is not None else self.radius
-        wvl = wavelength_um if wavelength_um is not None else self.wavelength0
+        wvl = wavelength_um if wavelength_um is not None else self.wavelength_um
         L_um = 2 * np.pi * r
         fsr_um = (wvl**2) / (n_group * L_um)
         return fsr_um * 1000.0
@@ -347,10 +353,10 @@ class BaseResonator(CloudCachedDevice):
         domain_padding: float = 2.0,
     ) -> float:
         """
-        Solves for the fundamental mode's group index at wavelength0 using a
+        Solves for the fundamental mode's group index at wavelength_um using a
         standalone mode solver on the waveguide cross-section.
         """
-        freq0 = td.C_0 / self.wavelength0
+        freq0 = td.C_0 / self.wavelength_um
 
         air_medium = td.Medium(permittivity=1.0)
         top_medium = (
@@ -361,15 +367,15 @@ class BaseResonator(CloudCachedDevice):
         top_height = self.top_cladding_height if self.top_cladding_height > 0.0 else 2.0
 
         size_y = self.wg_width + 2 * domain_padding
-        size_z = self.substrate_height + self.wg_height + top_height
+        size_z = self.box_height + self.wg_height + top_height
 
-        z_min = -self.substrate_height
+        z_min = -self.box_height
         substrate = td.Structure(
             geometry=td.Box(
                 center=(0, 0, z_min / 2.0),
-                size=(td.inf, td.inf, self.substrate_height),
+                size=(td.inf, td.inf, self.box_height),
             ),
-            medium=self.substrate_medium,
+            medium=self.box_medium,
             name="mode_solve_substrate",
         )
 
@@ -396,7 +402,7 @@ class BaseResonator(CloudCachedDevice):
             size=(1.0, size_y, size_z),
             grid_spec=td.GridSpec.auto(
                 min_steps_per_wvl=self.fine_steps_per_wvl,
-                wavelength=self.wavelength0,
+                wavelength=self.wavelength_um,
             ),
             structures=[substrate, cladding, core],
             run_time=1e-12,
@@ -446,7 +452,7 @@ class BaseResonator(CloudCachedDevice):
         return self.compute_fsr_nm(
             n_g,
             self.radius,
-            self.wavelength0,
+            self.wavelength_um,
         )
 
     def get_fsr_ghz(
@@ -463,11 +469,14 @@ class BaseResonator(CloudCachedDevice):
         )
 
 
-class halfringResonator(BaseResonator):
+class HalfRingResonator(BaseResonator):
+
+    # Frozen pre-v0.1.0 class name: keeps cache folder and task names stable.
+    _cache_label = "halfringResonator"
     def to_full_ring(
         self,
         active: Optional[bool] = None,
-    ) -> ringResonator:
+    ) -> RingResonator:
         """Construct a full-ring device using this resonator configuration.
         Preserve the current excitation state unless active is explicitly supplied.
         """
@@ -485,9 +494,9 @@ class halfringResonator(BaseResonator):
             wg_width=self.wg_width,
             wg_height=self.wg_height,
             core_medium=self.core_medium,
-            substrate_medium=self.substrate_medium,
-            wavelength0=self.wavelength0,
-            substrate_height=self.substrate_height,
+            box_medium=self.box_medium,
+            wavelength_um=self.wavelength_um,
+            box_height=self.box_height,
             top_cladding_medium=self.top_cladding_medium,
             top_cladding_height=self.top_cladding_height,
             fine_steps_per_wvl=self.fine_steps_per_wvl,
@@ -496,11 +505,14 @@ class halfringResonator(BaseResonator):
         )
 
 
-class ringResonator(BaseResonator):
+class RingResonator(BaseResonator):
+
+    # Frozen pre-v0.1.0 class name: keeps cache folder and task names stable.
+    _cache_label = "ringResonator"
     def to_half_ring(
         self,
         active: Optional[bool] = None,
-    ) -> halfringResonator:
+    ) -> HalfRingResonator:
         """Construct a half-ring device using this resonator configuration.
         Preserve the current excitation state unless active is explicitly supplied.
         """
@@ -518,9 +530,9 @@ class ringResonator(BaseResonator):
             wg_width=self.wg_width,
             wg_height=self.wg_height,
             core_medium=self.core_medium,
-            substrate_medium=self.substrate_medium,
-            wavelength0=self.wavelength0,
-            substrate_height=self.substrate_height,
+            box_medium=self.box_medium,
+            wavelength_um=self.wavelength_um,
+            box_height=self.box_height,
             top_cladding_medium=self.top_cladding_medium,
             top_cladding_height=self.top_cladding_height,
             fine_steps_per_wvl=self.fine_steps_per_wvl,
@@ -529,7 +541,10 @@ class ringResonator(BaseResonator):
         )
 
 
-class partialRingResonator(BaseResonator):
+class PartialRingResonator(BaseResonator):
+
+    # Frozen pre-v0.1.0 class name: keeps cache folder and task names stable.
+    _cache_label = "partialRingResonator"
     def __init__(
         self,
         span_angle_rad: float,
@@ -548,7 +563,7 @@ class partialRingResonator(BaseResonator):
     def to_half_ring(
         self,
         active: Optional[bool] = None,
-    ) -> halfringResonator:
+    ) -> HalfRingResonator:
         """Construct a half-ring device using this resonator configuration.
         Preserve the current excitation state unless active is explicitly supplied.
         """
@@ -566,9 +581,9 @@ class partialRingResonator(BaseResonator):
             wg_width=self.wg_width,
             wg_height=self.wg_height,
             core_medium=self.core_medium,
-            substrate_medium=self.substrate_medium,
-            wavelength0=self.wavelength0,
-            substrate_height=self.substrate_height,
+            box_medium=self.box_medium,
+            wavelength_um=self.wavelength_um,
+            box_height=self.box_height,
             top_cladding_medium=self.top_cladding_medium,
             top_cladding_height=self.top_cladding_height,
             fine_steps_per_wvl=self.fine_steps_per_wvl,
@@ -578,7 +593,7 @@ class partialRingResonator(BaseResonator):
     def to_full_ring(
         self,
         active: Optional[bool] = None,
-    ) -> ringResonator:
+    ) -> RingResonator:
         """Construct a full-ring device using this resonator configuration.
         Preserve the current excitation state unless active is explicitly supplied.
         """
@@ -596,11 +611,15 @@ class partialRingResonator(BaseResonator):
             wg_width=self.wg_width,
             wg_height=self.wg_height,
             core_medium=self.core_medium,
-            substrate_medium=self.substrate_medium,
-            wavelength0=self.wavelength0,
-            substrate_height=self.substrate_height,
+            box_medium=self.box_medium,
+            wavelength_um=self.wavelength_um,
+            box_height=self.box_height,
             top_cladding_medium=self.top_cladding_medium,
             top_cladding_height=self.top_cladding_height,
             fine_steps_per_wvl=self.fine_steps_per_wvl,
             coarse_steps_per_wvl=self.coarse_steps_per_wvl,
         )
+
+
+# Pre-v0.1.0 class names keep working (with a DeprecationWarning) until v0.2.0.
+__getattr__ = deprecated_module_names(globals(), {'halfringResonator': 'HalfRingResonator', 'ringResonator': 'RingResonator', 'partialRingResonator': 'PartialRingResonator'})

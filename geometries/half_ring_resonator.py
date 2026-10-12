@@ -9,17 +9,19 @@ Exposes: get_passive_simulation(), get_active_simulation(), get_optimal_plot_coo
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import renamed_params
 
 from typing import Optional, Tuple
 
 import numpy as np
 import tidy3d as td
 
-from ringResonator.ring_resonator import halfringResonator
+from ring_resonator.ring_resonator import HalfRingResonator
 
 logger = get_logger(__name__)
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
 def get_passive_simulation(
     radius: float,
     gap: float,
@@ -28,11 +30,11 @@ def get_passive_simulation(
     wg_height: float,
 
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
+    box_medium: td.Medium,
 
-    wavelength0: float,
+    wavelength_um: float,
 
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
 
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
@@ -42,9 +44,9 @@ def get_passive_simulation(
 
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
-) -> halfringResonator:
+) -> HalfRingResonator:
     """Constructs a truncated half-ring resonator passive simulation wrapped in a
-    halfringResonator object.
+    HalfRingResonator object.
     """
     if wg_length is None:
         wg_length = 2 * radius + 5.000
@@ -69,10 +71,10 @@ def get_passive_simulation(
     # -- Structures -- #
     substrate = td.Structure(
         geometry=td.Box(
-            center=(0, 0, -substrate_height / 2.0),
-            size=(td.inf, td.inf, substrate_height),
+            center=(0, 0, -box_height / 2.0),
+            size=(td.inf, td.inf, box_height),
         ),
-        medium=substrate_medium,
+        medium=box_medium,
         name="Substrate",
     )
 
@@ -131,13 +133,13 @@ def get_passive_simulation(
         single_pass_time * 2.5,
     )
 
-    freq0 = td.C_0 / wavelength0
+    freq0 = td.C_0 / wavelength_um
     try:
         n_core_approx = float(np.real(core_medium.n_complex(freq0)))
     except Exception:
         n_core_approx = 2.0
 
-    dl_fine = wavelength0 / (n_core_approx * fine_steps_per_wvl)
+    dl_fine = wavelength_um / (n_core_approx * fine_steps_per_wvl)
 
     mesh_override = td.MeshOverrideStructure(
         geometry=td.Box(
@@ -156,7 +158,7 @@ def get_passive_simulation(
         size=(domain_size_x, domain_size_y, 3.000),
         grid_spec=td.GridSpec.auto(
             min_steps_per_wvl=coarse_steps_per_wvl,
-            wavelength=wavelength0,
+            wavelength=wavelength_um,
             override_structures=[mesh_override],
         ),
         structures=structures,
@@ -169,15 +171,15 @@ def get_passive_simulation(
         medium=air_medium,
     )
 
-    return halfringResonator(
+    return HalfRingResonator(
         sim=sim_passive,
         radius=radius,
         gap=gap,
         wg_width=wg_width,
         wg_height=wg_height,
         core_medium=core_medium,
-        substrate_medium=substrate_medium,
-        substrate_height=substrate_height,
+        box_medium=box_medium,
+        box_height=box_height,
         top_cladding_medium=(
             top_cladding_medium if top_cladding_medium is not None else air_medium
         ),
@@ -185,10 +187,11 @@ def get_passive_simulation(
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
         wg_length=wg_length,
-        wavelength0=wavelength0,
+        wavelength_um=wavelength_um,
     )
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
 def get_active_simulation(
     radius: float,
     gap: float,
@@ -197,11 +200,11 @@ def get_active_simulation(
     wg_height: float,
 
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
+    box_medium: td.Medium,
 
-    wavelength0: float,
+    wavelength_um: float,
 
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
 
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
@@ -211,7 +214,7 @@ def get_active_simulation(
 
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
-) -> halfringResonator:
+) -> HalfRingResonator:
     """Constructs an active half-ring simulation with mode sources and monitors.
     Return a wrapped device ready for explicit simulation execution.
     """
@@ -221,9 +224,9 @@ def get_active_simulation(
         wg_width=wg_width,
         wg_height=wg_height,
         core_medium=core_medium,
-        substrate_medium=substrate_medium,
-        wavelength0=wavelength0,
-        substrate_height=substrate_height,
+        box_medium=box_medium,
+        wavelength_um=wavelength_um,
+        box_height=box_height,
         top_cladding_medium=top_cladding_medium,
         top_cladding_height=top_cladding_height,
         fine_steps_per_wvl=fine_steps_per_wvl,
@@ -233,7 +236,7 @@ def get_active_simulation(
     )
 
     sim_passive = resonator_obj.sim
-    freq0 = td.C_0 / wavelength0
+    freq0 = td.C_0 / wavelength_um
 
     try:
         n_eff = float(np.real(core_medium.n_complex(freq0)))

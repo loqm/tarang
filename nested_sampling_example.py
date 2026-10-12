@@ -5,7 +5,7 @@ cap, ``execute_search`` for an uncapped search, ``report_top_configurations``
 for the recorded leaderboard, and ``plot_corner`` for saved-chain diagnostics.
 Its ``prior`` and ``log_likelihood`` methods are nested-sampling callbacks
 (MultiNest convention); calling the latter directly can submit a paid
-simulation. See their docstrings in ``gratingCoupler.nested_sampler`` for
+simulation. See their docstrings in ``grating_coupler.nested_sampler`` for
 inputs, outputs, and side effects.
 
 Sampler backend: ``backend="auto"`` uses MultiNest where PyMultiNest and its
@@ -53,7 +53,7 @@ def main(
     closed. Returns None.
     """
     from media import get_medium
-    from gratingCoupler.nested_sampler import GratingCouplerBayesianOptimizer
+    from grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer
     from tarang import configure_logging, set_tidy3d_output
 
     configure_logging()
@@ -68,16 +68,16 @@ def main(
     # Package Fixed Physical & Domain Parameters
     # These map directly to the GratingConfig dataclass inside the sampler
     fixed_params = {
-        "wavelength0_um": 1.550,  # Central excitation wavelength (μm)
+        "wavelength_um": 1.550,  # Central excitation wavelength (μm)
         "theta_deg": -12.0,  # Fiber angle off-vertical (degrees)
         "mfd": 10.4,  # Mode Field Diameter of fiber source (μm)
         "source_gap": 2.0,  # Gap above cladding for source plane (μm)
 
         # Layer Heights
         "core_height": 0.800,  # Silicon Nitride core thickness (μm)
-        "cladding_height": 2.0,  # Cladding height buffer (μm)
+        "top_cladding_height": 2.0,  # Cladding height buffer (μm)
         "box_height": 4.0,  # Buried Oxide (BOX) thickness (μm)
-        "substrate_height": 8.0,  # Silicon handle substrate thickness (μm)
+        "handle_height": 8.0,  # Silicon handle substrate thickness (μm)
 
         # 3D Domain & Numerical Resolution
         "w_grating": 10.4,  # Transverse width for 3D runs (μm)
@@ -91,8 +91,8 @@ def main(
     materials = {
         "core_medium": SiN,
         "box_medium": SiO2,
-        "sub_medium": None,  # Terminated at BOX layer (set Si medium to include handle)
-        "cladding_medium": Air,  # Cladding medium (Air or SiO2)
+        "handle_medium": None,  # Terminated at BOX layer (set Si medium to include handle)
+        "top_cladding_medium": Air,  # Cladding medium (Air or SiO2)
     }
 
     # Define Tight Prior Search Envelopes Around Design Point

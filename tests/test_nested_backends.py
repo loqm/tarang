@@ -162,8 +162,8 @@ def test_multinest_backend_same_interface(tmp_path):
 
 
 # ---- grating-coupler optimizer, end to end ---------------------------------- #
-FIXED = dict(wavelength0_um=1.55, theta_deg=-12.0, mfd=10.4, source_gap=2.0,
-             core_height=0.8, cladding_height=2.0, box_height=4.0, substrate_height=8.0,
+FIXED = dict(wavelength_um=1.55, theta_deg=-12.0, mfd=10.4, source_gap=2.0,
+             core_height=0.8, top_cladding_height=2.0, box_height=4.0, handle_height=8.0,
              w_grating=10.4, buffer=3.0, pol_angle=np.pi / 2, fine_steps=8, coarse_steps=6)
 BOUNDS = dict(period=[0.80, 0.84], fill_factor=[0.48, 0.55], etch_depth=[0.48, 0.55],
               num_periods=[18.0, 26.0], source_x=[3.5, 4.2])
@@ -172,11 +172,11 @@ BOUNDS = dict(period=[0.80, 0.84], fill_factor=[0.48, 0.55], etch_depth=[0.48, 0
 def _materials():
     import tidy3d as td
     m = lambda n: td.Medium(permittivity=n ** 2)
-    return dict(core_medium=m(1.996), box_medium=m(1.444), sub_medium=None, cladding_medium=m(1.0))
+    return dict(core_medium=m(1.996), box_medium=m(1.444), handle_medium=None, top_cladding_medium=m(1.0))
 
 
 def _optimizer(tmp_path, **kw):
-    from gratingCoupler.nested_sampler import GratingCouplerBayesianOptimizer
+    from grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer
     return GratingCouplerBayesianOptimizer(fixed_params=FIXED, materials=_materials(),
                                            output_dir=tmp_path, param_bounds=BOUNDS, sigma=0.02,
                                            is_3d=False, show_corner_plots=False, **kw)

@@ -12,6 +12,7 @@ Exposes: modes_in_geometry().
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import renamed_params
 from utilities.validation import positive as _positive, values as _values, integer as _integer
 
 from pathlib import Path
@@ -33,21 +34,22 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+@renamed_params(sub_medium="box_medium", substrate_height="box_height", fine_min_steps_per_wvl="fine_steps_per_wvl")
 def modes_in_geometry(
     sweep_heights: list[float],
     sweep_widths: list[float],
     core_medium: td.Medium,
-    sub_medium: td.Medium,
+    box_medium: td.Medium,
     output_dir_name: Path,
     wavelength_um: float,
-    substrate_height: float,
+    box_height: float,
     num_modes: int = 8,
     preview_geometry: bool = False,
     display_results: bool = True,
     *,
     top_cladding_medium: td.Medium | None = None,  # None = air top cladding
     top_cladding_height: float = 0.0,  # Top cladding thickness (um); used if a medium is given
-    fine_min_steps_per_wvl: int = 50,  # Core mesh; >= 50 for converged n_eff and D (local solver, no FlexCredits)
+    fine_steps_per_wvl: int = 50,  # Core mesh; >= 50 for converged n_eff and D (local solver, no FlexCredits)
     plot_dpi: int = 150,  # Resolution of displayed and saved figures (dots per inch).
 ) -> None:
     """
@@ -59,7 +61,7 @@ def modes_in_geometry(
     sweep_widths = _values("sweep_widths", sweep_widths)
 
     wavelength_um = _positive("wavelength_um", wavelength_um)
-    substrate_height = _positive("substrate_height", substrate_height)
+    box_height = _positive("box_height", box_height)
     plot_dpi = int(_positive("plot_dpi", plot_dpi))
     num_modes = _integer("num_modes", num_modes)
 
@@ -71,7 +73,7 @@ def modes_in_geometry(
 
     freq0 = C_0 / wavelength_um
 
-    n_sub = float(np.real(sub_medium.eps_model(freq0)) ** 0.5)
+    n_sub = float(np.real(box_medium.eps_model(freq0)) ** 0.5)
     if top_cladding_medium is not None and top_cladding_height > 0:
         # Guiding cutoff is the highest surrounding index (substrate or top cladding)
         n_sub = max(n_sub, float(np.real(top_cladding_medium.eps_model(freq0)) ** 0.5))
@@ -98,12 +100,12 @@ def modes_in_geometry(
                 height=mean_height,
                 length=(5 * mean_width + 5 * mean_height) / 2,
                 core_medium=core_medium,
-                sub_medium=sub_medium,
+                box_medium=box_medium,
                 wavelength_um=wavelength_um,
-                substrate_height=substrate_height,
+                box_height=box_height,
                 top_cladding_medium=top_cladding_medium,
                 top_cladding_height=(top_cladding_height if top_cladding_medium is not None else 0.0),
-                fine_min_steps_per_wvl=fine_min_steps_per_wvl,
+                fine_steps_per_wvl=fine_steps_per_wvl,
             )
         )
 
@@ -141,12 +143,12 @@ def modes_in_geometry(
                     height=height,
                     length=2,
                     core_medium=core_medium,
-                    sub_medium=sub_medium,
+                    box_medium=box_medium,
                     wavelength_um=wavelength_um,
-                    substrate_height=substrate_height,
+                    box_height=box_height,
                     top_cladding_medium=top_cladding_medium,
                     top_cladding_height=(top_cladding_height if top_cladding_medium is not None else 0.0),
-                    fine_min_steps_per_wvl=fine_min_steps_per_wvl,
+                    fine_steps_per_wvl=fine_steps_per_wvl,
                 )
             )
 

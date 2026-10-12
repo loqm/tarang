@@ -11,6 +11,7 @@ Exposes: parametric_optimization_sweep().
 """
 
 from tarang import get_logger
+from tarang._compat import renamed_params
 from utilities.validation import positive as _positive, values as _values
 from utilities.cloud_run import run_batch_cached
 
@@ -25,6 +26,7 @@ from media import get_medium
 logger = get_logger(__name__)
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
 def parametric_optimization_sweep(
     sweep_taper_lengths: list[float],
     sweep_tip_widths: list[float],
@@ -32,10 +34,10 @@ def parametric_optimization_sweep(
     wg_width: float,
     wg_height: float,
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
-    wavelength0: float,
+    box_medium: td.Medium,
+    wavelength_um: float,
     top_cladding_medium: td.Medium = get_medium("air"),
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
     top_cladding_height: float = 0.0,
     fine_steps_per_wvl: int = 20,
     coarse_steps_per_wvl: int = 15,
@@ -63,8 +65,8 @@ def parametric_optimization_sweep(
 
     wg_width = _positive("wg_width", wg_width)
     wg_height = _positive("wg_height", wg_height)
-    wavelength0 = _positive("wavelength0", wavelength0)
-    substrate_height = _positive("substrate_height", substrate_height)
+    wavelength_um = _positive("wavelength_um", wavelength_um)
+    box_height = _positive("box_height", box_height)
 
     fine_steps_per_wvl = int(_positive("fine_steps_per_wvl", fine_steps_per_wvl))
     coarse_steps_per_wvl = int(_positive("coarse_steps_per_wvl", coarse_steps_per_wvl))
@@ -110,10 +112,10 @@ def parametric_optimization_sweep(
                 wg_width=wg_width,
                 wg_height=wg_height,
                 core_medium=core_medium,
-                substrate_medium=substrate_medium,
-                wavelength0=wavelength0,
+                box_medium=box_medium,
+                wavelength_um=wavelength_um,
                 top_cladding_medium=top_cladding_medium,
-                substrate_height=substrate_height,
+                box_height=box_height,
                 top_cladding_height=top_cladding_height,
                 fine_steps_per_wvl=fine_steps_per_wvl,
                 coarse_steps_per_wvl=coarse_steps_per_wvl,

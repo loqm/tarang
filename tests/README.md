@@ -5,9 +5,9 @@ python -m pytest tests -q          # whole suite, ~4 min, no FlexCredits
 python -m pytest tests/test_nested_backends.py -q   # one file
 ```
 
-Expected on Windows: `52 passed, 1 skipped`. The skipped test needs the native
+Expected on Windows: `72 passed, 1 skipped`. The skipped test needs the native
 MultiNest library, which is normally installed only on Linux/macOS. With MultiNest
-installed, all 53 pass.
+installed, all 73 pass.
 
 ## How the tests work
 
@@ -77,7 +77,7 @@ right. That needs saved reference results and is planned for Phase 4.
 
 | Test | Checks |
 |---|---|
-| `test_every_wrapper_cache_key_tracks_substrate_medium[edge/ring/arc/gc]` (4) | Every cloud device's cache key changes with the substrate material |
+| `test_every_wrapper_cache_key_tracks_box_medium[edge/ring/arc/gc]` (4) | Every cloud device's cache key changes with the BOX (under-core oxide) material |
 | `test_every_wrapper_runs_through_cost_guard[edge/ring/arc/gc]` (4) | Every cloud device stops before `start` when over `max_cost` |
 | `test_c2_target_neff_is_core_index[...]` (6) | **C2:** for SiN (1.996) and Si (3.476) cores, every mode monitor and source in the edge coupler, grating coupler and ring targets the core index, so the solver picks the fundamental mode |
 | `test_c2_edge_in_coupling_monitor_also_fixed` | Same for the edge coupler's in-coupling layout |
@@ -109,3 +109,22 @@ so the exact evidence is ln Z = 3 ln(√(2π)·0.1) − 3 ln 3 = −7.447.
 | `test_multinest_backend_same_interface` | *(skipped without MultiNest)* Real MultiNest recovers the same ln Z and posterior through the same interface |
 | `test_optimizer_search_with_dynesty` | Full `execute_search(backend="dynesty")` on an analytic efficiency surface: converges, finds period 0.82 µm and FF 0.51, and reports 60 % peak efficiency, the backend and ln Z |
 | `test_budget_pause_and_resume_reuses_cache` | Budget 0.375 at 0.125 per run: pauses after 3 paid runs. Resuming at 0.75 replays those 3 from the cache (no new uploads) and pays for exactly 3 new ones |
+
+## `test_api_compat.py`: v0.1.0 names and deprecated aliases (20 tests, Phase 3c)
+
+The old names keep working until v0.2.0, each with a `DeprecationWarning` that
+names the replacement.
+
+| Test | Checks |
+|---|---|
+| `test_old_package_names_alias_the_new_modules[...]` (3) | `import gratingCoupler` / `edgeCoupler` / `ringResonator` warn, and `oldPkg.module` is the **same module object** as `new_pkg.module` (isinstance checks and monkeypatching keep working) |
+| `test_old_class_names_are_the_new_classes[...]` (6) | `edgeCoupler`, `ringResonator`, `halfringResonator`, `partialRingResonator`, `resonatorArc` warn and are the new classes |
+| `test_ring_cache_labels_keep_pre_rename_names` | Ring cache folders and cloud task names still use the pre-rename labels, so existing results stay findable |
+| `test_old_keywords_build_identical_simulation[edge/ring/arc/waveguide]` (4) | Old keywords (`substrate_medium`, `sub_medium`, `wavelength0`, `fine_min_steps_per_wvl`, ...) build a simulation with the **same fingerprint** as the new ones, and each warning names old and new |
+| `test_grating_substrate_medium_still_means_the_si_handle` | **Safety-critical:** in the grating coupler the old `substrate_medium` was the Si handle. It maps to `handle_medium`, never to `box_medium`; same for the `GratingConfig` heights |
+| `test_old_and_new_keyword_together_is_an_error` | Passing both names raises `TypeError` |
+| `test_old_attribute_names_forward_with_warning` | Old attribute names read and write through to the new ones (including `RidgeWaveguide`, which forwards other attributes to its Simulation) |
+| `test_nested_sampler_accepts_old_dictionary_keys` | Old `fixed_params` / `materials` keys work with a warning; giving both raises |
+| `test_no_public_signature_uses_old_names` | No public function in the device packages still takes an old name |
+| `test_every_alias_points_at_a_real_parameter` | Every alias maps to a parameter that exists (guards against typos) |
+
