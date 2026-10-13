@@ -11,6 +11,8 @@ from media.medium_helper import get_medium
 from geometries import ridge_waveguide as rw
 from waveguide import dispersion_in_geometry
 
+pytestmark = pytest.mark.slow          # every test here runs the local mode solver
+
 
 def n_at(med, wl_um=1.55):
     return float(np.real(np.sqrt(med.eps_model(td.C_0 / wl_um))))

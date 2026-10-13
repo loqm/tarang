@@ -24,6 +24,8 @@ The default is 0, so no margin is assumed by the package.
 """
 from __future__ import annotations
 
+from waveguide.dispersion_mapping._console import safe_console
+
 import argparse
 import csv
 import json
@@ -427,6 +429,7 @@ def plot_extra_maps(rows, outdir, a, plt):
 
 
 def main():
+    safe_console()
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, type=Path)
     ap.add_argument("--dmargin", type=float, default=0.0,

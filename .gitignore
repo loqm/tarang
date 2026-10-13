@@ -13,3 +13,8 @@ results/*
 *.toml
 
 TESTING_*
+
+# Test and coverage artefacts
+.coverage
+coverage.xml
+.tarang-cache/

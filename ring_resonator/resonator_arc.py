@@ -26,6 +26,7 @@ import numpy as np
 import tidy3d as td
 
 from ring_resonator.ring_resonator import BaseResonator
+from utilities.cloud_run import monitor_data
 
 logger = get_logger(__name__)
 
@@ -103,12 +104,7 @@ class ResonatorArc(BaseResonator):
             force_rerun=force_rerun,
         )
 
-        try:
-            return sim_data[monitor_name]
-        except KeyError:
-            raise KeyError(
-                f"Monitor '{monitor_name}' not found in simulation monitors."
-            )
+        return monitor_data(sim_data, monitor_name)
 
     def get_efficiency(
         self,
@@ -216,12 +212,7 @@ class ResonatorArc(BaseResonator):
             force_rerun=force_rerun,
         )
 
-        try:
-            field_data = sim_data[monitor_name]
-        except KeyError:
-            raise ValueError(
-                f"Monitor '{monitor_name}' doesn't exist in the simulation monitors."
-            )
+        field_data = monitor_data(sim_data, monitor_name)
 
         fig, ax = plt.subplots(
             figsize=(10, 4),

@@ -202,14 +202,11 @@ def test_optimizer_search_with_dynesty(tmp_path, monkeypatch):
     assert out["max_efficiency"] == pytest.approx(0.6, abs=0.03)
 
 
-def test_budget_pause_and_resume_reuses_cache(tmp_path, monkeypatch):
+def test_budget_pause_and_resume_reuses_cache(tmp_path, fake_web):
     """Budget stop after 3 paid runs; resuming with a higher limit replays those
     3 points from the cache (no new uploads) and pays only for new points."""
-    import utilities.cloud_run as cr
-    from test_cloud_run import FakeWeb
-    fw = FakeWeb(cost=0.125)
-    monkeypatch.setattr(cr, "web", fw)
-    monkeypatch.delenv("TARANG_MAX_COST", raising=False)
+    fw = fake_web
+    fw.cost = 0.125
 
     opt = _optimizer(tmp_path)
     out = opt.execute_search_with_budget(credit_limit=0.375, n_live_points=12,

@@ -33,51 +33,6 @@ def make_gc(box=SIO2_A):
                                       fine_steps_per_wvl=10, coarse_steps_per_wvl=8)
 
 
-class FakeWeb:
-    """Records calls; 'runs' a task by writing an empty SimulationData."""
-
-    def __init__(self, cost=0.25):
-        self.cost = cost
-        self.calls = []
-        self.sims = {}
-
-    def upload(self, sim, task_name=None, folder_name="default", verbose=False, **kw):
-        tid = f"tid{len(self.sims)}"
-        self.sims[tid] = sim
-        self.calls.append(("upload", task_name))
-        return tid
-
-    def estimate_cost(self, tid, verbose=False, **kw):
-        self.calls.append(("estimate", tid))
-        return self.cost
-
-    def start(self, tid, **kw):
-        self.calls.append(("start", tid))
-
-    def monitor(self, tid, verbose=False, **kw):
-        self.calls.append(("monitor", tid))
-
-    def load(self, tid, path=None, verbose=False, **kw):
-        self.calls.append(("load", tid))
-        data = td.SimulationData(simulation=self.sims[tid], data=())
-        data.to_file(str(path))
-        return data
-
-    def delete(self, tid, **kw):
-        self.calls.append(("delete", tid))
-
-    def names(self):
-        return [c[0] for c in self.calls]
-
-
-@pytest.fixture
-def fake_web(monkeypatch):
-    fw = FakeWeb()
-    monkeypatch.setattr(cr, "web", fw)
-    monkeypatch.delenv("TARANG_MAX_COST", raising=False)
-    return fw
-
-
 # ---- fingerprint ---------------------------------------------------------- #
 def test_fingerprint_tracks_media_and_ignores_version():
     a, a2, b = make_gc(SIO2_A), make_gc(SIO2_A), make_gc(SIO2_B)
@@ -200,3 +155,43 @@ def test_nested_sampler_budget_uses_single_upload(tmp_path, fake_web):
     with pytest.raises(BudgetExceededError):        # 0.05 left < 0.25 needed
         opt.log_likelihood([0.81, 0.50, 0.5, 20.0, 3.9], 5, 5)
     assert "start" not in [c[0] for c in fake_web.calls]
+
+
+# ---- API key discovery ------------------------------------------------------ #
+@pytest.fixture
+def no_key(monkeypatch):
+    """No key anywhere: clean environment and a stub Tidy3D config without a key."""
+    import types
+    for var in ("SIMCLOUD_APIKEY", "TIDY3D_API_KEY", "TIDY3D_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    stub = types.SimpleNamespace(config=types.SimpleNamespace(web=types.SimpleNamespace(apikey=None)))
+    monkeypatch.setattr(cr, "td", stub)
+    return monkeypatch
+
+
+def test_api_key_found_in_simcloud_variable(no_key):
+    no_key.setenv("SIMCLOUD_APIKEY", "abc")
+    assert cr.api_key_source() == "SIMCLOUD_APIKEY"
+
+
+def test_api_key_found_in_tidy3d_config(no_key):
+    cr.td.config.web.apikey = "abc"                     # what `tidy3d configure` provides
+    assert cr.api_key_source() == "tidy3d config"
+
+
+def test_old_tarang_key_variable_is_passed_on(no_key, caplog):
+    """Earlier TARANG docs said TIDY3D_API_KEY, which Tidy3D never reads."""
+    import logging
+    import os
+    no_key.setenv("TIDY3D_API_KEY", "abc")
+    assert cr.api_key_source() is None
+    with caplog.at_level(logging.WARNING, logger="tarang"):
+        assert cr.ensure_api_key() == "TIDY3D_API_KEY"
+    assert os.environ["SIMCLOUD_APIKEY"] == "abc" and "SIMCLOUD_APIKEY" in caplog.text
+
+
+def test_missing_key_warns_with_the_fix(no_key, caplog):
+    import logging
+    with caplog.at_level(logging.WARNING, logger="tarang"):
+        assert cr.ensure_api_key() is None
+    assert "tidy3d configure" in caplog.text

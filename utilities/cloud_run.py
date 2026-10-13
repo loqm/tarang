@@ -30,7 +30,8 @@ name carries the fingerprint so runs are distinguishable in the web UI (audit R4
 
 Exposes: sim_fingerprint(), cache_paths(), find_cached(), run_cached(),
 run_batch_cached(), store_result(), estimate_batch_cost(), resolve_max_cost(),
-CloudCachedDevice, CostLimitExceededError, CachedRun.
+monitor_data(), api_key_source(), ensure_api_key(), CloudCachedDevice,
+CostLimitExceededError, MonitorDataError, CachedRun.
 """
 
 from __future__ import annotations
@@ -72,6 +73,51 @@ class CostLimitExceededError(Exception):
         )
 
 
+_LEGACY_KEY_VARS = ("TIDY3D_API_KEY", "TIDY3D_KEY")
+
+
+def api_key_source() -> Optional[str]:
+    """Where Tidy3D will find its API key, or None.
+
+    Tidy3D reads the environment variable SIMCLOUD_APIKEY at request time, and
+    otherwise its config (``tidy3d configure`` writes ~/.tidy3d/config;
+    TIDY3D_WEB__APIKEY overrides it). It does not read TIDY3D_API_KEY.
+    """
+    if os.environ.get("SIMCLOUD_APIKEY"):
+        return "SIMCLOUD_APIKEY"
+    try:
+        key = td.config.web.apikey
+    except Exception:
+        key = None
+    if key is not None and str(getattr(key, "get_secret_value", lambda: key)()):
+        return "tidy3d config"
+    return None
+
+
+def ensure_api_key() -> Optional[str]:
+    """Make a key visible to Tidy3D before a cloud call; return its source.
+
+    Earlier TARANG docs suggested TIDY3D_API_KEY / TIDY3D_KEY, which Tidy3D
+    ignores. If only one of those is set, it is passed on as SIMCLOUD_APIKEY.
+    """
+    source = api_key_source()
+    if source:
+        return source
+    for name in _LEGACY_KEY_VARS:
+        if os.environ.get(name):
+            os.environ["SIMCLOUD_APIKEY"] = os.environ[name]
+            logger.warning(
+                f"Tidy3D does not read {name}; passing it on as SIMCLOUD_APIKEY. "
+                "Prefer `tidy3d configure` (once per machine) or set SIMCLOUD_APIKEY."
+            )
+            return name
+    logger.warning(
+        "No Tidy3D API key found. Run `tidy3d configure` once on this machine, or set "
+        "the SIMCLOUD_APIKEY environment variable; the cloud request will fail otherwise."
+    )
+    return None
+
+
 def resolve_max_cost(max_cost: Optional[float]) -> Optional[float]:
     """Explicit max_cost wins; otherwise use $TARANG_MAX_COST (FlexCredits) if set.
 
@@ -89,6 +135,33 @@ def resolve_max_cost(max_cost: Optional[float]) -> Optional[float]:
         return float(env)
     except ValueError:
         raise ValueError(f"TARANG_MAX_COST must be a number of FlexCredits, got {env!r}")
+
+
+class MonitorDataError(KeyError, ValueError):
+    """A requested monitor is missing from a simulation or from its results.
+
+    Subclasses both KeyError and ValueError, the two types TARANG raised for this
+    before v0.1.0, so existing ``except`` clauses keep working.
+    """
+
+    def __str__(self):                      # KeyError would otherwise add quotes
+        return str(self.args[0]) if self.args else ""
+
+
+def monitor_data(sim_data: td.SimulationData, name: str):
+    """Return ``sim_data[name]`` or explain precisely why it is unavailable."""
+    defined = [m.name for m in sim_data.simulation.monitors]
+    if name not in defined:
+        raise MonitorDataError(
+            f"Monitor '{name}' is not defined in this simulation. Defined monitors: {defined}"
+        )
+    try:
+        return sim_data[name]
+    except KeyError:
+        raise MonitorDataError(
+            f"Monitor '{name}' is defined, but the results contain no data for it "
+            f"(incomplete or failed run?). Re-run with force_rerun=True."
+        ) from None
 
 
 @dataclass
@@ -254,11 +327,7 @@ def run_cached(
             logger.info(f"Cache hit (fingerprint {fp[:FINGERPRINT_LEN]}). Loading {hit} ...")
             return CachedRun(td.SimulationData.from_file(str(hit)), hit, True, 0.0, fp)
 
-    if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-        logger.warning(
-            "TIDY3D_API_KEY not found in environment variables; relying on the "
-            "Tidy3D config file for authentication."
-        )
+    ensure_api_key()
 
     directory.mkdir(parents=True, exist_ok=True)
     sim.to_file(str(directory / SIM_FILE))          # provenance, written before upload
@@ -345,6 +414,7 @@ def run_batch_cached(
         logger.info("All batch simulations found in cache; nothing to run.")
         return out
 
+    ensure_api_key()
     batch = web.Batch(simulations=pending, folder_name=folder_name,
                       verbose=tidy3d_verbose(verbose))
     batch.upload()

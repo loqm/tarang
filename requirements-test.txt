@@ -1,0 +1,11 @@
+# Dependencies for running the TARANG test suite (local and GitHub Actions).
+# Phase 5 (packaging) replaces this file with optional extras in pyproject.toml.
+tidy3d>=2.12,<3
+numpy
+pandas
+matplotlib<3.13          # getdist (corner plots) uses an attribute removed in matplotlib 3.13
+dynesty>=2.1.5           # nested sampling on every OS
+getdist                  # corner plots (optional at runtime; exercised by the tests)
+corner                   # fallback corner-plot backend
+pytest>=8
+pytest-cov

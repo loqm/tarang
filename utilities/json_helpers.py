@@ -39,11 +39,13 @@ def to_jsonable(value):
         (str, int, float, bool),
     ):
         return value
+    if hasattr(value, "model_dump_json"):          # pydantic v2 models (Tidy3D objects)
+        return to_jsonable(json.loads(value.model_dump_json()))
     if hasattr(
         value,
         "json",
     ):
-        return to_jsonable(json.loads(value.json()))
+        return to_jsonable(json.loads(value.json()))  # older pydantic
     return str(value)
 
 

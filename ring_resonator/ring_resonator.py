@@ -20,7 +20,7 @@ from __future__ import annotations
 from tarang import get_logger
 from tarang._compat import RenamedAttributes, deprecated_module_names, renamed_params
 from tarang._logging import tidy3d_verbose
-from utilities.cloud_run import CloudCachedDevice
+from utilities.cloud_run import CloudCachedDevice, monitor_data
 
 import hashlib
 from pathlib import Path
@@ -133,12 +133,7 @@ class BaseResonator(CloudCachedDevice, RenamedAttributes):
             verbose=verbose,
             force_rerun=force_rerun,
         )
-        try:
-            return sim_data[monitor_name]
-        except KeyError:
-            raise KeyError(
-                f"Monitor '{monitor_name}' not found in simulation monitors."
-            )
+        return monitor_data(sim_data, monitor_name)
 
     def get_mode_fluxes(
         self,
@@ -239,13 +234,7 @@ class BaseResonator(CloudCachedDevice, RenamedAttributes):
             force_rerun=force_rerun,
         )
 
-        try:
-            field_data = sim_data[monitor_name]
-        except KeyError:
-            available = [m.name for m in sim_data.simulation.monitors]
-            raise ValueError(
-                f"Monitor '{monitor_name}' doesn't exist. Available: {available}"
-            )
+        field_data = monitor_data(sim_data, monitor_name)
 
         fig, ax = plt.subplots(
             figsize=(10, 4),

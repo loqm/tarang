@@ -13,6 +13,7 @@ def test_media_registry_has_malitson():
     assert n_of(medium("sio2"), 1.55) == pytest.approx(1.444, abs=1e-3)
 
 
+@pytest.mark.slow
 def test_reference_point_800x800():
     # Coarse mesh for speed: absolute n_eff at 30 steps/lambda varies by ~0.005 with
     # Tidy3D version (grid placement), so check physics, not 4-decimal values.
@@ -25,6 +26,7 @@ def test_reference_point_800x800():
     assert r["fit_resid_TE0"] < 1e-4           # smooth n_eff(lambda) fit
 
 
+@pytest.mark.slow
 def test_index_shift_raises_dispersion():
     base = solve_point(0.70, 1.00, steps=30)["D_TE0"]
     up = solve_point(0.70, 1.00, steps=30, n_shift=0.02)["D_TE0"]

@@ -18,6 +18,8 @@ Runtime guide (local Tidy3D mode solver, no FlexCredits): ~20-60 s per point at
 """
 from __future__ import annotations
 
+from waveguide.dispersion_mapping._console import safe_console
+
 import argparse
 import json
 import multiprocessing as mp
@@ -49,6 +51,7 @@ def _work(args):
 
 
 def main():
+    safe_console()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--heights", default="0.60:0.90:0.05", help="SiN thickness list, um")

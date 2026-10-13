@@ -15,6 +15,9 @@ import tidy3d as td
 import utilities.cloud_run as cr
 
 REPO = Path(__file__).resolve().parents[1]
+
+# The short partial ring used here ends inside the domain on purpose; TARANG warns about that.
+pytestmark = pytest.mark.filterwarnings("ignore:The supplied partial-ring geometry")
 WL = 1.55
 F0 = td.C_0 / WL
 
@@ -80,10 +83,9 @@ def test_every_wrapper_cache_key_tracks_box_medium(name):
 
 
 @pytest.mark.parametrize("name", list(BUILDERS))
-def test_every_wrapper_runs_through_cost_guard(name, tmp_path, monkeypatch):
-    from test_cloud_run import FakeWeb
-    fw = FakeWeb(cost=1.0)
-    monkeypatch.setattr(cr, "web", fw)
+def test_every_wrapper_runs_through_cost_guard(name, tmp_path, fake_web):
+    fw = fake_web
+    fw.cost = 1.0
     dev = BUILDERS[name]()
     dev.max_cost = 0.5
     with pytest.raises(cr.CostLimitExceededError):
@@ -117,12 +119,12 @@ def test_c3_get_medium_warns_on_extrapolation(tmp_path, monkeypatch, caplog):
     import media.medium_helper as mh
     monkeypatch.setattr(mh, "FITTED_DIR", tmp_path)
     with caplog.at_level(logging.WARNING, logger="tarang"):
-        mh.get_medium("sio2_nyakuchena", wl_range=(1.20, 2.00))   # data stops at 1.65 um
+        mh.get_medium("sio2_nyakuchena", wl_range=(1.20, 2.00), tolerance=1e-3, max_num_poles=3)  # data stops at 1.65 um
     assert "extrapolation" in caplog.text
 
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="tarang"):
-        mh.get_medium("sio2_nyakuchena", wl_range=(1.20, 1.60))
+        mh.get_medium("sio2_nyakuchena", wl_range=(1.20, 1.60), tolerance=1e-3, max_num_poles=3)
     assert "extrapolation" not in caplog.text
 
 
@@ -174,7 +176,7 @@ def test_c5_get_medium_reads_stacked_file_without_modifying_it(tmp_path, monkeyp
     src.write_text(STACKED)
     monkeypatch.setattr(mh, "FITTED_DIR", tmp_path / "fits")
     monkeypatch.setattr(mh, "_material_path", lambda key: src)
-    med = mh.get_medium("whatever", wl_range=(1.2, 1.8))
+    med = mh.get_medium("whatever", wl_range=(1.2, 1.8), tolerance=1e-3, max_num_poles=3)
     n = float(np.real(np.sqrt(med.eps_model(td.C_0 / 1.4))))
     assert n == pytest.approx(1.99, abs=5e-3)
     assert src.read_text() == STACKED

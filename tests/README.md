@@ -1,13 +1,21 @@
 # TARANG test suite
 
 ```bash
-python -m pytest tests -q          # whole suite, ~4 min, no FlexCredits
-python -m pytest tests/test_nested_backends.py -q   # one file
+python -m pytest                     # whole suite, ~4 min, no FlexCredits
+python -m pytest -m "not slow"       # quick check, ~20 s (skips 11 mode-solve / fitting tests)
+python -m pytest tests/test_geometries.py -q    # one file
+python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `72 passed, 1 skipped`. The skipped test needs the native
-MultiNest library, which is normally installed only on Linux/macOS. With MultiNest
-installed, all 73 pass.
+Expected on Windows: `120 passed, 2 skipped`. The two skips are the real-cloud
+smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
+library (normally Linux/macOS only). Settings live in `pytest.ini` at the
+repository root.
+
+The same suite runs automatically on GitHub for every push and pull request
+(`.github/workflows/tests.yml`): Linux and Windows, Python 3.11 and 3.12, plus a
+Linux job with MultiNest installed, in which the MultiNest test must run. The
+real-cloud test runs on GitHub only when started by hand.
 
 ## How the tests work
 
@@ -17,14 +25,15 @@ folder. Each test is written so that it **fails if a specific bug returns**, so
 these are regression tests. The audit IDs (C1, C2, ..., R1) refer to the v0.1.0
 release audit.
 
-The suite costs nothing to run:
+Apart from the opt-in cloud test, the suite costs nothing to run:
 
 1. **The local mode solver only.** Tidy3D's mode solver runs on your machine for
-   free. No test starts a cloud FDTD run.
-2. **A fake cloud.** `FakeWeb` in `test_cloud_run.py` replaces `tidy3d.web`. It
-   records each call (upload, estimate, start, monitor, load, delete) and "runs"
-   a task by writing an empty result file. The tests check *what TARANG would ask
-   the cloud to do*, and in which order.
+   free.
+2. **A fake cloud.** `FakeWeb` in `conftest.py` (the `fake_web` fixture) replaces
+   `tidy3d.web`. It records each call (upload, estimate, start, monitor, load,
+   delete, and the same for batches) and "runs" a task by writing an empty
+   result file. The tests check *what TARANG would ask the cloud to do*, and in
+   which order.
 3. **Analytic stand-ins.** Constant-index materials (n = 1.996, 1.444, 3.476) are
    used where real dispersion fits don't matter, and Gaussian likelihoods with a
    known evidence replace FDTD in the sampler tests.
@@ -33,10 +42,22 @@ Physics tests check **relations**: orderings (TM00 above TE00), signs (D > 0),
 counts (one guided TE mode) and trends. They don't check 4-decimal values,
 because coarse-mesh n_eff shifts by ~0.005 between Tidy3D versions.
 
+**Markers** (declared in `pytest.ini`):
+
+* `slow`: needs a local mode solve or a fresh material fit (tens of seconds).
+* `cloud`: real Tidy3D job; runs only with `--run-cloud` and an API key.
+
+**Warnings policy** (`pytest.ini`): TARANG calling one of its own deprecated
+names is an **error**, so the old names can never creep back into the code.
+Third-party warnings that are not TARANG's to fix (getdist on matplotlib 3.11)
+are hidden, so a new warning stands out.
+
 ## What the tests don't cover
 
-Whether a real FDTD result (for example a grating efficiency) is physically
-right. That needs saved reference results and is planned for Phase 4.
+Whether a real FDTD result (for example a grating efficiency or a ring Q) is
+physically right, and the analysis inside the ring gap/radius sweeps, which
+needs real monitor data. `test_cloud_smoke.py --run-cloud` saves a real result
+in `results/cloud_smoke/` that later offline tests can use.
 
 ---
 
@@ -57,7 +78,7 @@ right. That needs saved reference results and is planned for Phase 4.
 | `test_reference_point_800x800` | n_TE in 1.65–1.68, TM above TE, one guided TE mode, D > 0, smooth n_eff(λ) fit |
 | `test_index_shift_raises_dispersion` | Raising the core index by 0.02 increases D, the expected physical trend |
 
-## `test_cloud_run.py`: verified cache and cost guard (11 tests, Phase 3a)
+## `test_cloud_run.py`: verified cache, cost guard and API key (15 tests, Phases 3a and 4)
 
 | Test | Checks |
 |---|---|
@@ -72,6 +93,9 @@ right. That needs saved reference results and is planned for Phase 4.
 | `test_legacy_cache_reused_only_if_simulation_matches` | A pre-v0.1.0 folder is reused only if its stored simulation matches. Otherwise it is untouched and a warning names what differs |
 | `test_partial_download_is_not_a_cache_hit` | An interrupted download is never treated as a result |
 | `test_nested_sampler_budget_uses_single_upload` | One upload per design (it used to be two), a repeated design is free, and the credit limit stops a run before `start` |
+| `test_api_key_found_in_simcloud_variable`, `..._in_tidy3d_config` (2) | The key is found where Tidy3D really looks: `SIMCLOUD_APIKEY` or the `tidy3d configure` file |
+| `test_old_tarang_key_variable_is_passed_on` | `TIDY3D_API_KEY` (from earlier TARANG docs, ignored by Tidy3D) is passed on as `SIMCLOUD_APIKEY`, with a message |
+| `test_missing_key_warns_with_the_fix` | No key: the warning says to run `tidy3d configure` |
 
 ## `test_phase3a_fixes.py`: correctness fixes (24 tests, Phase 3a)
 
@@ -127,4 +151,55 @@ names the replacement.
 | `test_nested_sampler_accepts_old_dictionary_keys` | Old `fixed_params` / `materials` keys work with a warning; giving both raises |
 | `test_no_public_signature_uses_old_names` | No public function in the device packages still takes an old name |
 | `test_every_alias_points_at_a_real_parameter` | Every alias maps to a parameter that exists (guards against typos) |
+
+## `test_geometries.py`: every builder, validated (28 tests, Phase 4)
+
+| Test | Checks |
+|---|---|
+| `test_builder_passes_tidy3d_pre_upload_validation[...]` (16) | All 16 builders (ridge, edge passive/out/in, full/half/partial ring passive/active, arc passive/active, grating 2D, 2D with Si handle, 3D) pass Tidy3D's own server-side check `validate_pre_upload()`, so a broken geometry is caught before any upload. Active builds have a source |
+| `test_analysis_monitor_names_exist_in_builder[...]` (8) | Every monitor the analysis methods read by name (e.g. `field_xy`, `mode monitor`, `Mode Monitor In`) is created by the matching builder |
+| `test_grating_handle_layer_present_only_when_requested` | The Si handle appears only when `handle_medium` is given |
+| `test_ring_conversions_keep_geometry` | `to_half_ring()` / `to_full_ring()` return the right classes with unchanged radius, gap and width |
+| `test_fsr_formulas` | FSR = λ²/(n_g·2πR) and c/(n_g·2πR), consistent with each other |
+| `test_monitor_data_explains_what_is_missing` | A missing monitor is reported as "not defined" or "defined but no data", and old `except KeyError` / `except ValueError` handlers still catch it |
+
+## `test_edge_sweep.py`: batch sweeps (4 tests, Phase 4)
+
+| Test | Checks |
+|---|---|
+| `test_batch_runs_uncached_points_once_then_reuses_them` | A 2×2 sweep is one batch of 4; repeating it starts nothing; adding a tip width runs only the 2 new points |
+| `test_batch_over_budget_is_not_started` | Estimate 0.4 > `max_cost` 0.3: the batch is deleted before it starts and nothing is cached |
+| `test_sequential_mode_caps_each_run` | With `batching=False`, `max_cost` applies to each run |
+| `test_sweep_returns_zero_efficiency_for_unreadable_results` | Results without data give efficiency 0 and a warning, not a crash |
+
+## `test_dispersion_mapping_cli.py`: command-line tools end to end (5 tests, slow, Phase 4)
+
+| Test | Checks |
+|---|---|
+| `test_sweep_writes_one_record_per_geometry` | `sweep` on 700 nm × {900, 1000} nm writes two records; both anomalous (D > 0) and single-mode TE |
+| `test_sweep_resumes_without_redoing_points` | Re-running `sweep` reports "2 already done, 0 to run" and leaves the file byte-identical |
+| `test_maps_never_overwrite_previous_plots` | Running `maps` twice creates two versioned plot folders |
+| `test_report_compares_finalists` | `report` writes `report.md` and `finalists.csv` for the requested finalists |
+| `test_tools_survive_windows_legacy_console_encoding` | With Windows' legacy console encoding (cp1252), `report` no longer crashes on λ/α, and its files stay UTF-8 |
+
+## `test_waveguide_sweeps.py`: mode and confinement sweeps (2 tests, Phase 4)
+
+| Test | Checks |
+|---|---|
+| `test_confinement_rises_with_width` | Confinement is between 0 and 100 % and rises from 800 to 1000 nm width |
+| `test_mode_sweep_writes_its_figure` | `modes_in_geometry` runs and saves its figure |
+
+## `test_utilities.py`: shared helpers (5 tests, Phase 4)
+
+| Test | Checks |
+|---|---|
+| `test_positive`, `test_integer`, `test_values_rejects_duplicates_and_short_lists` | Input validation used by every sweep |
+| `test_to_jsonable_handles_numpy_infinities_and_tidy3d_objects` | Arrays, infinities and Tidy3D objects become strict JSON, without pydantic deprecation warnings |
+| `test_save_json_creates_folders_and_replaces_atomically` | Reports are written atomically into new folders |
+
+## `test_cloud_smoke.py`: real Tidy3D cloud (1 test, opt-in, Phase 4)
+
+| Test | Checks |
+|---|---|
+| `test_real_cloud_run_then_cache_hit` | A small 2D grating coupler (`max_cost` 0.1 FlexCredits) goes through TARANG's real upload → estimate → start → monitor → download sequence, returns real monitor data and an efficiency in [0, 1], and the second request is a free cache hit. A copy of the result is kept in `results/cloud_smoke/` |
 

@@ -22,6 +22,8 @@ Cell size in the core: dl = lambda / (n_SiN * steps)  (n_SiN ~ 1.996 at 1550 nm)
 """
 from __future__ import annotations
 
+from waveguide.dispersion_mapping._console import safe_console
+
 import argparse
 import csv
 import json
@@ -136,6 +138,7 @@ def plot(data_path: Path, overwrite: bool, tol_pct: float):
 
 
 def main():
+    safe_console()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--core", default="si3n4", help="core medium key in media.json")

@@ -13,7 +13,7 @@ EdgeCoupler.get_efficiency(), EdgeCoupler.get_loss_db(), EdgeCoupler.plot_fields
 from __future__ import annotations
 from tarang import get_logger
 from tarang._compat import RenamedAttributes, deprecated_module_names, renamed_params
-from utilities.cloud_run import CloudCachedDevice
+from utilities.cloud_run import CloudCachedDevice, monitor_data
 
 import hashlib
 from pathlib import Path
@@ -187,12 +187,7 @@ class EdgeCoupler(CloudCachedDevice, RenamedAttributes):
             force_rerun=force_rerun,
         )
 
-        try:
-            return sim_data[monitor_name]
-        except KeyError:
-            raise KeyError(
-                f"Monitor '{monitor_name}' not found in simulation monitors."
-            )
+        return monitor_data(sim_data, monitor_name)
 
     def get_efficiency(
         self,
@@ -316,12 +311,7 @@ class EdgeCoupler(CloudCachedDevice, RenamedAttributes):
             force_rerun=force_rerun,
         )
 
-        try:
-            field_data = sim_data[monitor_name]
-        except KeyError:
-            raise ValueError(
-                f"Monitor '{monitor_name}' does not exist in simulation monitors."
-            )
+        field_data = monitor_data(sim_data, monitor_name)
 
         fig, ax = plt.subplots(
             figsize=(10, 4),

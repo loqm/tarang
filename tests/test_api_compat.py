@@ -30,6 +30,9 @@ import utilities.cloud_run as cr
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
+# The short partial ring used here ends inside the domain on purpose; TARANG warns about that.
+pytestmark = pytest.mark.filterwarnings("ignore:The supplied partial-ring geometry")
+
 
 def _m(n):
     return td.Medium(permittivity=n ** 2)
@@ -151,8 +154,11 @@ def test_grating_substrate_medium_still_means_the_si_handle():
         cfg_old = _gc_cfg(cladding_height=2.0, substrate_height=8.0)
     assert cfg_old == cfg_new
     new = _gc(cfg_new, handle_medium=SI, top_cladding_medium=AIR)
-    with pytest.warns(DeprecationWarning, match="handle_medium"):
+    with pytest.warns(DeprecationWarning) as rec:
         old = _gc(cfg_new, substrate_medium=SI, cladding_medium=AIR)
+    msgs = " ".join(str(w.message) for w in rec)
+    assert "'handle_medium'" in msgs and "'top_cladding_medium'" in msgs
+    assert "'box_medium'" not in msgs
     assert fp(old.sim) == fp(new.sim)
     no_handle = _gc(cfg_new, top_cladding_medium=AIR)
     assert fp(no_handle.sim) != fp(new.sim)           # the handle really is in the simulation
@@ -189,8 +195,10 @@ def test_nested_sampler_accepts_old_dictionary_keys(tmp_path):
         opt = Opt(fixed_params=fixed, materials=mats, output_dir=tmp_path, show_corner_plots=False)
     assert opt.fixed_params["wavelength_um"] == 1.55 and opt.fixed_params["handle_height"] == 8.0
     assert opt.materials["top_cladding_medium"] is AIR and "sub_medium" not in opt.materials
-    with pytest.raises(ValueError, match="handle_height"):
-        Opt(fixed_params={**fixed, "handle_height": 8.0}, materials=mats, output_dir=tmp_path / "b")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)   # the other old keys also warn
+        with pytest.raises(ValueError, match="handle_height"):
+            Opt(fixed_params={**fixed, "handle_height": 8.0}, materials=mats, output_dir=tmp_path / "b")
 
 
 # ---- no old names left in the public API ------------------------------------ #
