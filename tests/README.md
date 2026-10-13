@@ -7,15 +7,22 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `120 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `138 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
 
 The same suite runs automatically on GitHub for every push and pull request
 (`.github/workflows/tests.yml`): Linux and Windows, Python 3.11 and 3.12, plus a
-Linux job with MultiNest installed, in which the MultiNest test must run. The
-real-cloud test runs on GitHub only when started by hand.
+Linux job with MultiNest installed, in which the MultiNest test must run, and a
+"package" job that builds the wheel, installs it into a clean environment and
+runs `installed_smoke.py` from a folder outside the repository. A second
+workflow (`.github/workflows/conda-env.yml`) checks `environment.yml` on Windows
+and Linux whenever that file or `pyproject.toml` changes. The real-cloud test
+runs on GitHub only when started by hand.
+
+Install the test dependencies with `python -m pip install -e ".[test]"` (they are
+the `test` extra in `pyproject.toml`; `environment.yml` already includes them).
 
 ## How the tests work
 
@@ -203,3 +210,36 @@ names the replacement.
 |---|---|
 | `test_real_cloud_run_then_cache_hit` | A small 2D grating coupler (`max_cost` 0.1 FlexCredits) goes through TARANG's real upload → estimate → start → monitor → download sequence, returns real monitor data and an efficiency in [0, 1], and the second request is a free cache hit. A copy of the result is kept in `results/cloud_smoke/` |
 
+
+## `test_packaging.py`: the package definition (18 tests, Phase 5)
+
+`pyproject.toml` lists by hand what an installed TARANG contains. These tests
+fail when that list falls behind the code. Each one was checked by breaking a copy
+of the repository on purpose (dropping a package from the list, adding an
+undeclared import, importing an optional library at module top, adding a material
+file outside `media/data/`).
+
+| Test | Checks |
+|---|---|
+| `test_version_has_a_single_source` | The version is read from `tarang.__version__` only, and has release form (`0.1.0`, `0.2.0rc1`) |
+| `test_running_python_satisfies_requires_python` | The Python running the tests is one TARANG declares support for (3.11+) |
+| `test_readme_and_licence_exist` | The README and licence named in the package metadata exist |
+| `test_every_package_folder_is_shipped` | Every top-level code folder (including the deprecated old names) is in the package list, so `pip install` does not silently drop one |
+| `test_tests_and_docs_are_not_shipped` | `tests/`, `docs/` and `results/` stay out of the installed package |
+| `test_subpackages_have_init_files` | Every code folder has an `__init__.py`; without one, setuptools leaves it out of the wheel even though it imports fine from the repository |
+| `test_material_files_are_package_data` | Every material in `media/media.json` points to an existing CSV that is covered by the package-data patterns |
+| `test_every_third_party_import_is_declared` | Every non-standard-library import in the code is a declared dependency or extra |
+| `test_core_dependencies_are_required_not_optional` (×6) | tidy3d, numpy, pandas, pydantic, matplotlib and dynesty are required, not extras |
+| `test_optional_imports_are_guarded` | getdist, corner and pymultinest are never imported at module top, so TARANG imports without the extras |
+| `test_test_extra_installs_what_the_test_suite_imports` | `.[test]` brings pytest, pytest-cov and the plotting libraries |
+| `test_environment_yml_installs_this_package` | `environment.yml` pins Python 3.11+ and installs TARANG with the test extra |
+| `test_ci_installs_from_pyproject` | The GitHub workflow installs from `pyproject.toml` (not the removed `requirements-test.txt`) and tests only supported Python versions. Skipped when run from a source archive |
+
+## `installed_smoke.py`: the installed package (script, not collected by pytest)
+
+Run with `python -I tests/installed_smoke.py` **from a folder outside the
+repository**, after `pip install`. `-I` makes sure Python uses the installed copy,
+not the repository folders. It checks that every module imports, every packaged
+material loads and fits, a ridge-waveguide simulation passes Tidy3D's server-side
+validation, the dynesty backend is available and the old package names still work.
+No network, no FlexCredits.

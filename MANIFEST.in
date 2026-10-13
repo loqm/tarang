@@ -1,0 +1,5 @@
+# Extra files for the source archive (sdist), so the test suite can run from it.
+# The wheel (what `pip install` puts into site-packages) is defined by pyproject.toml
+# and never contains these.
+include pytest.ini environment.yml
+recursive-include tests *.py *.md

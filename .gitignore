@@ -10,7 +10,12 @@ results/*
 *.hdf5
 
 *.pyc
-*.toml
+__pycache__/
+
+# Packaging artefacts
+build/
+dist/
+*.egg-info/
 
 TESTING_*
 

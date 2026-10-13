@@ -1,0 +1,53 @@
+# Checks that `conda env create -f environment.yml` works on Windows and Linux, the
+# way the README tells users to install TARANG. Runs only when the environment
+# definition changes (or by hand: Actions -> conda environment -> Run workflow),
+# because creating a conda environment takes several minutes.
+name: conda environment
+
+on:
+  pull_request:
+    paths:
+      - environment.yml
+      - pyproject.toml
+      - .github/workflows/conda-env.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conda-env-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conda-env:
+    name: environment.yml on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    defaults:
+      run:
+        shell: bash -el {0}            # activates the conda environment in every step
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          environment-file: environment.yml
+          activate-environment: tarang
+          auto-activate: false
+
+      - name: Show environment
+        run: |
+          conda info --envs
+          python -c "import sys, tarang, tidy3d; print(sys.executable); print('tarang', tarang.__version__, '| tidy3d', tidy3d.__version__)"
+          python -m pip show tarang-photonics
+
+      - name: Quick tests
+        run: python -m pytest -q -rs -m "not slow"

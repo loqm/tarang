@@ -1,4 +1,4 @@
-# Runs the TARANG test suite on every push and pull request.
+# Runs the TARANG test suite and a packaging check on every push and pull request.
 # No job spends FlexCredits except "cloud-smoke", which runs only when started by
 # hand (Actions -> tests -> Run workflow -> tick "run_cloud") and needs the
 # TIDY3D_API_KEY repository secret.
@@ -42,7 +42,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-          cache-dependency-path: requirements-test.txt
+          cache-dependency-path: pyproject.toml
 
       - name: Cache fitted materials
         uses: actions/cache@v4
@@ -53,7 +53,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-test.txt
+          python -m pip install -e ".[test]"
 
       - name: Show versions
         run: python -c "import sys, tidy3d, numpy, dynesty; print(sys.version); print('tidy3d', tidy3d.__version__, '| numpy', numpy.__version__, '| dynesty', dynesty.__version__)"
@@ -67,6 +67,41 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  package:
+    # Builds the wheel and sdist exactly as `pip install` would, installs the wheel into
+    # a clean virtual environment and uses it from a folder outside the repository.
+    # Catches files missing from the package (data, sub-packages) and undeclared
+    # dependencies, which the tests above cannot see because they run inside the repo.
+    name: build and install the package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check --strict dist/*
+          ls -l dist
+
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install dist/*.whl
+
+      - name: Smoke test outside the repository
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -m pip show tarang-photonics
+          "$RUNNER_TEMP/venv/bin/python" -I "$GITHUB_WORKSPACE/tests/installed_smoke.py"
 
   multinest:
     # The MultiNest backend needs the native library; conda-forge provides it on Linux.
@@ -92,7 +127,7 @@ jobs:
           init-shell: bash
 
       - name: Install
-        run: python -m pip install -r requirements-test.txt
+        run: python -m pip install -e ".[test]"
 
       - name: Nested-sampling tests (MultiNest test must run, not skip)
         run: |
@@ -114,8 +149,8 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements-test.txt
+          cache-dependency-path: pyproject.toml
       - name: Install
-        run: python -m pip install -r requirements-test.txt
+        run: python -m pip install -e ".[test]"
       - name: Cloud smoke test
         run: python -m pytest -v -rs --run-cloud tests/test_cloud_smoke.py
