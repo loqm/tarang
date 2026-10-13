@@ -3,5 +3,6 @@
     "si3n4": "data/Luke_Si3N4.csv",
     "si": "data/Wang_Si_25C.csv",
     "si3n4_hong": "data/Hong_Si3N4_LPCVD.csv",
-    "sio2_nyakuchena": "data/Nyakuchena_fusedSilica.csv"
+    "sio2_nyakuchena": "data/Nyakuchena_fusedSilica.csv",
+    "si_franta": "data/_Franta_Si_300K.csv"
 }

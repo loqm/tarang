@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use TARANG in your work, please cite it as below."
+type: software
+title: "TARANG: Toolkit for Automated Resonator Analysis and Nonlinear-comb Generation"
+abstract: >-
+  TARANG is a design and characterisation framework for integrated photonics built on
+  the Tidy3D FDTD and mode-solving backend. It covers material fitting, waveguide
+  dispersion engineering, ring resonators, grating and edge couplers, verified caching
+  of cloud simulations with cost control, and Bayesian (nested-sampling) design search.
+authors:
+  - given-names: Esraaj
+    family-names: Sarkar Gupta
+  - given-names: Divyanshu
+    family-names: Tiwari
+    affiliation: "Laboratory of Optics of Quantum Materials, Indian Institute of Technology Bombay"
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/loqm/tarang"
+url: "https://github.com/loqm/tarang"
+keywords:
+  - photonics
+  - integrated photonics
+  - silicon nitride
+  - microresonator
+  - frequency comb
+  - dispersion engineering
+  - FDTD
+  - Tidy3D
+  - nested sampling

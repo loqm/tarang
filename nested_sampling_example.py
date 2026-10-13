@@ -9,8 +9,8 @@ simulation. See their docstrings in ``grating_coupler.nested_sampler`` for
 inputs, outputs, and side effects.
 
 Sampler backend: ``backend="auto"`` uses MultiNest where PyMultiNest and its
-native library are installed (Linux/macOS) and dynesty otherwise (Windows:
-``pip install dynesty``). Pass ``backend="dynesty"`` or ``"multinest"`` to
+native library are installed (Linux/macOS) and dynesty otherwise (installed
+with TARANG; the only option on Windows). Pass ``backend="dynesty"`` or ``"multinest"`` to
 choose explicitly. Do not switch backends within one output directory.
 
 The geometry, priors, and sampler settings retain the original example values.

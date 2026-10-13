@@ -2,12 +2,12 @@
 
 ```bash
 python -m pytest                     # whole suite, ~4 min, no FlexCredits
-python -m pytest -m "not slow"       # quick check, ~20 s (skips 11 mode-solve / fitting tests)
+python -m pytest -m "not slow"       # quick check, under a minute (skips 12 mode-solve / fitting tests)
 python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `138 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `162 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -243,3 +243,24 @@ not the repository folders. It checks that every module imports, every packaged
 material loads and fits, a ridge-waveguide simulation passes Tidy3D's server-side
 validation, the dynesty backend is available and the old package names still work.
 No network, no FlexCredits.
+
+## `test_docs.py`: the documentation matches the code (24 tests, Phase 6)
+
+The pre-v0.1.0 README described parameters and a function that no longer existed and an
+install procedure that did not work. These tests read the Markdown files (README,
+CONTRIBUTING, CHANGELOG, `media/data/SOURCES.md`, the dispersion-mapping README and this
+file) and check them against the code. Each check was confirmed to fail on a
+deliberately broken copy (misspelt keyword, renamed function, broken link, undocumented
+material, unknown pip extra).
+
+| Test | Checks |
+|---|---|
+| `test_python_examples_compile[...]` (6) | Every Python example in the docs is valid Python |
+| `test_python_examples_use_real_names_and_keywords[...]` (6) | Every TARANG name an example imports exists, and every keyword argument it passes to a TARANG function is a real parameter |
+| `test_shell_commands_name_real_modules_and_extras` | `python -m ...` commands name existing TARANG modules; `pip install -e ".[...]"` names existing extras |
+| `test_no_outdated_instructions` | Known-wrong pre-v0.1.0 instructions (`tarang-env`, the manual `pip install tidy3d pandas ...`, `sub_medium=`, a function that never existed) do not come back |
+| `test_relative_links_resolve[...]` (6) | Every relative link and image points to an existing file, and every `#anchor` to an existing heading |
+| `test_citation_matches_package` | `CITATION.cff` is CFF 1.2.0 with the package's version, licence and authors |
+| `test_changelog_has_current_version` | `CHANGELOG.md` has a section for `tarang.__version__` |
+| `test_every_material_is_documented` | Every key in `media/media.json` and every CSV in `media/data/` is described in `SOURCES.md`, and every key is in the README's material table |
+| `test_readme_first_run_examples_execute` (slow) | README section 4 steps 1–3 and the logging example run as written in an empty folder: materials fit, the waveguide builds, modes, dispersion and confinement are computed, and the files the README mentions are written |

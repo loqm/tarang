@@ -8,17 +8,17 @@
 <rect x="40" y="22" width="208.8" height="28" rx="14" fill="#fbe7d2" stroke="#d98032" stroke-width="1.4"/>
 <text x="55" y="41" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">status</text>
 <text x="106.6" y="41" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" font-style="normal" fill="#1c3f6e" text-anchor="start">active development</text>
-<rect x="260.8" y="22" width="112.19999999999999" height="28" rx="14" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
+<rect x="260.8" y="22" width="124.2" height="28" rx="14" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
 <text x="275.8" y="41" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">python</text>
-<text x="327.4" y="41" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" font-style="normal" fill="#1c3f6e" text-anchor="start">3.11</text>
-<rect x="385.0" y="22" width="208.5" height="28" rx="14" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
-<text x="400.0" y="41" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">backend</text>
-<text x="458.2" y="41" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" font-style="normal" fill="#1c3f6e" text-anchor="start">Tidy3D cloud FDTD</text>
-<rect x="605.5" y="22" width="111.89999999999999" height="28" rx="14" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
-<text x="620.5" y="41" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">licence</text>
-<text x="678.7" y="41" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" font-style="normal" fill="#1c3f6e" text-anchor="start">MIT</text>
+<text x="327.4" y="41" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" font-style="normal" fill="#1c3f6e" text-anchor="start">3.11+</text>
+<rect x="397.0" y="22" width="208.5" height="28" rx="14" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
+<text x="412.0" y="41" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">backend</text>
+<text x="470.2" y="41" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" font-style="normal" fill="#1c3f6e" text-anchor="start">Tidy3D cloud FDTD</text>
+<rect x="617.5" y="22" width="111.89999999999999" height="28" rx="14" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
+<text x="632.5" y="41" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">licence</text>
+<text x="690.7" y="41" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" font-style="normal" fill="#1c3f6e" text-anchor="start">MIT</text>
 <rect x="40" y="62" width="1080" height="50" rx="5" fill="#fbe7d2" stroke="#d98032" stroke-width="1.4"/>
 <rect x="40" y="62" width="4" height="50" fill="#d98032"/>
 <text x="60" y="84" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="700" font-style="normal" fill="#7a4a12" text-anchor="start">This repository is under active development.</text>
-<text x="60" y="102" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" font-style="normal" fill="#8a5a22" text-anchor="start">Function signatures, output schemas and default parameters can change between commits. Pin a commit hash for any result you intend to publish.</text>
+<text x="60" y="102" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" font-style="normal" fill="#8a5a22" text-anchor="start">Function signatures, output schemas and default parameters can change between releases. Pin a release tag (e.g. v0.1.0) or a commit hash for any result you intend to publish.</text>
 </svg>

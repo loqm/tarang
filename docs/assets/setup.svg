@@ -6,37 +6,37 @@
 <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#d98032"/></marker>
 </defs>
 <text x="40" y="46" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="20" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="start">Setup in five steps</text>
-<text x="40" y="68" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">Steps 1–2 are both required; the conda file alone does not install every import.</text>
+<text x="40" y="68" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">Windows, Linux and macOS. None of these steps spends FlexCredits.</text>
 <circle cx="60" cy="116.0" r="15" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
 <text x="60" y="121.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">1</text>
-<text x="88" y="121.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" font-style="normal" fill="#13233a" text-anchor="start">Create the environment</text>
+<text x="88" y="121.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" font-style="normal" fill="#13233a" text-anchor="start">Get the code</text>
 <rect x="340" y="98" width="780" height="36" rx="5" fill="#ffffff" stroke="#c9d4e2" stroke-width="1.2"/>
-<text x="354" y="120.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">conda env create -f environment.yml &amp;&amp; conda activate tarang-env</text>
+<text x="354" y="120.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">git clone https://github.com/loqm/tarang &amp;&amp; cd tarang</text>
 <line x1="60" y1="141" x2="60" y2="151" stroke="#c9d4e2" stroke-width="2"/>
-<circle cx="60" cy="176.0" r="15" fill="#fbe7d2" stroke="#d98032" stroke-width="1.6"/>
+<circle cx="60" cy="176.0" r="15" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
 <text x="60" y="181.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">2</text>
-<text x="88" y="181.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" font-style="normal" fill="#13233a" text-anchor="start">Add the pip-only packages</text>
+<text x="88" y="181.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" font-style="normal" fill="#13233a" text-anchor="start">Create the environment</text>
 <rect x="340" y="158" width="780" height="36" rx="5" fill="#ffffff" stroke="#c9d4e2" stroke-width="1.2"/>
-<text x="354" y="180.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">pip install tidy3d pandas getdist python-dotenv</text>
-<text x="1106" y="180.5" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="end">not in environment.yml</text>
+<text x="354" y="180.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">conda env create -f environment.yml &amp;&amp; conda activate tarang</text>
+<text x="1106" y="180.5" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="end">installs TARANG with pip install -e</text>
 <line x1="60" y1="201" x2="60" y2="211" stroke="#c9d4e2" stroke-width="2"/>
 <circle cx="60" cy="236.0" r="15" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
 <text x="60" y="241.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">3</text>
 <text x="88" y="241.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" font-style="normal" fill="#13233a" text-anchor="start">Authenticate with Tidy3D</text>
 <rect x="340" y="218" width="780" height="36" rx="5" fill="#ffffff" stroke="#c9d4e2" stroke-width="1.2"/>
 <text x="354" y="240.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">tidy3d configure</text>
-<text x="1106" y="240.5" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="end">or set TIDY3D_API_KEY in .env</text>
+<text x="1106" y="240.5" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="end">or set SIMCLOUD_APIKEY</text>
 <line x1="60" y1="261" x2="60" y2="271" stroke="#c9d4e2" stroke-width="2"/>
 <circle cx="60" cy="296.0" r="15" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
 <text x="60" y="301.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">4</text>
 <text x="88" y="301.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" font-style="normal" fill="#13233a" text-anchor="start">Register the Jupyter kernel</text>
 <rect x="340" y="278" width="780" height="36" rx="5" fill="#ffffff" stroke="#c9d4e2" stroke-width="1.2"/>
-<text x="354" y="300.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">python -m ipykernel install --user --name tarang-env</text>
+<text x="354" y="300.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">python -m ipykernel install --user --name tarang --display-name "TARANG"</text>
 <line x1="60" y1="321" x2="60" y2="331" stroke="#c9d4e2" stroke-width="2"/>
-<circle cx="60" cy="356.0" r="15" fill="#fbe7d2" stroke="#d98032" stroke-width="1.6"/>
+<circle cx="60" cy="356.0" r="15" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
 <text x="60" y="361.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">5</text>
-<text x="88" y="361.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" font-style="normal" fill="#13233a" text-anchor="start">Work from the repository root</text>
+<text x="88" y="361.0" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" font-style="normal" fill="#13233a" text-anchor="start">Check the installation</text>
 <rect x="340" y="338" width="780" height="36" rx="5" fill="#ffffff" stroke="#c9d4e2" stroke-width="1.2"/>
-<text x="354" y="360.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">cd tarang-main &amp;&amp; jupyter lab</text>
-<text x="1106" y="360.5" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="end">media.json is resolved from the CWD</text>
+<text x="354" y="360.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="12" font-weight="400" font-style="normal" fill="#28425f" text-anchor="start">python -m pytest -m "not slow"</text>
+<text x="1106" y="360.5" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="end">about 1 minute, all local</text>
 </svg>

@@ -66,6 +66,7 @@ test = [
 [project.urls]
 Repository = "https://github.com/loqm/tarang"
 Issues = "https://github.com/loqm/tarang/issues"
+Changelog = "https://github.com/loqm/tarang/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = { attr = "tarang.__version__" }
