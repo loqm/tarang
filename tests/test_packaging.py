@@ -23,7 +23,7 @@ PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 PROJECT = PYPROJECT["project"]
 SETUPTOOLS = PYPROJECT["tool"]["setuptools"]
 
-NOT_SHIPPED = {"tests", "docs", "build", "dist", "results"}
+NOT_SHIPPED = {"tests", "docs", "examples", "build", "dist", "results"}
 
 
 def _requirement_name(req):
@@ -60,6 +60,13 @@ def test_readme_and_licence_exist():
 
 
 # ---- what goes into the installed package -------------------------------------- #
+def test_tarang_is_the_only_top_level_package():
+    """All code lives inside tarang/, so TARANG adds a single name to an environment
+    and cannot clash with other packages called media, utilities, ..."""
+    assert _top_level_packages() == ["tarang"]
+    assert SETUPTOOLS["packages"]["find"]["include"] == ["tarang*"]
+
+
 def test_every_package_folder_is_shipped():
     missing = [p for p in _top_level_packages() if not _shipped(p)]
     assert not missing, f"add to [tool.setuptools.packages.find] include: {missing}"
@@ -82,12 +89,13 @@ def test_subpackages_have_init_files():
 
 
 def test_material_files_are_package_data():
-    patterns = SETUPTOOLS["package-data"]["media"]
+    patterns = SETUPTOOLS["package-data"]["tarang.media"]
     assert "media.json" in patterns
-    database = json.loads((ROOT / "media" / "media.json").read_text(encoding="utf-8"))
+    media = ROOT / "tarang" / "media"
+    database = json.loads((media / "media.json").read_text(encoding="utf-8"))
     for key, rel in database.items():
         assert not Path(rel).is_absolute(), key
-        assert (ROOT / "media" / rel).is_file(), f"{key}: {rel} missing"
+        assert (media / rel).is_file(), f"{key}: {rel} missing"
         assert any(fnmatch.fnmatch(rel, pat) for pat in patterns), f"{key}: {rel} not packaged"
 
 

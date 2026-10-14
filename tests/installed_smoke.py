@@ -16,12 +16,10 @@ import pkgutil
 import site
 import sys
 import tempfile
-import warnings
 from importlib import resources
 
-PACKAGES = ["tarang", "geometries", "media", "waveguide", "edge_coupler",
-            "grating_coupler", "ring_resonator", "utilities"]
-OWN = set(PACKAGES) | {"edgeCoupler", "gratingCoupler", "ringResonator"}
+PACKAGES = ["tarang"]                     # every TARANG module lives inside tarang/
+OWN = {"tarang"}
 
 
 def check(label, ok, detail=""):
@@ -99,16 +97,16 @@ def main():
     check("all modules import", not failed, "; ".join(failed))
 
     # 2. packaged material data: every material loads and fits
-    from media.medium_helper import get_medium
-    database = json.loads((resources.files("media") / "media.json").read_text(encoding="utf-8"))
+    from tarang.media.medium_helper import get_medium
+    database = json.loads((resources.files("tarang.media") / "media.json").read_text(encoding="utf-8"))
     freq = 2.99792458e14 / 1.55                           # 1.55 um, in Hz
     for key in database:
         n = float(get_medium(key, wl_range=(1.2, 2.0)).nk_model(freq)[0])
         check(f"material {key}", 1.0 < n < 4.0, f"n(1.55 um) = {n:.4f}")
 
     # 3. a device simulation builds and passes Tidy3D's server-side checks
-    import geometries.ridge_waveguide as ridge
-    from utilities.cloud_run import sim_fingerprint
+    import tarang.geometries.ridge_waveguide as ridge
+    from tarang.utilities.cloud_run import sim_fingerprint
     sim = ridge.get_active_simulation(
         width=0.9, height=0.7, length=3.0, wavelength_um=1.55,
         core_medium=get_medium("si3n4", wl_range=(1.2, 2.0)),
@@ -118,15 +116,14 @@ def main():
     check("ridge waveguide simulation validates", True, sim_fingerprint(sim)[:12])
 
     # 4. nested sampling works without MultiNest
-    from utilities.nested_backends import available_backends
+    from tarang.utilities.nested_backends import available_backends
     check("dynesty backend available", "dynesty" in available_backends(), str(available_backends()))
 
-    # 5. the pre-v0.1.0 names still import (with a deprecation warning)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        old = importlib.import_module("gratingCoupler.grating_coupler")
-    check("old package names work", old.GratingCoupler.__name__ == "GratingCoupler"
-          and any("v0.2.0" in str(w.message) for w in caught))
+    # 5. the migration tool for pre-layout scripts is installed and works
+    from tarang.migrate import migrate_source
+    new = migrate_source("from media import get_medium\nimport geometries.ridge_waveguide as rw\n")
+    check("python -m tarang.migrate available", new.changes == 2
+          and "from tarang.media import get_medium" in new.new_source)
 
     print("INSTALLED-PACKAGE SMOKE TEST PASSED")
 

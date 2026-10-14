@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 import tidy3d as td
 
-import utilities.cloud_run as cr
-from grating_coupler.grating_coupler import GratingConfig, GratingCoupler
+import tarang.utilities.cloud_run as cr
+from tarang.grating_coupler.grating_coupler import GratingConfig, GratingCoupler
 
 
 def _medium(n):
@@ -132,7 +132,7 @@ def test_partial_download_is_not_a_cache_hit(tmp_path, fake_web):
 def test_nested_sampler_budget_uses_single_upload(tmp_path, fake_web):
     """The sampler used to upload each design twice (once only to price it)."""
     pytest.importorskip("matplotlib")
-    from grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer, BudgetExceededError
+    from tarang.grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer, BudgetExceededError
 
     fixed = dict(wavelength_um=1.55, theta_deg=-12.0, mfd=10.4, source_gap=2.0,
                  core_height=0.8, top_cladding_height=2.0, box_height=4.0, handle_height=8.0,

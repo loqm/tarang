@@ -11,7 +11,7 @@ COMMON = dict(sweep_heights=[0.7], sweep_widths=[0.8, 1.0], core_medium=SIN, box
 
 
 def test_confinement_rises_with_width(tmp_path, no_show):
-    from waveguide import confinement_in_geometry
+    from tarang.waveguide import confinement_in_geometry
     res = confinement_in_geometry(output_dir_name=tmp_path, **COMMON)
     widths, conf_pct, _ = res[0.7]
     assert list(widths) == [0.8, 1.0]
@@ -21,6 +21,6 @@ def test_confinement_rises_with_width(tmp_path, no_show):
 
 
 def test_mode_sweep_writes_its_figure(tmp_path, no_show):
-    from waveguide import modes_in_geometry
+    from tarang.waveguide import modes_in_geometry
     modes_in_geometry(output_dir_name=tmp_path, num_modes=4, **COMMON)
     assert list(tmp_path.glob("*.png"))

@@ -13,8 +13,8 @@ import textwrap
 import numpy as np
 import pytest
 
-import utilities.nested_backends as nb
-from utilities.corner_plot import load_multinest_samples
+import tarang.utilities.nested_backends as nb
+from tarang.utilities.corner_plot import load_multinest_samples
 
 pytest.importorskip("dynesty")
 
@@ -176,7 +176,7 @@ def _materials():
 
 
 def _optimizer(tmp_path, **kw):
-    from grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer
+    from tarang.grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer
     return GratingCouplerBayesianOptimizer(fixed_params=FIXED, materials=_materials(),
                                            output_dir=tmp_path, param_bounds=BOUNDS, sigma=0.02,
                                            is_3d=False, show_corner_plots=False, **kw)

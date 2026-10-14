@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 import tidy3d as td
 
-import utilities.cloud_run as cr
+import tarang.utilities.cloud_run as cr
 
 pytestmark = pytest.mark.cloud
 REPO = Path(__file__).resolve().parents[1]
@@ -28,8 +28,8 @@ MAX_COST = 0.1
 
 
 def _tiny_grating():
-    from grating_coupler.grating_coupler import GratingConfig, GratingCoupler
-    from media import get_medium
+    from tarang.grating_coupler.grating_coupler import GratingConfig, GratingCoupler
+    from tarang.media import get_medium
     cfg = GratingConfig(wavelength_um=1.55, theta_deg=-12.0, mfd=10.4, source_x=3.84, source_gap=2.0,
                         core_height=0.7, top_cladding_height=2.0, box_height=4.0, handle_height=2.0,
                         etch_depth=0.35, period=0.9, ff=0.5, n_teeth=12, w_grating=10.4,

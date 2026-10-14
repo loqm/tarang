@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 import tidy3d as td
 
-from media.medium_helper import get_medium
-from geometries import ridge_waveguide as rw
-from waveguide import dispersion_in_geometry
+from tarang.media.medium_helper import get_medium
+from tarang.geometries import ridge_waveguide as rw
+from tarang.waveguide import dispersion_in_geometry
 
 pytestmark = pytest.mark.slow          # every test here runs the local mode solver
 

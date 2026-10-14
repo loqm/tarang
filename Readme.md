@@ -50,16 +50,16 @@ entirely in blue before spending anything on orange ([§5](#5-cloud-runs-and-cos
 
 | Stage | What it produces | Entry point |
 |---|---|---|
-| Materials | Pole-residue media fitted to measured *n*, *k*; cached and hash-validated | `media.get_medium`, `media.get_medium_dispersion` |
-| Waveguide | *n*<sub>eff</sub>, TE/TM labels, *D* [ps/(nm·km)], Γ, *A*<sub>eff</sub> | `waveguide.RidgeWaveguide` |
-| Waveguide sweeps | Width × height maps of modes, dispersion and confinement | `waveguide.modes_in_geometry`, `dispersion_in_geometry`, `confinement_in_geometry` |
-| Dispersion mapping | Robust *D* maps, mesh convergence, broadband *D*(λ) and *D*<sub>int</sub>, finalist reports (command line, local) | `waveguide.dispersion_mapping` ([README](waveguide/dispersion_mapping/README.md)) |
-| Rings | Full, half and partial rings; FSR, group index, mode fluxes | `ring_resonator.RingResonator`, `HalfRingResonator`, `PartialRingResonator` |
-| Ring radius | Bend loss by cutback over arc angles, *Q*<sub>int</sub>, FSR | `ring_resonator.ring_radius_sweep.radius_sweep` |
-| Ring–bus gap | Coupling against gap, critical-coupling point | `ring_resonator.ring_gap_sweep.ring_gap_sweep` |
-| Grating coupler | 2D/3D coupling efficiency; nested-sampling design search | `grating_coupler.GratingCoupler`, `grating_coupler.nested_sampler` |
-| Edge coupler | Inverse-taper efficiency, insertion loss, tip × taper sweep | `edge_coupler.EdgeCoupler`, `edge_coupler.parametric_optimization_sweep` |
-| Visualisation | Geometry slices and projections, corner plots | `utilities.sim_plotter`, `utilities.plot_corner` |
+| Materials | Pole-residue media fitted to measured *n*, *k*; cached and hash-validated | `tarang.media.get_medium`, `tarang.media.get_medium_dispersion` |
+| Waveguide | *n*<sub>eff</sub>, TE/TM labels, *D* [ps/(nm·km)], Γ, *A*<sub>eff</sub> | `tarang.waveguide.RidgeWaveguide` |
+| Waveguide sweeps | Width × height maps of modes, dispersion and confinement | `tarang.waveguide.modes_in_geometry`, `dispersion_in_geometry`, `confinement_in_geometry` |
+| Dispersion mapping | Robust *D* maps, mesh convergence, broadband *D*(λ) and *D*<sub>int</sub>, finalist reports (command line, local) | `tarang.waveguide.dispersion_mapping` ([README](tarang/waveguide/dispersion_mapping/README.md)) |
+| Rings | Full, half and partial rings; FSR, group index, mode fluxes | `tarang.ring_resonator.RingResonator`, `HalfRingResonator`, `PartialRingResonator` |
+| Ring radius | Bend loss by cutback over arc angles, *Q*<sub>int</sub>, FSR | `tarang.ring_resonator.ring_radius_sweep.radius_sweep` |
+| Ring–bus gap | Coupling against gap, critical-coupling point | `tarang.ring_resonator.ring_gap_sweep.ring_gap_sweep` |
+| Grating coupler | 2D/3D coupling efficiency; nested-sampling design search | `tarang.grating_coupler.GratingCoupler`, `tarang.grating_coupler.nested_sampler` |
+| Edge coupler | Inverse-taper efficiency, insertion loss, tip × taper sweep | `tarang.edge_coupler.EdgeCoupler`, `tarang.edge_coupler.parametric_optimization_sweep` |
+| Visualisation | Geometry slices and projections, corner plots | `tarang.utilities.sim_plotter`, `tarang.utilities.plot_corner` |
 
 ---
 
@@ -104,8 +104,8 @@ pip install -e ".[plots,notebooks]"
 | `[test]` | `pytest`, `pytest-cov`, plus `[plots]` |
 | `[multinest]` | the `pymultinest` wrapper (see §3.5) |
 
-The distribution is called `tarang-photonics`; the import names are unchanged
-(`import media`, `import geometries`, ...).
+The distribution is called `tarang-photonics`; everything is imported from the `tarang`
+package (`from tarang.media import get_medium`, `import tarang.geometries.ridge_waveguide`).
 
 ### 3.3 Tidy3D account
 
@@ -158,7 +158,7 @@ Files are written relative to the folder you run from.
 **Step 1: fit the materials.**
 
 ```python
-from media import get_medium, get_medium_dispersion
+from tarang.media import get_medium, get_medium_dispersion
 
 SiN = get_medium("si3n4", wl_range=(1.35, 1.75))
 SiO2 = get_medium("sio2", wl_range=(1.35, 1.75))
@@ -172,13 +172,13 @@ The first call fits a pole-residue model and caches it in your user folder
 the CSV file's hash, wavelength range, pole count and tolerance, so later calls are
 instant (`Cache HIT` in the log). Pass `use_cache=False` to force a refit.
 `get_medium("air")` returns a dispersionless medium. Which material to use for which
-wavelength is in [media/data/SOURCES.md](media/data/SOURCES.md).
+wavelength is in [tarang/media/data/SOURCES.md](tarang/media/data/SOURCES.md).
 
 **Step 2: build a waveguide and look at it.**
 
 ```python
-from geometries import ridge_waveguide
-from utilities.sim_plotter import display_3d
+from tarang.geometries import ridge_waveguide
+from tarang.utilities.sim_plotter import display_3d
 
 wg = ridge_waveguide.get_passive_simulation(
     width=1.2, height=0.7, length=2.0,
@@ -213,7 +213,7 @@ raises `WaveguideModeError` instead of returning when the geometry guides nothin
 **Step 4: map a design space.**
 
 ```python
-import waveguide
+from tarang import waveguide
 
 waveguide.dispersion_in_geometry(
     sweep_heights=[0.6, 0.8],
@@ -228,13 +228,13 @@ One figure per height, one point per width, with the normal and anomalous region
 `modes_in_geometry` and `confinement_in_geometry` take the same arguments. For
 publication-grade maps (mesh convergence, *D*(λ), integrated dispersion, finalist
 selection) use the command-line tools in
-[waveguide/dispersion_mapping](waveguide/dispersion_mapping/README.md), for example:
+[tarang/waveguide/dispersion_mapping](tarang/waveguide/dispersion_mapping/README.md), for example:
 
 ```bash
-python -m waveguide.dispersion_mapping.sweep --heights 0.60:0.90:0.05 --widths 0.6:1.6:0.1
+python -m tarang.waveguide.dispersion_mapping.sweep --heights 0.60:0.90:0.05 --widths 0.6:1.6:0.1
 ```
 
-**Step 5: then go to the cloud.** Work through the notebooks in this order:
+**Step 5: then go to the cloud.** Work through the notebooks in `examples/` in this order:
 
 | # | Notebook | Credits |
 |---|---|---|
@@ -290,48 +290,64 @@ Start every device in 2D (`is_3d=False` for grating couplers) with a coarse mesh
   <img src="docs/assets/architecture.svg" alt="Architecture: media fits materials, geometries builds Tidy3D simulations, device packages add physics and sweeps, utilities produce figures and posteriors." width="100%">
 </p>
 
-Every device follows the same two-layer split:
-* `geometries/*` builds a raw `td.Simulation` and wraps it in a physics object;
+All code lives in the `tarang` package. Every device follows the same two-layer split:
+* `tarang.geometries` builds a raw `td.Simulation` and wraps it in a physics object;
 * the device package holds the analysis.
 
 Wrappers expose `.sim`. `RidgeWaveguide` also forwards unknown attributes to the
 simulation, so `wg.plot(z=0)` reaches Tidy3D directly.
 
 ```
-tarang/
-├── pyproject.toml                  # package definition, dependencies and extras
-├── environment.yml                 # conda environment (installs TARANG editable)
-├── CHANGELOG.md  CONTRIBUTING.md  CITATION.cff  LICENSE
-│
-├── tarang/                         # shared infrastructure: version, logging, deprecation shims
-├── media/                          # material models
-│   ├── medium_helper.py            #   get_medium(), get_medium_dispersion()
-│   ├── format_csv.py               #   reads stacked refractiveindex.info CSVs
-│   ├── media.json                  #   material key -> CSV registry
-│   └── data/                       #   n, k datasets and SOURCES.md
-├── geometries/                     # Tidy3D simulation builders, no analysis
-│   ├── ridge_waveguide.py          #   get_passive_simulation / get_active_simulation
-│   ├── full_ring_resonator.py  half_ring_resonator.py  partial_ring_resonator.py
-│   ├── resonator_arc.py  grating_coupler.py  edge_coupler.py
-├── waveguide/                      # ridge-waveguide physics
-│   ├── waveguide.py                #   RidgeWaveguide
-│   ├── mode_sweep.py  dispersion_sweep.py  confinement_sweep.py
-│   └── dispersion_mapping/         #   command-line dispersion engineering (local)
-├── ring_resonator/                 # RingResonator, HalfRingResonator, PartialRingResonator,
-│   ├── ring_radius_sweep.py        #   ResonatorArc; radius -> bend loss, Q_int, FSR
-│   └── ring_gap_sweep.py           #   gap -> coupling regime
-├── grating_coupler/                # GratingConfig, GratingCoupler; nested_sampler.py
-├── edge_coupler/                   # EdgeCoupler; optimization_sweep.py
-├── utilities/                      # cloud_run (cache, cost guard), nested_backends,
-│                                   # sim_plotter, corner_plot, post-processing
-├── tests/                          # pytest suite, see tests/README.md
-├── docs/assets/                    # figures used by this README
-├── *_example.ipynb                 # one notebook per device family
-└── nested_sampling_example.py
+tarang/                               (the repository)
+├── tarang/                           the Python package: everything you import
+│   ├── __init__.py                   version, logging set-up
+│   ├── media/                        material models
+│   │   ├── medium_helper.py          get_medium(), get_medium_dispersion()
+│   │   ├── format_csv.py             reads stacked refractiveindex.info CSVs
+│   │   ├── media.json                material key -> CSV registry
+│   │   └── data/                     n, k datasets and SOURCES.md
+│   ├── geometries/                   Tidy3D simulation builders, no analysis
+│   │   ├── ridge_waveguide.py        get_passive_simulation / get_active_simulation
+│   │   └── full_ring_resonator.py, half_ring_resonator.py, partial_ring_resonator.py,
+│   │       resonator_arc.py, grating_coupler.py, edge_coupler.py
+│   ├── waveguide/                    RidgeWaveguide; mode, dispersion, confinement sweeps
+│   │   └── dispersion_mapping/       command-line dispersion engineering (local)
+│   ├── ring_resonator/               RingResonator, HalfRingResonator, PartialRingResonator,
+│   │                                 ResonatorArc; radius and gap sweeps
+│   ├── grating_coupler/              GratingConfig, GratingCoupler; nested_sampler
+│   ├── edge_coupler/                 EdgeCoupler; optimization_sweep
+│   ├── utilities/                    cloud_run (cache, cost guard), nested_backends,
+│   │                                 sim_plotter, corner_plot, post-processing
+│   └── migrate.py                    updates scripts written for the old layout
+├── examples/                         one notebook per device family,
+│                                     nested_sampling_example.py
+├── tests/                            pytest suite, see tests/README.md
+├── docs/                             figures used by this README and the notebooks
+├── pyproject.toml  environment.yml   package definition; conda environment
+└── Readme.md  CHANGELOG.md  CONTRIBUTING.md  CITATION.cff  LICENSE
 ```
 
-`edgeCoupler/`, `gratingCoupler/` and `ringResonator/` are the pre-v0.1.0 package names,
-kept as deprecated aliases until v0.2.0 ([CHANGELOG.md](CHANGELOG.md#upgrading-from-pre-010-code)).
+**Code written for the old layout** (`from media import ...`, `import geometries...`,
+`gratingCoupler`, ...) is updated by one command; see
+[Upgrading old scripts](#upgrading-old-scripts) below.
+
+### Upgrading old scripts
+
+Before v0.1.0, TARANG's packages were top-level (`import media`, `from grating_coupler
+import GratingCoupler`, `import gratingCoupler`). They now live inside `tarang`. One
+command rewrites the import statements in your own scripts and notebooks; the rest of the
+code is unchanged because the names it uses stay the same:
+
+```bash
+python -m tarang.migrate path/to/your/scripts            # dry run: shows what would change
+python -m tarang.migrate path/to/your/scripts --write    # apply
+```
+
+It handles `.py` files and the code cells of `.ipynb` notebooks, keeps each file's line
+endings, and lists any remaining old module names in strings or comments (for example a
+`python -m waveguide...` command in a docstring) for you to check by hand. Cached
+simulation results are unaffected: their keys depend on the simulation, not on where the
+code lives.
 
 ---
 
@@ -348,8 +364,8 @@ kept as deprecated aliases until v0.2.0 ([CHANGELOG.md](CHANGELOG.md#upgrading-f
 | `air` | n = 1 | any | yes |
 
 Full references, sample details and the steps to add a material:
-[media/data/SOURCES.md](media/data/SOURCES.md). In short: put a `wl,n[,k]` CSV
-(wavelength in µm) in `media/data/`, register a lower-case key in `media/media.json`, and
+[tarang/media/data/SOURCES.md](tarang/media/data/SOURCES.md). In short: put a `wl,n[,k]` CSV
+(wavelength in µm) in `tarang/media/data/`, register a lower-case key in `tarang/media/media.json`, and
 document it in `SOURCES.md`. Source files are never modified by TARANG.
 
 ---
@@ -377,11 +393,10 @@ set_tidy3d_log_level("WARNING")                    # Tidy3D's own messages
   unaffected.
 * **Material ranges.** Outside its tabulated range a fitted index is an extrapolation;
   TARANG warns, but the check is yours (§7).
-* **Generic top-level package names.** TARANG installs `media`, `utilities`, `geometries`,
-  `waveguide`, ... as top-level packages, which can clash with other packages in the same
-  environment. Moving them under `tarang.` is planned for v0.2.0.
-* **Deprecated names** (pre-v0.1.0 package, class and parameter names) work with a
-  `DeprecationWarning` until v0.2.0, then will be removed.
+* **Deprecated names.** Pre-v0.1.0 class and parameter names (`ringResonator`,
+  `sub_medium`, ...) work with a `DeprecationWarning` until v0.2.0, then will be removed.
+  Old package names and the old top-level layout are not aliased; see
+  [Upgrading old scripts](#upgrading-old-scripts).
 * **Tidy3D versions.** Tested with Tidy3D 2.12. Tidy3D 3.x is excluded until tested.
 * **MultiNest** is not available on Windows; dynesty is used there.
 * **Resonator-arc mesh refinement.** The arc builder (used for partial rings and bend-loss
@@ -396,7 +411,8 @@ set_tidy3d_log_level("WARNING")                    # Tidy3D's own messages
 
 | Symptom | Cause and fix |
 |---|---|
-| `ModuleNotFoundError: geometries` (or `media`, `waveguide`, ...) | TARANG is not installed in the active environment. Activate it, or run `pip install -e .` in the repository (§3). |
+| `ModuleNotFoundError: No module named 'media'` (or `geometries`, `waveguide`, `utilities`, `gratingCoupler`, ...) | The script uses the old layout. Run `python -m tarang.migrate <your folder>` ([Upgrading old scripts](#upgrading-old-scripts)). |
+| `ModuleNotFoundError: No module named 'tarang'` | TARANG is not installed in the active environment. Activate it, or run `pip install -e .` in the repository (§3). |
 | `ModuleNotFoundError: dateutil` (or another dependency) only in some runs | The package is installed in your personal user folder, not in the environment. Run `python -s -m pip install <package>` inside the environment. |
 | Warning: `No Tidy3D API key found` | Run `tidy3d configure` once on this machine (§3.3). |
 | `CostLimitExceededError` | The job's estimate exceeds `max_cost` or `TARANG_MAX_COST`. Nothing was run or charged. Raise the limit or coarsen the mesh. |
@@ -424,7 +440,7 @@ each test.
 If TARANG contributes to your work, please cite the software. [CITATION.cff](CITATION.cff)
 holds the citation details (GitHub shows them under **Cite this repository**). A
 paper describing TARANG and its benchmarks is in preparation. Please also cite the
-material data you used ([media/data/SOURCES.md](media/data/SOURCES.md)) and
+material data you used ([tarang/media/data/SOURCES.md](tarang/media/data/SOURCES.md)) and
 [Tidy3D](https://docs.flexcompute.com/projects/tidy3d/). For nested sampling, cite
 [dynesty](https://dynesty.readthedocs.io/) (Speagle, *MNRAS* **493**, 3132 (2020)) or
 MultiNest (Feroz, Hobson & Bridges, *MNRAS* **398**, 1601 (2009)), and

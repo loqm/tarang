@@ -4,7 +4,7 @@ solver only, no FlexCredits; about 40 s.
     python -m pytest tests/test_dispersion_mapping_cli.py -q
 
 sweep (2 geometries, coarse mesh) -> maps -> maps again -> report, run exactly as a
-user would (``python -m waveguide.dispersion_mapping.<tool>``) in a temporary folder.
+user would (``python -m tarang.waveguide.dispersion_mapping.<tool>``) in a temporary folder.
 The second ``maps`` run must write to a new versioned folder: results are never
 overwritten.
 """
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.slow
 
 
 def run(tool, *args, env=None):
-    proc = subprocess.run([sys.executable, "-m", f"waveguide.dispersion_mapping.{tool}", *args],
+    proc = subprocess.run([sys.executable, "-m", f"tarang.waveguide.dispersion_mapping.{tool}", *args],
                           cwd=REPO, capture_output=True, text=True, timeout=900, errors="replace",
                           env={**os.environ, "MPLBACKEND": "Agg", **(env or {})})
     assert proc.returncode == 0, f"{tool} failed:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"

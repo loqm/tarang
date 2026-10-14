@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import tidy3d as td
 
-import utilities.cloud_run as cr
+import tarang.utilities.cloud_run as cr
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -37,7 +37,7 @@ def _mode_specs(sim):
 
 # ---- builders for every cloud-backed wrapper ------------------------------- #
 def build_edge(core=SIN, sub=SIO2, out=True):
-    from geometries import edge_coupler as g
+    from tarang.geometries import edge_coupler as g
     return g.get_active_simulation(
         tip_width=0.2, taper_length=10.0, wg_width=0.8, wg_height=0.8, core_medium=core,
         box_medium=sub, wavelength_um=WL, top_cladding_medium=AIR,
@@ -46,7 +46,7 @@ def build_edge(core=SIN, sub=SIO2, out=True):
 
 
 def build_ring(core=SIN, sub=SIO2):
-    from geometries import partial_ring_resonator as g
+    from tarang.geometries import partial_ring_resonator as g
     return g.get_active_simulation(
         radius=20.0, gap=0.3, wg_width=0.8, wg_height=0.8, core_medium=core,
         box_medium=sub, wavelength_um=WL, span_angle_rad=np.pi / 6,
@@ -54,7 +54,7 @@ def build_ring(core=SIN, sub=SIO2):
 
 
 def build_arc(core=SIN, sub=SIO2):
-    from geometries import resonator_arc as g
+    from tarang.geometries import resonator_arc as g
     return g.get_active_simulation(
         wavelength_um=WL, radius=20.0, wg_width=0.8, wg_height=0.8, core_medium=core,
         box_medium=sub, top_cladding_medium=AIR, bend_angle_deg=30.0,
@@ -62,7 +62,7 @@ def build_arc(core=SIN, sub=SIO2):
 
 
 def build_gc(core=SIN, sub=SIO2):
-    from grating_coupler.grating_coupler import GratingConfig, GratingCoupler
+    from tarang.grating_coupler.grating_coupler import GratingConfig, GratingCoupler
     cfg = GratingConfig(wavelength_um=WL, theta_deg=-12.0, mfd=10.4, source_x=3.84,
                         source_gap=2.0, core_height=0.8, top_cladding_height=2.0, box_height=4.0,
                         handle_height=8.0, etch_depth=0.5, period=0.82, ff=0.51,
@@ -116,7 +116,7 @@ def test_c2_no_hard_coded_targets_left():
 
 # ---- C3: partial wavelength coverage warns -------------------------------- #
 def test_c3_get_medium_warns_on_extrapolation(tmp_path, monkeypatch, caplog):
-    import media.medium_helper as mh
+    import tarang.media.medium_helper as mh
     monkeypatch.setattr(mh, "FITTED_DIR", tmp_path)
     with caplog.at_level(logging.WARNING, logger="tarang"):
         mh.get_medium("sio2_nyakuchena", wl_range=(1.20, 2.00), tolerance=1e-3, max_num_poles=3)  # data stops at 1.65 um
@@ -133,7 +133,7 @@ STACKED = "wl,n\n1.2,2.00\n1.4,1.99\n1.6,1.98\n1.8,1.97\nwl,k\n1.2,0\n1.4,0\n1.6
 
 
 def test_c5_read_stacked_in_memory(tmp_path):
-    from media import format_csv
+    from tarang.media import format_csv
     src = tmp_path / "stacked.csv"
     src.write_text(STACKED)
     df = format_csv.read_stacked_csv(src)
@@ -142,7 +142,7 @@ def test_c5_read_stacked_in_memory(tmp_path):
 
 
 def test_c5_fix_writes_copy_and_never_overwrites(tmp_path):
-    from media import format_csv
+    from tarang.media import format_csv
     src = tmp_path / "stacked.csv"
     src.write_text(STACKED)
     assert format_csv.fix_stacked_csv(src)
@@ -160,7 +160,7 @@ def test_c5_merged_copy_has_unix_newlines_on_any_platform(tmp_path, monkeypatch)
     """Windows regression: pandas used os.linesep, and text-mode writing then
     produced \\r\\r\\n (blank rows) and broke the identical-content check."""
     import os
-    from media import format_csv
+    from tarang.media import format_csv
     monkeypatch.setattr(os, "linesep", "\r\n")          # emulate Windows
     src = tmp_path / "stacked.csv"
     src.write_text(STACKED)
@@ -171,7 +171,7 @@ def test_c5_merged_copy_has_unix_newlines_on_any_platform(tmp_path, monkeypatch)
 
 
 def test_c5_get_medium_reads_stacked_file_without_modifying_it(tmp_path, monkeypatch):
-    import media.medium_helper as mh
+    import tarang.media.medium_helper as mh
     src = tmp_path / "stacked.csv"
     src.write_text(STACKED)
     monkeypatch.setattr(mh, "FITTED_DIR", tmp_path / "fits")
@@ -184,8 +184,8 @@ def test_c5_get_medium_reads_stacked_file_without_modifying_it(tmp_path, monkeyp
 
 # ---- C4: explicit guided-mode flag ------------------------------------------ #
 def test_c4_get_modes_flags_unguided(caplog):
-    from geometries import ridge_waveguide as rw
-    from waveguide.waveguide import WaveguideModeError
+    from tarang.geometries import ridge_waveguide as rw
+    from tarang.waveguide.waveguide import WaveguideModeError
     # 150 nm x 100 nm SiN on SiO2 at 1.55 um: far below cutoff.
     wg = rw.get_passive_simulation(
         width=0.15, height=0.10, length=2.0, core_medium=SIN, box_medium=SIO2,

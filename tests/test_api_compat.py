@@ -26,7 +26,7 @@ import numpy as np
 import pytest
 import tidy3d as td
 
-import utilities.cloud_run as cr
+import tarang.utilities.cloud_run as cr
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
@@ -43,26 +43,13 @@ fp = cr.sim_fingerprint
 
 
 # ---- packages and classes -------------------------------------------------- #
-@pytest.mark.parametrize("old,new,sub", [
-    ("gratingCoupler", "grating_coupler", "nested_sampler"),
-    ("edgeCoupler", "edge_coupler", "optimization_sweep"),
-    ("ringResonator", "ring_resonator", "ring_gap_sweep"),
-])
-def test_old_package_names_alias_the_new_modules(old, new, sub):
-    with pytest.warns(DeprecationWarning, match=new):
-        old_pkg = importlib.import_module(old)
-        importlib.reload(old_pkg)                    # warn even if imported earlier
-    old_mod = importlib.import_module(f"{old}.{sub}")
-    assert old_mod is importlib.import_module(f"{new}.{sub}")   # same object: isinstance, patching ok
-
-
 @pytest.mark.parametrize("module,old,new", [
-    ("edge_coupler", "edgeCoupler", "EdgeCoupler"),
-    ("ring_resonator", "ringResonator", "RingResonator"),
-    ("ring_resonator", "halfringResonator", "HalfRingResonator"),
-    ("ring_resonator", "partialRingResonator", "PartialRingResonator"),
-    ("ring_resonator", "resonatorArc", "ResonatorArc"),
-    ("ring_resonator.ring_resonator", "partialRingResonator", "PartialRingResonator"),
+    ("tarang.edge_coupler", "edgeCoupler", "EdgeCoupler"),
+    ("tarang.ring_resonator", "ringResonator", "RingResonator"),
+    ("tarang.ring_resonator", "halfringResonator", "HalfRingResonator"),
+    ("tarang.ring_resonator", "partialRingResonator", "PartialRingResonator"),
+    ("tarang.ring_resonator", "resonatorArc", "ResonatorArc"),
+    ("tarang.ring_resonator.ring_resonator", "partialRingResonator", "PartialRingResonator"),
 ])
 def test_old_class_names_are_the_new_classes(module, old, new):
     mod = importlib.import_module(module)
@@ -73,7 +60,7 @@ def test_old_class_names_are_the_new_classes(module, old, new):
 
 def test_ring_cache_labels_keep_pre_rename_names():
     """Cache folders and cloud task names embed these; renaming the classes must not change them."""
-    from ring_resonator import HalfRingResonator, PartialRingResonator, RingResonator
+    from tarang.ring_resonator import HalfRingResonator, PartialRingResonator, RingResonator
     assert (HalfRingResonator._cache_label, RingResonator._cache_label,
             PartialRingResonator._cache_label) == ("halfringResonator", "ringResonator",
                                                    "partialRingResonator")
@@ -81,34 +68,34 @@ def test_ring_cache_labels_keep_pre_rename_names():
 
 # ---- keyword arguments: old names build the identical simulation ----------- #
 def _edge(**kw):
-    import geometries.edge_coupler as g
+    import tarang.geometries.edge_coupler as g
     base = dict(tip_width=0.2, taper_length=10.0, wg_width=0.8, wg_height=0.8, core_medium=SIN,
                 top_cladding_medium=AIR, fine_steps_per_wvl=8, coarse_steps_per_wvl=6, out_coupling=True)
     return g.get_active_simulation(**base, **kw)
 
 
 def _ring(**kw):
-    import geometries.partial_ring_resonator as g
+    import tarang.geometries.partial_ring_resonator as g
     base = dict(radius=20.0, gap=0.3, wg_width=0.8, wg_height=0.8, core_medium=SIN,
                 span_angle_rad=np.pi / 6, fine_steps_per_wvl=8, coarse_steps_per_wvl=6)
     return g.get_active_simulation(**base, **kw)
 
 
 def _arc(**kw):
-    import geometries.resonator_arc as g
+    import tarang.geometries.resonator_arc as g
     base = dict(radius=20.0, wg_width=0.8, wg_height=0.8, core_medium=SIN, bend_angle_deg=30.0,
                 fine_steps_per_wvl=8, coarse_steps_per_wvl=6)
     return g.get_active_simulation(**base, **kw)
 
 
 def _wg(**kw):
-    import geometries.ridge_waveguide as g
+    import tarang.geometries.ridge_waveguide as g
     return g.get_passive_simulation(width=0.8, height=0.7, length=2.0, core_medium=SIN,
                                     wavelength_um=1.55, **kw)
 
 
 def _gc_cfg(**kw):
-    from grating_coupler.grating_coupler import GratingConfig
+    from tarang.grating_coupler.grating_coupler import GratingConfig
     base = dict(wavelength_um=1.55, theta_deg=-12.0, mfd=10.4, source_x=3.84, source_gap=2.0,
                 core_height=0.8, box_height=4.0, etch_depth=0.5, period=0.82, ff=0.51, n_teeth=22,
                 w_grating=10.4, pol_angle=np.pi / 2, buffer=3.0)
@@ -116,7 +103,7 @@ def _gc_cfg(**kw):
 
 
 def _gc(cfg, **kw):
-    from grating_coupler.grating_coupler import GratingCoupler
+    from tarang.grating_coupler.grating_coupler import GratingCoupler
     return GratingCoupler.from_config(cfg, core_medium=SIN, box_medium=SIO2,
                                       fine_steps_per_wvl=8, coarse_steps_per_wvl=6, **kw)
 
@@ -187,7 +174,7 @@ def test_old_attribute_names_forward_with_warning():
 
 # ---- nested-sampler dictionaries ------------------------------------------- #
 def test_nested_sampler_accepts_old_dictionary_keys(tmp_path):
-    from grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer as Opt
+    from tarang.grating_coupler.nested_sampler import GratingCouplerBayesianOptimizer as Opt
     fixed = dict(wavelength0_um=1.55, theta_deg=-12.0, mfd=10.4, source_gap=2.0, core_height=0.8,
                  cladding_height=2.0, box_height=4.0, substrate_height=8.0, w_grating=10.4, buffer=3.0)
     mats = dict(core_medium=SIN, box_medium=SIO2, sub_medium=None, cladding_medium=AIR)
@@ -208,31 +195,37 @@ PACKAGES = ("geometries", "edge_coupler", "grating_coupler", "ring_resonator", "
 
 
 def test_no_public_signature_uses_old_names():
-    offenders = []
+    offenders, scanned = [], 0
     for pkg in PACKAGES:
-        for path in (REPO / pkg).glob("*.py"):           # dispersion_mapping has its own API
+        for path in (REPO / "tarang" / pkg).glob("*.py"):   # dispersion_mapping has its own API
+            scanned += 1
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef) and (not node.name.startswith("_") or node.name == "__init__"):
                     bad = [a.arg for a in node.args.args + node.args.kwonlyargs if a.arg in OLD]
                     if bad:
                         offenders.append(f"{path.relative_to(REPO)}:{node.name} {bad}")
+    assert scanned >= 15, "no source files found: check the package path"
     assert not offenders, offenders
 
 
 def test_every_alias_points_at_a_real_parameter():
     """Guards against typos in @renamed_params mappings."""
-    import geometries.edge_coupler, geometries.full_ring_resonator, geometries.grating_coupler  # noqa
-    import geometries.half_ring_resonator, geometries.partial_ring_resonator  # noqa
-    import geometries.resonator_arc, geometries.ridge_waveguide  # noqa
-    import edge_coupler.edge_coupler, edge_coupler.optimization_sweep  # noqa
-    import grating_coupler.grating_coupler, ring_resonator.ring_resonator  # noqa
-    import ring_resonator.resonator_arc, ring_resonator.ring_gap_sweep, ring_resonator.ring_radius_sweep  # noqa
-    import waveguide.waveguide, waveguide.mode_sweep, waveguide.dispersion_sweep, waveguide.confinement_sweep  # noqa
+    for name in ("geometries.edge_coupler", "geometries.full_ring_resonator",
+                 "geometries.grating_coupler", "geometries.half_ring_resonator",
+                 "geometries.partial_ring_resonator", "geometries.resonator_arc",
+                 "geometries.ridge_waveguide", "edge_coupler.edge_coupler",
+                 "edge_coupler.optimization_sweep", "grating_coupler.grating_coupler",
+                 "ring_resonator.ring_resonator", "ring_resonator.resonator_arc",
+                 "ring_resonator.ring_gap_sweep", "ring_resonator.ring_radius_sweep",
+                 "waveguide.waveguide", "waveguide.mode_sweep", "waveguide.dispersion_sweep",
+                 "waveguide.confinement_sweep"):
+        importlib.import_module("tarang." + name)
     import sys
     checked = 0
     for name, mod in list(sys.modules.items()):
-        if not name.split(".")[0] in PACKAGES or mod is None:
+        parts = name.split(".")
+        if parts[0] != "tarang" or len(parts) < 2 or parts[1] not in PACKAGES or mod is None:
             continue
         for obj in list(vars(mod).values()):
             funcs = [obj] if callable(obj) else []

@@ -19,7 +19,7 @@ import pytest
 from test_docs import _names_and_calls, _resolve
 
 ROOT = Path(__file__).resolve().parents[1]
-NOTEBOOKS = sorted(ROOT.glob("*.ipynb"))
+NOTEBOOKS = sorted((ROOT / "examples").glob("*.ipynb"))
 
 
 def _nb(path):
@@ -77,7 +77,16 @@ def test_image_links_exist(path):
         if cell["cell_type"] == "markdown":
             for link in re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", "".join(cell["source"])):
                 if not re.match(r"[a-z]+:", link):
-                    assert (ROOT / link).exists(), f"{path.name}: missing image {link}"
+                    assert (path.parent / link).exists(), f"{path.name}: missing image {link}"
+
+
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
+def test_markdown_links_resolve(path):
+    for cell in _nb(path)["cells"]:
+        if cell["cell_type"] == "markdown":
+            for link in re.findall(r"\]\(([^)\s]+)\)", "".join(cell["source"])):
+                if not re.match(r"[a-z]+:", link):
+                    assert (path.parent / link.split("#")[0]).exists(), f"{path.name}: broken link {link}"
 
 
 _RANGE = re.compile(r'get_medium\(\s*(?:medium_key\s*=\s*)?"(\w+)"\s*,\s*(?:wl_range\s*=\s*)?'

@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `188 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `210 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -112,7 +112,7 @@ in `results/cloud_smoke/` that later offline tests can use.
 | `test_every_wrapper_runs_through_cost_guard[edge/ring/arc/gc]` (4) | Every cloud device stops before `start` when over `max_cost` |
 | `test_c2_target_neff_is_core_index[...]` (6) | **C2:** for SiN (1.996) and Si (3.476) cores, every mode monitor and source in the edge coupler, grating coupler and ring targets the core index, so the solver picks the fundamental mode |
 | `test_c2_edge_in_coupling_monitor_also_fixed` | Same for the edge coupler's in-coupling layout |
-| `test_c2_no_hard_coded_targets_left` | No `target_neff=2.0` remains in `geometries/` |
+| `test_c2_no_hard_coded_targets_left` | No `target_neff=2.0` remains in `tarang/geometries/` |
 | `test_c3_get_medium_warns_on_extrapolation` | **C3:** a 1.20–2.00 µm request on data ending at 1.65 µm warns; 1.20–1.60 µm does not |
 | `test_c5_read_stacked_in_memory` | **C5:** a stacked n/k CSV is parsed in memory and the source is unchanged |
 | `test_c5_fix_writes_copy_and_never_overwrites` | A merged copy is written, never overwritten, and never written onto the source |
@@ -141,14 +141,15 @@ so the exact evidence is ln Z = 3 ln(√(2π)·0.1) − 3 ln 3 = −7.447.
 | `test_optimizer_search_with_dynesty` | Full `execute_search(backend="dynesty")` on an analytic efficiency surface: converges, finds period 0.82 µm and FF 0.51, and reports 60 % peak efficiency, the backend and ln Z |
 | `test_budget_pause_and_resume_reuses_cache` | Budget 0.375 at 0.125 per run: pauses after 3 paid runs. Resuming at 0.75 replays those 3 from the cache (no new uploads) and pays for exactly 3 new ones |
 
-## `test_api_compat.py`: v0.1.0 names and deprecated aliases (20 tests, Phase 3c)
+## `test_api_compat.py`: v0.1.0 names and deprecated aliases (17 tests, Phase 3c)
 
-The old names keep working until v0.2.0, each with a `DeprecationWarning` that
-names the replacement.
+The old class, parameter and attribute names keep working until v0.2.0, each with a
+`DeprecationWarning` that names the replacement. (The old package names and the old
+top-level layout are not aliased: `python -m tarang.migrate` rewrites imports instead,
+see `test_migrate.py`.)
 
 | Test | Checks |
 |---|---|
-| `test_old_package_names_alias_the_new_modules[...]` (3) | `import gratingCoupler` / `edgeCoupler` / `ringResonator` warn, and `oldPkg.module` is the **same module object** as `new_pkg.module` (isinstance checks and monkeypatching keep working) |
 | `test_old_class_names_are_the_new_classes[...]` (6) | `edgeCoupler`, `ringResonator`, `halfringResonator`, `partialRingResonator`, `resonatorArc` warn and are the new classes |
 | `test_ring_cache_labels_keep_pre_rename_names` | Ring cache folders and cloud task names still use the pre-rename labels, so existing results stay findable |
 | `test_old_keywords_build_identical_simulation[edge/ring/arc/waveguide]` (4) | Old keywords (`substrate_medium`, `sub_medium`, `wavelength0`, `fine_min_steps_per_wvl`, ...) build a simulation with the **same fingerprint** as the new ones, and each warning names old and new |
@@ -211,23 +212,24 @@ names the replacement.
 | `test_real_cloud_run_then_cache_hit` | A small 2D grating coupler (`max_cost` 0.1 FlexCredits) goes through TARANG's real upload → estimate → start → monitor → download sequence, returns real monitor data and an efficiency in [0, 1], and the second request is a free cache hit. A copy of the result is kept in `results/cloud_smoke/` |
 
 
-## `test_packaging.py`: the package definition (18 tests, Phase 5)
+## `test_packaging.py`: the package definition (19 tests, Phases 5 and 8)
 
 `pyproject.toml` lists by hand what an installed TARANG contains. These tests
 fail when that list falls behind the code. Each one was checked by breaking a copy
 of the repository on purpose (dropping a package from the list, adding an
 undeclared import, importing an optional library at module top, adding a material
-file outside `media/data/`).
+file outside `tarang/media/data/`).
 
 | Test | Checks |
 |---|---|
 | `test_version_has_a_single_source` | The version is read from `tarang.__version__` only, and has release form (`0.1.0`, `0.2.0rc1`) |
 | `test_running_python_satisfies_requires_python` | The Python running the tests is one TARANG declares support for (3.11+) |
 | `test_readme_and_licence_exist` | The README and licence named in the package metadata exist |
-| `test_every_package_folder_is_shipped` | Every top-level code folder (including the deprecated old names) is in the package list, so `pip install` does not silently drop one |
-| `test_tests_and_docs_are_not_shipped` | `tests/`, `docs/` and `results/` stay out of the installed package |
+| `test_every_package_folder_is_shipped` | Every code folder is in the package list, so `pip install` does not silently drop one |
+| `test_tarang_is_the_only_top_level_package` | `tarang` is the only top-level package in the repository and in the package list, so an installed TARANG adds no generic names such as `media` or `utilities` to Python |
+| `test_tests_and_docs_are_not_shipped` | `tests/`, `docs/`, `examples/` and `results/` stay out of the installed package |
 | `test_subpackages_have_init_files` | Every code folder has an `__init__.py`; without one, setuptools leaves it out of the wheel even though it imports fine from the repository |
-| `test_material_files_are_package_data` | Every material in `media/media.json` points to an existing CSV that is covered by the package-data patterns |
+| `test_material_files_are_package_data` | Every material in `tarang/media/media.json` points to an existing CSV that is covered by the package-data patterns |
 | `test_every_third_party_import_is_declared` | Every non-standard-library import in the code is a declared dependency or extra |
 | `test_core_dependencies_are_required_not_optional` (×6) | tidy3d, numpy, pandas, pydantic, matplotlib and dynesty are required, not extras |
 | `test_optional_imports_are_guarded` | getdist, corner and pymultinest are never imported at module top, so TARANG imports without the extras |
@@ -241,14 +243,14 @@ Run with `python -I tests/installed_smoke.py` **from a folder outside the
 repository**, after `pip install`. `-I` makes sure Python uses the installed copy,
 not the repository folders. It checks that every module imports, every packaged
 material loads and fits, a ridge-waveguide simulation passes Tidy3D's server-side
-validation, the dynesty backend is available and the old package names still work.
+validation, the dynesty backend is available and `python -m tarang.migrate` works.
 No network, no FlexCredits.
 
 ## `test_docs.py`: the documentation matches the code (24 tests, Phase 6)
 
 The pre-v0.1.0 README described parameters and a function that no longer existed and an
 install procedure that did not work. These tests read the Markdown files (README,
-CONTRIBUTING, CHANGELOG, `media/data/SOURCES.md`, the dispersion-mapping README and this
+CONTRIBUTING, CHANGELOG, `tarang/media/data/SOURCES.md`, the dispersion-mapping README and this
 file) and check them against the code. Each check was confirmed to fail on a
 deliberately broken copy (misspelt keyword, renamed function, broken link, undocumented
 material, unknown pip extra).
@@ -258,16 +260,16 @@ material, unknown pip extra).
 | `test_python_examples_compile[...]` (6) | Every Python example in the docs is valid Python |
 | `test_python_examples_use_real_names_and_keywords[...]` (6) | Every TARANG name an example imports exists, and every keyword argument it passes to a TARANG function is a real parameter |
 | `test_shell_commands_name_real_modules_and_extras` | `python -m ...` commands name existing TARANG modules; `pip install -e ".[...]"` names existing extras |
-| `test_no_outdated_instructions` | Known-wrong pre-v0.1.0 instructions (`tarang-env`, the manual `pip install tidy3d pandas ...`, `sub_medium=`, a function that never existed) do not come back |
+| `test_no_outdated_instructions` | Known-wrong pre-v0.1.0 instructions (`tarang-env`, the manual `pip install tidy3d pandas ...`, `sub_medium=`, a function that never existed) do not come back, and no code block imports or runs a module by its pre-v0.1.0 top-level name (`from media ...`, `python -m waveguide...`) |
 | `test_relative_links_resolve[...]` (6) | Every relative link and image points to an existing file, and every `#anchor` to an existing heading |
 | `test_citation_matches_package` | `CITATION.cff` is CFF 1.2.0 with the package's version, licence and authors, and its release date matches the CHANGELOG |
 | `test_changelog_has_current_version` | `CHANGELOG.md` has a section for `tarang.__version__` |
-| `test_every_material_is_documented` | Every key in `media/media.json` and every CSV in `media/data/` is described in `SOURCES.md`, and every key is in the README's material table |
+| `test_every_material_is_documented` | Every key in `tarang/media/media.json` and every CSV in `tarang/media/data/` is described in `SOURCES.md`, and every key is in the README's material table |
 | `test_readme_first_run_examples_execute` (slow) | README section 4 steps 1–3 and the logging example run as written in an empty folder: materials fit, the waveguide builds, modes, dispersion and confinement are computed, and the files the README mentions are written |
 
-## `test_notebooks.py`: the example notebooks (26 tests, Phase 7)
+## `test_notebooks.py`: the example notebooks (31 tests, Phases 7 and 8)
 
-Notebooks are committed without outputs: stored outputs go stale with every code change,
+The notebooks live in `examples/`. They are committed without outputs: stored outputs go stale with every code change,
 had grown the repository by about 10 MB, and contained paths from the author's machine.
 Each check below was confirmed to fail on the notebooks as they were before Phase 7.
 
@@ -278,4 +280,24 @@ Each check below was confirmed to fail on the notebooks as they were before Phas
 | `test_no_personal_paths[...]` (5) | No `/home/<user>`, `/Users/<user>` or `C:\\Users\\...` paths |
 | `test_code_compiles_and_uses_real_names[...]` (5) | Code cells are valid Python; every TARANG name exists and every keyword argument is a real parameter |
 | `test_image_links_exist[...]` (5) | Every image a notebook shows is committed |
+| `test_markdown_links_resolve[...]` (5) | Every relative link in a notebook's text points to an existing file (links are relative to `examples/`) |
 | `test_materials_fitted_over_the_simulated_wavelength[...]` (5) | A material is fitted over a band that contains the wavelength the same notebook simulates (the 1550 nm examples used to fit over 0.6–1.2 µm) |
+
+## `test_migrate.py`: updating old scripts (19 tests, Phase 8)
+
+Before v0.1.0 TARANG's packages were top-level (`import media`); now they live in the
+`tarang` package (`import tarang.media`). `python -m tarang.migrate` rewrites the imports
+in users' scripts and notebooks. These tests run the rewritten code, so a migrated script
+needs no other edits.
+
+| Test | Checks |
+|---|---|
+| `test_rewrites_import_statements[...]` (7) | `from media import ...`, dotted, aliased, camelCase (`gratingCoupler`, `edgeCoupler`) and mixed (`import numpy as np, media`) imports are rewritten correctly |
+| `test_rewritten_code_binds_the_same_names` | The rewritten imports are executed: every name the old code used (`media`, `geometries.ridge_waveguide`, `gratingCoupler`, imports inside functions) is still bound to the right module or object |
+| `test_multiline_and_indented_imports_keep_their_layout` | A parenthesised import inside a block keeps its indentation and comments; only the module name changes |
+| `test_leaves_other_code_alone[...]` (5) | Relative imports, other packages with similar names (`mediapipe`), already migrated imports and strings such as `'media.json'` are not changed |
+| `test_is_idempotent` | Running the tool twice changes nothing the second time |
+| `test_reports_old_paths_in_strings_and_comments_without_changing_them` | Old module paths in strings (e.g. `monkeypatch.setattr("utilities.cloud_run.web", ...)`) and comments are listed with file and line for checking by hand, and left unchanged |
+| `test_every_target_module_exists` | Every new module name in the tool's mapping imports |
+| `test_notebook_code_cells_are_migrated_and_magics_kept` | In a notebook only code cells change; `%matplotlib` and `!pip` lines and Markdown cells are kept |
+| `test_command_line_dry_run_then_write_keeps_line_endings` | Without `--write` nothing is changed and the files that would change are listed; with `--write` Windows (CRLF) line endings are kept; a file that is not valid Python is reported and left untouched; a mistyped path is reported |
