@@ -244,6 +244,9 @@ python -m waveguide.dispersion_mapping.sweep --heights 0.60:0.90:0.05 --widths 0
 | 4 | `edge_coupler_example.ipynb`, `grating_coupler_example.ipynb`: input/output couplers | yes |
 | 5 | `nested_sampling_example.py`: Bayesian grating-coupler design search | yes, capped |
 
+The notebooks are stored without outputs: run them to see the results. Each one fits its
+materials over the band it simulates.
+
 ---
 
 ## 5. Cloud runs and cost control
@@ -381,6 +384,11 @@ set_tidy3d_log_level("WARNING")                    # Tidy3D's own messages
   `DeprecationWarning` until v0.2.0, then will be removed.
 * **Tidy3D versions.** Tested with Tidy3D 2.12. Tidy3D 3.x is excluded until tested.
 * **MultiNest** is not available on Windows; dynesty is used there.
+* **Resonator-arc mesh refinement.** The arc builder (used for partial rings and bend-loss
+  arcs) refines the mesh over the curved waveguide itself. Tidy3D accepts only boxes for
+  this and uses the curve's bounding box instead, with a warning (`Override structures
+  should be 'Box'`). Results are unaffected; the builder is left unchanged so that cached
+  arc results keep their fingerprints.
 
 ---
 

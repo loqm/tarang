@@ -180,6 +180,11 @@ def test_citation_matches_package():
     assert cff["license"] == "MIT"
     cff_authors = [f"{a['given-names']} {a['family-names']}" for a in cff["authors"]]
     assert cff_authors == [a["name"] for a in PYPROJECT["project"]["authors"]]
+    released = re.search(rf"^## \[{re.escape(tarang.__version__)}\] - (\S+)$",
+                         _text("CHANGELOG.md"), re.M)
+    if "date-released" in cff or (released and released.group(1) != "unreleased"):
+        assert released and str(cff.get("date-released")) == released.group(1), \
+            "CITATION.cff date-released and the CHANGELOG release date differ"
 
 
 def test_changelog_has_current_version():

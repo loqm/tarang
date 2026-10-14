@@ -14,6 +14,7 @@ authors:
     family-names: Tiwari
     affiliation: "Laboratory of Optics of Quantum Materials, Indian Institute of Technology Bombay"
 version: 0.1.0
+date-released: "2026-10-16"
 license: MIT
 repository-code: "https://github.com/loqm/tarang"
 url: "https://github.com/loqm/tarang"

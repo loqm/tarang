@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `162 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `188 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -260,7 +260,22 @@ material, unknown pip extra).
 | `test_shell_commands_name_real_modules_and_extras` | `python -m ...` commands name existing TARANG modules; `pip install -e ".[...]"` names existing extras |
 | `test_no_outdated_instructions` | Known-wrong pre-v0.1.0 instructions (`tarang-env`, the manual `pip install tidy3d pandas ...`, `sub_medium=`, a function that never existed) do not come back |
 | `test_relative_links_resolve[...]` (6) | Every relative link and image points to an existing file, and every `#anchor` to an existing heading |
-| `test_citation_matches_package` | `CITATION.cff` is CFF 1.2.0 with the package's version, licence and authors |
+| `test_citation_matches_package` | `CITATION.cff` is CFF 1.2.0 with the package's version, licence and authors, and its release date matches the CHANGELOG |
 | `test_changelog_has_current_version` | `CHANGELOG.md` has a section for `tarang.__version__` |
 | `test_every_material_is_documented` | Every key in `media/media.json` and every CSV in `media/data/` is described in `SOURCES.md`, and every key is in the README's material table |
 | `test_readme_first_run_examples_execute` (slow) | README section 4 steps 1–3 and the logging example run as written in an empty folder: materials fit, the waveguide builds, modes, dispersion and confinement are computed, and the files the README mentions are written |
+
+## `test_notebooks.py`: the example notebooks (26 tests, Phase 7)
+
+Notebooks are committed without outputs: stored outputs go stale with every code change,
+had grown the repository by about 10 MB, and contained paths from the author's machine.
+Each check below was confirmed to fail on the notebooks as they were before Phase 7.
+
+| Test | Checks |
+|---|---|
+| `test_there_are_notebooks` | The five example notebooks are found |
+| `test_committed_without_outputs[...]` (5) | No outputs or execution counts are stored |
+| `test_no_personal_paths[...]` (5) | No `/home/<user>`, `/Users/<user>` or `C:\\Users\\...` paths |
+| `test_code_compiles_and_uses_real_names[...]` (5) | Code cells are valid Python; every TARANG name exists and every keyword argument is a real parameter |
+| `test_image_links_exist[...]` (5) | Every image a notebook shows is committed |
+| `test_materials_fitted_over_the_simulated_wavelength[...]` (5) | A material is fitted over a band that contains the wavelength the same notebook simulates (the 1550 nm examples used to fit over 0.6–1.2 µm) |

@@ -7,9 +7,8 @@ media/fitted_media/*
 results/*
 *example_results/*
 *.png
-# ...except figures that belong to the documentation and notebooks
+# ...except figures that belong to the documentation (README, notebooks)
 !docs/**/*.png
-!assets/images/*.png
 *.hdf5
 
 *.pyc

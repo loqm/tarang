@@ -182,7 +182,7 @@ def _optimizer(tmp_path, **kw):
                                            is_3d=False, show_corner_plots=False, **kw)
 
 
-def test_optimizer_search_with_dynesty(tmp_path, monkeypatch):
+def test_optimizer_search_with_dynesty(tmp_path, monkeypatch, no_show):
     """execute_search(backend='dynesty') end to end with an analytic efficiency
     surface (peak 60 % at period 0.82 um, FF 0.51) instead of FDTD."""
     opt = _optimizer(tmp_path)

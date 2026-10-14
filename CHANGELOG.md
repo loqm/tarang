@@ -5,7 +5,7 @@ All notable changes to TARANG are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) (before 1.0, a minor release may contain
 breaking changes; they are announced here first).
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-10-16
 
 First public release. Compared with the pre-release code on `main`, TARANG is now
 installable, tested on Linux and Windows, safer with cloud credits, and uses
@@ -34,7 +34,8 @@ consistent names. Old names keep working until v0.2.0 (see
 - **Material `si_franta`**: float-zone crystalline silicon (Franta 2017, 0.03–310 µm),
   for silicon at 1550 nm, where the `si` dataset has no data.
 - **Documentation**: this changelog, `CONTRIBUTING.md`, `CITATION.cff`,
-  `media/data/SOURCES.md` (reference, sample and range of every material dataset).
+  `media/data/SOURCES.md` (reference, sample and range of every material dataset), and
+  material fit-versus-data figures (`docs/make_material_figures.py`).
 - **Tests and CI**: 160+ tests (fake cloud, no FlexCredits) run on every pull request on
   Ubuntu and Windows with Python 3.11 and 3.12, plus a MultiNest job, a job that builds
   and installs the package, a conda-environment check, and an optional real-cloud smoke
@@ -66,6 +67,14 @@ consistent names. Old names keep working until v0.2.0 (see
 
 ### Fixed
 
+- Example notebooks: the waveguide and grating-coupler notebooks fitted their materials
+  over 0.6–1.2 µm but simulated at 1.55 µm. (For these smooth materials the extrapolated
+  index happened to agree to four decimals, so earlier results stand.) They now fit over
+  1.35–1.75 µm; the grating coupler uses `si_franta` for silicon; the 1550 nm waveguide
+  uses a converged mesh; the nested-sampling cells read the folder
+  `nested_sampling_example.py` writes and do not fail before it has run. The notebooks are
+  stored without outputs, which also removed about 10 MB of stale results and local paths.
+
 - Grating-coupler results were cached by geometry only, so changing a material reused
   results computed with the old one. All devices are now keyed on the full simulation.
 - The nested sampler uploaded every design twice (once only to price it).
@@ -90,6 +99,8 @@ will be **removed in v0.2.0**.
 ### Removed
 
 - `requirements-test.txt` (replaced by the `[test]` extra).
+- The root `media.json`: an outdated copy of `media/media.json` that nothing read (it still
+  pointed `sio2` to the microsphere data).
 
 ### Upgrading from pre-0.1.0 code
 
