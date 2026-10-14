@@ -1,12 +1,12 @@
-"""Smoke tests for waveguide.dispersion_mapping (coarse mesh, ~1 min, no FlexCredits).
+"""Smoke tests for tarang.waveguide.dispersion_mapping (coarse mesh, ~1 min, no FlexCredits).
 
 Run from the repository root:  python -m pytest tests/test_dispersion_mapping.py -q
 Coarse mesh (30 steps/lambda) for speed; assertions are mesh- and version-independent.
 """
 import pytest
 
-from waveguide.dispersion_mapping import solve_point, medium
-from waveguide.dispersion_mapping.core import n_of
+from tarang.waveguide.dispersion_mapping import solve_point, medium
+from tarang.waveguide.dispersion_mapping.core import n_of
 
 
 def test_media_registry_has_malitson():

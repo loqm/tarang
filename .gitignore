@@ -2,10 +2,11 @@
 .venv
 
 pipeline.log
-media/fitted_media/*
+fitted_media/
 
-results/*
-*example_results/*
+# simulation outputs, wherever scripts and notebooks are run from
+results/
+example_results/
 *.png
 # ...except figures that belong to the documentation (README, notebooks)
 !docs/**/*.png

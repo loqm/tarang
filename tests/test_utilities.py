@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 import tidy3d as td
 
-from utilities import json_helpers as jh
-from utilities import validation as v
+from tarang.utilities import json_helpers as jh
+from tarang.utilities import validation as v
 
 
 # ---- validation -------------------------------------------------------------- #

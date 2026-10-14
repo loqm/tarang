@@ -9,16 +9,17 @@ breaking changes; they are announced here first).
 
 First public release. Compared with the pre-release code on `main`, TARANG is now
 installable, tested on Linux and Windows, safer with cloud credits, and uses
-consistent names. Old names keep working until v0.2.0 (see
+consistent names inside a single `tarang` package. Old class and parameter names keep
+working until v0.2.0; old imports are updated with one command (see
 [Upgrading](#upgrading-from-pre-010-code)).
 
 ### Added
 
-- **Dispersion mapping** (`waveguide.dispersion_mapping`): command-line tools for robust
+- **Dispersion mapping** (`tarang.waveguide.dispersion_mapping`): command-line tools for robust
   height × width dispersion sweeps, maps, mesh-convergence studies, broadband *D*(λ) and
   integrated dispersion, and finalist reports against a baseline. Local mode solver
   only, no FlexCredits; results are appended line by line, so interrupted sweeps resume.
-- **Verified result cache** (`utilities/cloud_run.py`): every cloud result is stored
+- **Verified result cache** (`tarang/utilities/cloud_run.py`): every cloud result is stored
   under a SHA-256 fingerprint of the complete simulation (geometry, materials, mesh,
   sources, monitors), with `simulation.json` saved next to `raw_simulation_data.hdf5`.
   Each cache hit is checked against the stored simulation.
@@ -26,7 +27,7 @@ consistent names. Old names keep working until v0.2.0 (see
   `max_cost` (per device or sweep) or `$TARANG_MAX_COST`; `CostLimitExceededError` is
   raised and nothing is charged.
 - **Nested sampling on every OS**: dynesty backend next to MultiNest
-  (`utilities/nested_backends.py`); `backend="auto"` picks MultiNest when its library
+  (`tarang/utilities/nested_backends.py`); `backend="auto"` picks MultiNest when its library
   loads and dynesty otherwise. Both write MultiNest-format chains. Seeded dynesty runs
   resume by replaying cached evaluations.
 - **Installable package**: `pyproject.toml` (distribution `tarang-photonics`) with extras
@@ -34,7 +35,7 @@ consistent names. Old names keep working until v0.2.0 (see
 - **Material `si_franta`**: float-zone crystalline silicon (Franta 2017, 0.03–310 µm),
   for silicon at 1550 nm, where the `si` dataset has no data.
 - **Documentation**: this changelog, `CONTRIBUTING.md`, `CITATION.cff`,
-  `media/data/SOURCES.md` (reference, sample and range of every material dataset), and
+  `tarang/media/data/SOURCES.md` (reference, sample and range of every material dataset), and
   material fit-versus-data figures (`docs/make_material_figures.py`).
 - **Tests and CI**: 160+ tests (fake cloud, no FlexCredits) run on every pull request on
   Ubuntu and Windows with Python 3.11 and 3.12, plus a MultiNest job, a job that builds
@@ -45,10 +46,16 @@ consistent names. Old names keep working until v0.2.0 (see
 
 ### Changed
 
+- **One package.** All code moved into the `tarang` package (`tarang.media`,
+  `tarang.geometries`, `tarang.waveguide`, `tarang.ring_resonator`,
+  `tarang.grating_coupler`, `tarang.edge_coupler`, `tarang.utilities`), so installing
+  TARANG adds a single name to an environment instead of eight generic ones. The example
+  notebooks and `nested_sampling_example.py` moved to `examples/`. The dispersion-mapping
+  tools are now `python -m tarang.waveguide.dispersion_mapping.<tool>`.
 - **Names** follow one convention (PEP 8): packages `grating_coupler`, `edge_coupler`,
   `ring_resonator`; classes in CapWords; one parameter name per physical layer
-  (`box_*`, `handle_*`, `top_cladding_*`) and `wavelength_um` everywhere. Old names are
-  deprecated aliases (table below).
+  (`box_*`, `handle_*`, `top_cladding_*`) and `wavelength_um` everywhere. Old class and
+  parameter names are deprecated aliases (table below).
 - **`sio2` now means bulk fused silica** (Malitson 1965, n = 1.444 at 1550 nm). It
   previously pointed to a silica-microsphere dataset (n = 1.420), which remains available
   as `sio2_nyakuchena`. Simulations with `sio2` therefore change (and run again).
@@ -93,20 +100,48 @@ consistent names. Old names keep working until v0.2.0 (see
 
 ### Deprecated
 
-All names below work in v0.1.0 with a `DeprecationWarning` naming the replacement, and
-will be **removed in v0.2.0**.
+The old class, parameter and attribute names in the table below work in v0.1.0 with a
+`DeprecationWarning` naming the replacement, and will be **removed in v0.2.0**.
 
 ### Removed
 
 - `requirements-test.txt` (replaced by the `[test]` extra).
-- The root `media.json`: an outdated copy of `media/media.json` that nothing read (it still
+- The root `media.json`: an outdated copy of `tarang/media/media.json` that nothing read (it still
   pointed `sio2` to the microsphere data).
+- The top-level packages (`media`, `geometries`, `waveguide`, `ring_resonator`,
+  `grating_coupler`, `edge_coupler`, `utilities`) and the pre-v0.1.0 package names
+  (`gratingCoupler`, `edgeCoupler`, `ringResonator`). They are not aliased:
+  `python -m tarang.migrate` rewrites old imports (below).
 
 ### Upgrading from pre-0.1.0 code
 
+**Imports.** Run the migration tool on your scripts and notebooks; it rewrites only the
+import statements, so the rest of your code keeps working unchanged:
+
+```bash
+python -m tarang.migrate path/to/your/scripts            # dry run: shows what would change
+python -m tarang.migrate path/to/your/scripts --write    # apply
+```
+
+| Old import | New import |
+|---|---|
+| `from media import get_medium` | `from tarang.media import get_medium` |
+| `import geometries.ridge_waveguide as rw` | `import tarang.geometries.ridge_waveguide as rw` |
+| `import waveguide` | `from tarang import waveguide` |
+| `from grating_coupler import GratingCoupler` | `from tarang.grating_coupler import GratingCoupler` |
+| `import gratingCoupler`, `edgeCoupler`, `ringResonator` | `tarang.grating_coupler`, `tarang.edge_coupler`, `tarang.ring_resonator` |
+| `python -m waveguide.dispersion_mapping.sweep` | `python -m tarang.waveguide.dispersion_mapping.sweep` |
+
+**Example results.** The example notebooks are now in `examples/` and save their results
+in `examples/example_results/`. If you ran them before, move your old `example_results/`
+folder into `examples/` so that their cached cloud results are reused rather than run
+(and paid for) again. Cached results are matched by simulation fingerprint, so a moved
+folder is safe to reuse.
+
+**Names.** These still work, with a warning, until v0.2.0:
+
 | Old | New |
 |---|---|
-| `import gratingCoupler`, `edgeCoupler`, `ringResonator` | `grating_coupler`, `edge_coupler`, `ring_resonator` |
 | `edgeCoupler` (class) | `EdgeCoupler` |
 | `ringResonator`, `halfringResonator`, `partialRingResonator` | `RingResonator`, `HalfRingResonator`, `PartialRingResonator` |
 | `resonatorArc` | `ResonatorArc` |

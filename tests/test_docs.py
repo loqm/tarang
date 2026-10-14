@@ -22,10 +22,12 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = ["Readme.md", "CONTRIBUTING.md", "CHANGELOG.md", "media/data/SOURCES.md",
-        "waveguide/dispersion_mapping/README.md", "tests/README.md"]
+DOCS = ["Readme.md", "CONTRIBUTING.md", "CHANGELOG.md", "tarang/media/data/SOURCES.md",
+        "tarang/waveguide/dispersion_mapping/README.md", "tests/README.md"]
+# Old top-level names are listed on purpose: an example that still imports them fails
+# to resolve (they no longer exist), so the test catches it.
 OWN = {"tarang", "media", "geometries", "waveguide", "ring_resonator", "grating_coupler",
-       "edge_coupler", "utilities"}
+       "edge_coupler", "utilities", "gratingCoupler", "edgeCoupler", "ringResonator"}
 PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 
@@ -136,11 +138,24 @@ def test_no_outdated_instructions():
         "sub_medium=": "use box_medium",
         "substrate_height=": "use box_height",
     }
-    for rel in ("Readme.md", "CONTRIBUTING.md", "media/data/SOURCES.md",
-                "waveguide/dispersion_mapping/README.md"):
+    # The old package layout may be described in prose (upgrade notes), but never used
+    # in a code block.
+    stale_in_code = {
+        re.compile(r"^\s*from (media|geometries|waveguide|utilities|ring_resonator|grating_coupler|edge_coupler)[ .]", re.M):
+            "packages live inside tarang: from tarang.media import ...",
+        re.compile(r"^\s*import (media|geometries|waveguide|utilities|ring_resonator|grating_coupler|edge_coupler)\b", re.M):
+            "import tarang.<package>...",
+        re.compile(r"python -m (waveguide|media|utilities)\."): "python -m tarang.waveguide....",
+    }
+    for rel in ("Readme.md", "CONTRIBUTING.md", "tarang/media/data/SOURCES.md",
+                "tarang/waveguide/dispersion_mapping/README.md"):
         text = _text(rel)
         for phrase, why in stale.items():
             assert phrase not in text, f"{rel} still says {phrase!r} ({why})"
+        code = "\n".join(_blocks(rel, "python") + _blocks(rel, "bash") + _blocks(rel, "powershell"))
+        for pattern, why in stale_in_code.items():
+            m = pattern.search(code)
+            assert not m, f"{rel}: code block uses the old layout: {m.group(0).strip()!r} ({why})"
 
 
 # ---- links ---------------------------------------------------------------------------- #
@@ -193,8 +208,8 @@ def test_changelog_has_current_version():
 
 
 def test_every_material_is_documented():
-    database = json.loads(_text("media/media.json"))
-    sources, readme = _text("media/data/SOURCES.md"), _text("Readme.md")
+    database = json.loads(_text("tarang/media/media.json"))
+    sources, readme = _text("tarang/media/data/SOURCES.md"), _text("Readme.md")
     for key, rel in database.items():
         assert f"`{key}`" in sources, f"{key} missing from SOURCES.md"
         assert f"`{key}`" in readme, f"{key} missing from the README material table"

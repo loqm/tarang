@@ -28,14 +28,14 @@ RING = dict(radius=10.0, gap=0.3, wg_width=0.8, wg_height=0.7, core_medium=SIN,
 
 
 def _ridge(active):
-    import geometries.ridge_waveguide as g
+    import tarang.geometries.ridge_waveguide as g
     f = g.get_active_simulation if active else g.get_passive_simulation
     return f(width=0.9, height=0.7, length=3.0, core_medium=SIN, box_medium=SIO2,
              wavelength_um=WL, fine_steps_per_wvl=12, coarse_steps_per_wvl=8)
 
 
 def _edge(active, out=True):
-    import geometries.edge_coupler as g
+    import tarang.geometries.edge_coupler as g
     kw = dict(tip_width=0.2, taper_length=10.0, wg_width=0.8, wg_height=0.7, core_medium=SIN,
               box_medium=SIO2, wavelength_um=WL, top_cladding_medium=AIR, **MESH)
     if not active:
@@ -44,30 +44,30 @@ def _edge(active, out=True):
 
 
 def _full(active):
-    import geometries.full_ring_resonator as g
+    import tarang.geometries.full_ring_resonator as g
     return (g.get_active_simulation if active else g.get_passive_simulation)(**RING)
 
 
 def _half(active):
-    import geometries.half_ring_resonator as g
+    import tarang.geometries.half_ring_resonator as g
     return (g.get_active_simulation if active else g.get_passive_simulation)(**RING)
 
 
 def _partial(active):
-    import geometries.partial_ring_resonator as g
+    import tarang.geometries.partial_ring_resonator as g
     return (g.get_active_simulation if active else g.get_passive_simulation)(
         span_angle_rad=np.pi / 4, **RING)
 
 
 def _arc(active):
-    import geometries.resonator_arc as g
+    import tarang.geometries.resonator_arc as g
     return (g.get_active_simulation if active else g.get_passive_simulation)(
         wavelength_um=WL, radius=10.0, wg_width=0.8, wg_height=0.7, core_medium=SIN,
         box_medium=SIO2, top_cladding_medium=AIR, bend_angle_deg=45.0, **MESH)
 
 
 def _gc(is_3d=False, handle=False):
-    from grating_coupler.grating_coupler import GratingConfig, GratingCoupler
+    from tarang.grating_coupler.grating_coupler import GratingConfig, GratingCoupler
     cfg = GratingConfig(wavelength_um=WL, theta_deg=-12.0, mfd=10.4, source_x=3.84, source_gap=2.0,
                         core_height=0.7, top_cladding_height=2.0, box_height=4.0, handle_height=2.0,
                         etch_depth=0.35, period=0.9, ff=0.5, n_teeth=12, w_grating=10.4,
@@ -126,7 +126,7 @@ def test_grating_handle_layer_present_only_when_requested():
 
 
 def test_ring_conversions_keep_geometry():
-    from ring_resonator import HalfRingResonator, PartialRingResonator, RingResonator
+    from tarang.ring_resonator import HalfRingResonator, PartialRingResonator, RingResonator
     full = _full(True)
     assert isinstance(full, RingResonator)
     half = full.to_half_ring()
@@ -150,7 +150,7 @@ def test_fsr_formulas():
 
 
 def test_monitor_data_explains_what_is_missing():
-    from utilities.cloud_run import MonitorDataError, monitor_data
+    from tarang.utilities.cloud_run import MonitorDataError, monitor_data
     dev = _edge(True, out=True)
     data = td.SimulationData(simulation=dev.sim, data=())
     with pytest.raises(MonitorDataError, match="not defined in this simulation"):

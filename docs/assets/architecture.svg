@@ -7,13 +7,13 @@
 </defs>
 <text x="40" y="46" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="20" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="start">How the packages fit together</text>
 <text x="40" y="68" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="start">Geometry construction is kept separate from physics analysis; every device follows the same two-layer split.</text>
-<text x="158.0" y="82" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">media/</text>
+<text x="158.0" y="82" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">tarang.media</text>
 <text x="158.0" y="98" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="middle">fits measured n, k data</text>
-<text x="434.0" y="82" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">geometries/</text>
+<text x="434.0" y="82" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">tarang.geometries</text>
 <text x="434.0" y="98" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="middle">returns td.Simulation</text>
 <text x="710.0" y="82" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">device packages</text>
 <text x="710.0" y="98" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="middle">physics, sweeps, cloud runs</text>
-<text x="986.0" y="82" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">utilities/</text>
+<text x="986.0" y="82" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="700" font-style="normal" fill="#1c3f6e" text-anchor="middle">tarang.utilities</text>
 <text x="986.0" y="98" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" font-style="normal" fill="#6d7a89" text-anchor="middle">figures and posteriors</text>
 <rect x="40" y="108" width="236" height="34" rx="5" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
 <text x="158.0" y="129.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">get_medium()</text>
@@ -32,13 +32,13 @@
 <rect x="316" y="284" width="236" height="34" rx="5" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
 <text x="434.0" y="305.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">edge_coupler</text>
 <rect x="592" y="108" width="236" height="34" rx="5" fill="#fbe7d2" stroke="#d98032" stroke-width="1.4"/>
-<text x="710.0" y="129.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">waveguide/</text>
+<text x="710.0" y="129.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">tarang.waveguide</text>
 <rect x="592" y="152" width="236" height="34" rx="5" fill="#fbe7d2" stroke="#d98032" stroke-width="1.4"/>
-<text x="710.0" y="173.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">ring_resonator/</text>
+<text x="710.0" y="173.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">tarang.ring_resonator</text>
 <rect x="592" y="196" width="236" height="34" rx="5" fill="#fbe7d2" stroke="#d98032" stroke-width="1.4"/>
-<text x="710.0" y="217.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">grating_coupler/</text>
+<text x="710.0" y="217.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">tarang.grating_coupler</text>
 <rect x="592" y="240" width="236" height="34" rx="5" fill="#fbe7d2" stroke="#d98032" stroke-width="1.4"/>
-<text x="710.0" y="261.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">edge_coupler/</text>
+<text x="710.0" y="261.5" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">tarang.edge_coupler</text>
 <rect x="868" y="108" width="236" height="34" rx="5" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>
 <text x="986.0" y="129.5" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" font-style="normal" fill="#13233a" text-anchor="middle">sim_plotter.display_2d/3d()</text>
 <rect x="868" y="152" width="236" height="34" rx="5" fill="#dce8f6" stroke="#3167a8" stroke-width="1.4"/>

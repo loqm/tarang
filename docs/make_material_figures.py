@@ -1,7 +1,7 @@
 """Regenerate the material-fit figures used by media_examples.ipynb.
 
     python docs/make_material_figures.py                 # si3n4_hong and si3n4
-    python docs/make_material_figures.py sio2 si_franta  # any keys in media/media.json
+    python docs/make_material_figures.py sio2 si_franta  # any keys in tarang/media/media.json
 
 Each figure shows a material's tabulated refractive index (points) against TARANG's
 pole-residue fit over the whole data range (line), with the fit residual in a second
@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from media import get_medium  # noqa: E402
+from tarang.media import get_medium  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "assets"
@@ -40,8 +40,9 @@ LABELS = {
 
 
 def figure(key: str) -> Path:
-    database = json.loads((ROOT / "media" / "media.json").read_text(encoding="utf-8"))
-    data = pd.read_csv(ROOT / "media" / database[key], skipinitialspace=True)
+    media = ROOT / "tarang" / "media"
+    database = json.loads((media / "media.json").read_text(encoding="utf-8"))
+    data = pd.read_csv(media / database[key], skipinitialspace=True)
     wl, n = data["wl"].to_numpy(float), data["n"].to_numpy(float)
     medium = get_medium(key, wl_range=(wl.min(), wl.max()), force_zero_k=True)
 

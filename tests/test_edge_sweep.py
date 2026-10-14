@@ -10,13 +10,13 @@ import numpy as np
 import pytest
 import tidy3d as td
 
-import utilities.cloud_run as cr
+import tarang.utilities.cloud_run as cr
 
 SIN, SIO2 = td.Medium(permittivity=1.996 ** 2), td.Medium(permittivity=1.444 ** 2)
 
 
 def sweep(out, lengths, widths, **kw):
-    from edge_coupler import parametric_optimization_sweep
+    from tarang.edge_coupler import parametric_optimization_sweep
     return parametric_optimization_sweep(
         sweep_taper_lengths=lengths, sweep_tip_widths=widths, output_dir=out,
         wg_width=0.8, wg_height=0.7, core_medium=SIN, box_medium=SIO2, wavelength_um=1.55,

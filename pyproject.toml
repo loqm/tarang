@@ -38,7 +38,7 @@ dependencies = [
     "tidy3d>=2.12,<3",       # tested with 2.12; 3.x may change the API
     "numpy",
     "pandas",
-    "pydantic>=2",           # also required by tidy3d; imported directly by media/
+    "pydantic>=2",           # also required by tidy3d; imported directly by tarang.media
     "matplotlib",
     "dynesty>=2.1.5",        # nested sampling on every OS (pure Python)
 ]
@@ -72,20 +72,7 @@ Changelog = "https://github.com/loqm/tarang/blob/main/CHANGELOG.md"
 version = { attr = "tarang.__version__" }
 
 [tool.setuptools.packages.find]
-include = [
-    "tarang*",
-    "geometries*",
-    "media*",
-    "waveguide*",
-    "edge_coupler*",
-    "grating_coupler*",
-    "ring_resonator*",
-    "utilities*",
-    # pre-v0.1.0 package names, kept as deprecated aliases until v0.2.0
-    "edgeCoupler*",
-    "gratingCoupler*",
-    "ringResonator*",
-]
+include = ["tarang*"]                       # every package lives inside tarang/
 
 [tool.setuptools.package-data]
-media = ["media.json", "data/*.csv"]
+"tarang.media" = ["media.json", "data/*.csv"]

@@ -1,6 +1,6 @@
 """Shared pytest fixtures and options for the TARANG test suite.
 
-* ``fake_web``: replaces the Tidy3D web API used by ``utilities.cloud_run`` with an
+* ``fake_web``: replaces the Tidy3D web API used by ``tarang.utilities.cloud_run`` with an
   in-memory fake. It records every call and "runs" a task by writing an empty
   SimulationData, so no test uploads anything or spends FlexCredits.
 * ``--run-cloud``: tests marked ``cloud`` submit REAL Tidy3D jobs and spend a few
@@ -25,7 +25,7 @@ def pytest_addoption(parser):
 
 
 def _have_tidy3d_key() -> bool:
-    from utilities.cloud_run import api_key_source, _LEGACY_KEY_VARS
+    from tarang.utilities.cloud_run import api_key_source, _LEGACY_KEY_VARS
     return bool(api_key_source() or any(os.environ.get(v) for v in _LEGACY_KEY_VARS))
 
 
@@ -115,7 +115,7 @@ class FakeWeb:
 @pytest.fixture
 def fake_web(monkeypatch):
     """A FakeWeb (cost 0.25 per task; change with ``fake_web.cost = ...``)."""
-    import utilities.cloud_run as cr
+    import tarang.utilities.cloud_run as cr
 
     fw = FakeWeb()
     monkeypatch.setattr(cr, "web", fw)

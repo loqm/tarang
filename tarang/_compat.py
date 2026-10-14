@@ -12,24 +12,20 @@ Keep pre-v0.1.0 names working for one release while pointing users to the new on
 * ``deprecated_module_names(module_globals, {"oldName": "NewName"})``: returns a
   module ``__getattr__`` (PEP 562), so ``from pkg import oldName`` still works
   and warns.
-* ``alias_package("oldPkg", "new_pkg")``: makes ``import oldPkg.sub`` load
-  ``new_pkg.sub`` (the same module object, so isinstance checks and monkeypatching
-  keep working), with a single warning.
 
 All warnings are ``DeprecationWarning`` (Python hides these by default outside
 ``__main__``; pytest and Jupyter show them). The old names will be removed in
 v0.2.0.
 
-Exposes: renamed_params, RenamedAttributes, deprecated_module_names, alias_package.
+Exposes: renamed_params, RenamedAttributes, deprecated_module_names.
+
+The pre-v0.1.0 package names (``gratingCoupler`` etc.) and the top-level package
+layout are not aliased: ``python -m tarang.migrate`` rewrites old imports instead.
 """
 
 from __future__ import annotations
 
 import functools
-import importlib
-import importlib.abc
-import importlib.util
-import sys
 import warnings
 
 REMOVAL = "v0.2.0"
@@ -108,39 +104,3 @@ def deprecated_module_names(module_globals: dict, old_to_new: dict):
         return module_globals[new]
 
     return __getattr__
-
-
-# --------------------------------------------------------------------------- #
-# Packages
-# --------------------------------------------------------------------------- #
-class _AliasLoader(importlib.abc.Loader):
-    def __init__(self, target: str):
-        self.target = target
-
-    def create_module(self, spec):
-        return importlib.import_module(self.target)
-
-    def exec_module(self, module):          # already executed under its real name
-        pass
-
-
-class _AliasFinder(importlib.abc.MetaPathFinder):
-    """Resolve ``old.sub`` imports to the already-renamed ``new.sub`` modules."""
-
-    def __init__(self, old: str, new: str):
-        self.old, self.new = old, new
-
-    def find_spec(self, fullname, path=None, target=None):
-        if not fullname.startswith(self.old + "."):
-            return None
-        target_name = self.new + fullname[len(self.old):]
-        if importlib.util.find_spec(target_name) is None:
-            return None
-        return importlib.util.spec_from_loader(fullname, _AliasLoader(target_name))
-
-
-def alias_package(old: str, new: str) -> None:
-    """Called from the old package's ``__init__``: warn once and alias submodules."""
-    _warn(old, new, "Package", stacklevel=4)
-    if not any(isinstance(f, _AliasFinder) and f.old == old for f in sys.meta_path):
-        sys.meta_path.insert(0, _AliasFinder(old, new))

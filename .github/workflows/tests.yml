@@ -48,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .tarang-cache
-          key: media-${{ runner.os }}-${{ hashFiles('media/media.json', 'media/data/**') }}
+          key: media-${{ runner.os }}-${{ hashFiles('tarang/media/media.json', 'tarang/media/data/**') }}
 
       - name: Install
         run: |
@@ -131,7 +131,7 @@ jobs:
 
       - name: Nested-sampling tests (MultiNest test must run, not skip)
         run: |
-          python -c "from utilities.nested_backends import available_backends as a; b = a(); print(b); assert 'multinest' in b"
+          python -c "from tarang.utilities.nested_backends import available_backends as a; b = a(); print(b); assert 'multinest' in b"
           python -m pytest -q -rs tests/test_nested_backends.py
 
   cloud-smoke:
