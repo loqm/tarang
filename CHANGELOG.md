@@ -5,7 +5,7 @@ All notable changes to TARANG are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) (before 1.0, a minor release may contain
 breaking changes; they are announced here first).
 
-## [0.1.0] - 2026-10-16
+## [0.1.0] - unreleased
 
 First public release. Compared with the pre-release code on `main`, TARANG is now
 installable, tested on Linux and Windows, safer with cloud credits, and uses

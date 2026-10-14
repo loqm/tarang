@@ -18,6 +18,7 @@
 *.svg       text eol=lf
 .gitattributes text eol=lf
 .gitignore     text eol=lf
+.gitleaksignore text eol=lf
 MANIFEST.in    text eol=lf
 LICENSE        text eol=lf
 
