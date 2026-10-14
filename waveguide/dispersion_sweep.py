@@ -19,6 +19,8 @@ import tidy3d as td
 import geometries
 import utilities
 
+from .waveguide import WaveguideModeError
+
 if TYPE_CHECKING:
     from .waveguide import RidgeWaveguide
 
@@ -39,6 +41,9 @@ def dispersion_in_geometry(
     preview_geometry: bool = False,
     display_results: bool = True,
     *,
+    top_cladding_medium: td.Medium | None = None,  # None = air top cladding
+    top_cladding_height: float = 0.0,  # Top cladding thickness (um); used if a medium is given
+    fine_min_steps_per_wvl: int = 50,  # Core mesh; >= 50 for converged n_eff and D (local solver, no FlexCredits)
     plot_dpi: int = 200,  # Resolution of displayed and saved figures (dots per inch).
 ) -> DispersionSweepResult:
     """
@@ -83,6 +88,9 @@ def dispersion_in_geometry(
                 sub_medium=sub_medium,
                 wavelength_um=wavelength_um,
                 substrate_height=substrate_height,
+                top_cladding_medium=top_cladding_medium,
+                top_cladding_height=(top_cladding_height if top_cladding_medium is not None else 0.0),
+                fine_min_steps_per_wvl=fine_min_steps_per_wvl,
             )
         )
 
@@ -120,20 +128,23 @@ def dispersion_in_geometry(
                     sub_medium=sub_medium,
                     wavelength_um=wavelength_um,
                     substrate_height=substrate_height,
+                    top_cladding_medium=top_cladding_medium,
+                    top_cladding_height=(top_cladding_height if top_cladding_medium is not None else 0.0),
+                    fine_min_steps_per_wvl=fine_min_steps_per_wvl,
                 )
             )
 
             # Get dispersion data for the current waveguide geometry,
             # 11 points spanning 0.1um is the default.
-            disp_data = waveguide_obj.get_dispersion(
-                delta_wvl_um=0.1,
-                num_points=11,
-            )
-
-            if "error" in disp_data:
-                logger.warning(
-                    f"  Width {w:.2f} μm (H={h:.2f} μm): Fundamental TE00 mode not found. Skipping."
+            try:
+                disp_data = waveguide_obj.get_dispersion(
+                    delta_wvl_um=0.1,
+                    num_points=11,
                 )
+            except WaveguideModeError as e:
+                # get_dispersion() raises (it never returns an "error" key), so a failed
+                # geometry is logged and skipped instead of aborting the whole sweep.
+                logger.warning(f"  Width {w:.2f} μm (H={h:.2f} μm): {e} Skipping.")
                 continue
 
             D_val = disp_data["dispersion_ps_nm_km"]

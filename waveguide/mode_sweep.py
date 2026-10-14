@@ -45,6 +45,9 @@ def modes_in_geometry(
     preview_geometry: bool = False,
     display_results: bool = True,
     *,
+    top_cladding_medium: td.Medium | None = None,  # None = air top cladding
+    top_cladding_height: float = 0.0,  # Top cladding thickness (um); used if a medium is given
+    fine_min_steps_per_wvl: int = 50,  # Core mesh; >= 50 for converged n_eff and D (local solver, no FlexCredits)
     plot_dpi: int = 150,  # Resolution of displayed and saved figures (dots per inch).
 ) -> None:
     """
@@ -69,6 +72,9 @@ def modes_in_geometry(
     freq0 = C_0 / wavelength_um
 
     n_sub = float(np.real(sub_medium.eps_model(freq0)) ** 0.5)
+    if top_cladding_medium is not None and top_cladding_height > 0:
+        # Guiding cutoff is the highest surrounding index (substrate or top cladding)
+        n_sub = max(n_sub, float(np.real(top_cladding_medium.eps_model(freq0)) ** 0.5))
     n_core = float(np.real(core_medium.eps_model(freq0)) ** 0.5)
     wl_nm = int(wavelength_um * 1000)
 
@@ -95,6 +101,9 @@ def modes_in_geometry(
                 sub_medium=sub_medium,
                 wavelength_um=wavelength_um,
                 substrate_height=substrate_height,
+                top_cladding_medium=top_cladding_medium,
+                top_cladding_height=(top_cladding_height if top_cladding_medium is not None else 0.0),
+                fine_min_steps_per_wvl=fine_min_steps_per_wvl,
             )
         )
 
@@ -135,6 +144,9 @@ def modes_in_geometry(
                     sub_medium=sub_medium,
                     wavelength_um=wavelength_um,
                     substrate_height=substrate_height,
+                    top_cladding_medium=top_cladding_medium,
+                    top_cladding_height=(top_cladding_height if top_cladding_medium is not None else 0.0),
+                    fine_min_steps_per_wvl=fine_min_steps_per_wvl,
                 )
             )
 

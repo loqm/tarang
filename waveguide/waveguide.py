@@ -115,6 +115,15 @@ class RidgeWaveguide:
         Iz = np.sum(np.abs(Ez) ** 2)
         return float(Iy / (Iy + Iz + 1e-10))
 
+    def _cutoff_index(self, freq0: float) -> float:
+        """Highest index surrounding the core (substrate or top cladding; air = 1).
+        A mode is guided only if its n_eff exceeds this value."""
+        n_sub = float(np.real(np.sqrt(self.sub_medium.eps_model(freq0))))
+        n_top = 1.0
+        if self.top_cladding_medium is not None and self.top_cladding_height > 0:
+            n_top = float(np.real(np.sqrt(self.top_cladding_medium.eps_model(freq0))))
+        return max(n_sub, n_top)
+
     def get_modes(
         self,
         num_modes: int = 8,
@@ -125,6 +134,7 @@ class RidgeWaveguide:
         freq0 = td.C_0 / self.wavelength_um
         n_core = float(np.real(np.sqrt(self.core_medium.eps_model(freq0))))
         n_sub = float(np.real(np.sqrt(self.sub_medium.eps_model(freq0))))
+        n_cut = self._cutoff_index(freq0)
 
         mode_plane = td.Box(
             center=(0, 0, self.height / 2),
@@ -159,7 +169,7 @@ class RidgeWaveguide:
                 f_idx=0,
             )
             pol_label = "TE" if te_frac > 0.5 else "TM"
-            is_guided = n_eff > n_sub
+            is_guided = n_eff > n_cut
 
             modes_info.append(
                 {
@@ -184,6 +194,7 @@ class RidgeWaveguide:
             "wavelength_um": self.wavelength_um,
             "n_core": n_core,
             "n_sub": n_sub,
+            "n_cutoff": n_cut,
             "modes": modes_info,
             "raw_mode_data": mode_data,
         }
@@ -192,13 +203,34 @@ class RidgeWaveguide:
         self,
         delta_wvl_um: float = 0.1,
         num_points: int = 11,
+        num_modes: int = 8,
     ) -> Dict[str, Any]:
-        """Calculate chromatic dispersion D and classify its dispersion regime.
+        """Calculate chromatic dispersion D of the fundamental TE mode and classify it.
+
         Positive D is anomalous, negative D is normal, and near-zero D is reported.
+
+        Method:
+          * the TE00 mode is identified independently at EVERY sampled wavelength
+            (highest-index mode with TE fraction > 0.5), so a TE/TM order swap across
+            the band cannot corrupt the derivative;
+          * n_eff(lambda) is fitted with a polynomial (degree 4, or lower for few
+            points) and differentiated analytically:
+                n_g = n_eff - lambda dn/dlambda,   D = -(lambda/c) d2n/dlambda2;
+          * single-mode means exactly one guided TE mode, where guided means
+            n_eff > max(n_substrate, n_top_cladding).
+
+        D is a second derivative and is mesh-sensitive: use
+        fine_min_steps_per_wvl >= 50 (the 20 steps/lambda default is ~25 % off).
         """
+        if self.fine_min_steps_per_wvl < 50:
+            logger.warning(
+                f"get_dispersion(): fine_min_steps_per_wvl={self.fine_min_steps_per_wvl} "
+                "is below 50; D can be off by ~25 %. Rebuild the waveguide with "
+                "fine_min_steps_per_wvl >= 50 for quantitative dispersion."
+            )
         freq0 = td.C_0 / self.wavelength_um
         n_core_guess = float(np.real(np.sqrt(self.core_medium.eps_model(freq0))))
-        n_sub_guess = float(np.real(np.sqrt(self.sub_medium.eps_model(freq0))))
+        n_cut = self._cutoff_index(freq0)
 
         mid_idx = num_points // 2
         wavelengths = np.linspace(
@@ -209,7 +241,7 @@ class RidgeWaveguide:
         freqs = td.C_0 / wavelengths
 
         mode_spec = td.ModeSpec(
-            num_modes=4,
+            num_modes=num_modes,
             target_neff=n_core_guess,
         )
         plane = td.Box(
@@ -228,47 +260,52 @@ class RidgeWaveguide:
         except Exception as e:
             raise WaveguideModeError(f"Dispersion ModeSolver failed: {e}") from e
 
-        # Isolate fundamental TE00 mode
-        te00_idx = -1
-        for m in range(len(data.n_eff.mode_index)):
-            if (
-                self._get_te_fraction(
-                    data,
-                    m_idx=m,
-                    f_idx=mid_idx,
-                )
-                > 0.5
-            ):
-                te00_idx = m
-                break
+        n_found = len(data.n_eff.mode_index)
 
-        if te00_idx == -1:
+        # TE00 identified at every wavelength (highest-index TE-like mode)
+        neff_vals = np.full(num_points, np.nan)
+        for f_idx in range(num_points):
+            best = None
+            for m in range(n_found):
+                if self._get_te_fraction(data, m_idx=m, f_idx=f_idx) > 0.5:
+                    n = float(np.real(data.n_eff.isel(f=f_idx, mode_index=m)))
+                    if best is None or n > best:
+                        best = n
+            if best is not None:
+                neff_vals[f_idx] = best
+
+        if np.isnan(neff_vals).any():
             raise WaveguideModeError(
-                f"TE00 mode not found for W={self.width:.3f} μm, H={self.height:.3f} μm."
+                f"TE00 mode not found at every wavelength for W={self.width:.3f} μm, "
+                f"H={self.height:.3f} μm."
             )
 
-        # Single-mode condition check
-        neff_at_center = np.real(data.n_eff.isel(f=mid_idx).values)
-        n_higher = neff_at_center[2] if len(neff_at_center) > 2 else 0.0
-        is_singlemode = bool(n_higher <= (n_sub_guess + 0.001))
+        # Single-mode check: count guided TE-like and TM-like modes at the centre
+        guided_te = guided_tm = 0
+        for m in range(n_found):
+            n = float(np.real(data.n_eff.isel(f=mid_idx, mode_index=m)))
+            if n > n_cut:
+                if self._get_te_fraction(data, m_idx=m, f_idx=mid_idx) > 0.5:
+                    guided_te += 1
+                else:
+                    guided_tm += 1
+        is_singlemode = guided_te == 1
 
-        # Numerical second-derivative across wavelength array
-        neff_vals = np.real(data.n_eff.isel(mode_index=te00_idx).values)
+        # Polynomial fit of n_eff(lambda) and analytic derivatives at the centre
         sorted_idx = np.argsort(wavelengths)
         srt_wvl = wavelengths[sorted_idx]
         srt_neff = neff_vals[sorted_idx]
-
-        dn_dlam = np.gradient(
-            srt_neff,
-            srt_wvl,
-        )
-        d2n_dlam2 = np.gradient(
-            dn_dlam,
-            srt_wvl,
-        )
+        lam0 = self.wavelength_um
+        deg = int(min(4, num_points - 1))
+        coeffs = np.polyfit(srt_wvl - lam0, srt_neff, deg)
+        poly = np.poly1d(coeffs)
+        n0 = float(poly(0.0))
+        dn_dlam = float(poly.deriv(1)(0.0))
+        d2n_dlam2 = float(poly.deriv(2)(0.0))
 
         # D = - (lambda / c) * d2n/dlambda2 * 1e6 -> [ps / (nm * km)]
-        D_val = float(-(srt_wvl[mid_idx] / C_UM_PS) * d2n_dlam2[mid_idx] * 1e6)
+        D_val = float(-(lam0 / C_UM_PS) * d2n_dlam2 * 1e6)
+        n_group = n0 - lam0 * dn_dlam
 
         # Classify the dispersion regime
         if D_val > 0.5:
@@ -280,7 +317,8 @@ class RidgeWaveguide:
 
         logger.info(
             f"[Dispersion Engine] W={self.width:.3f} μm, H={self.height:.3f} μm, Clad_H={self.top_cladding_height:.3f} μm | "
-            f"D = {D_val:.2f} ps/(nm·km) | Regime: {regime} | Single-Mode: {is_singlemode}"
+            f"D = {D_val:.2f} ps/(nm·km) | Regime: {regime} | Single-Mode: {is_singlemode} "
+            f"(guided TE/TM = {guided_te}/{guided_tm})"
         )
 
         return {
@@ -288,7 +326,11 @@ class RidgeWaveguide:
             "dispersion_regime": regime,
             "is_singlemode": is_singlemode,
             "wavelength_um": self.wavelength_um,
-            "neff_fundamental": float(srt_neff[mid_idx]),
+            "neff_fundamental": n0,
+            "group_index": n_group,
+            "guided_te_count": guided_te,
+            "guided_tm_count": guided_tm,
+            "n_cutoff": n_cut,
         }
 
     def get_dispersion_vs_wavelength(

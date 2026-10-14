@@ -1,8 +1,8 @@
 """
-plot_air_sweep.py -- figures from run_air_sweep.py results
+waveguide.dispersion_mapping.maps -- figures from dispersion_mapping.sweep results
 ==========================================================
-    python scripts/plot_air_sweep.py --data results/air_sweep_50steps.jsonl
-    python scripts/plot_air_sweep.py --data results/air_sweep_50steps.jsonl --dmargin 100 --show
+    python -m waveguide.dispersion_mapping.maps --data results/air_sweep_50steps.jsonl
+    python -m waveguide.dispersion_mapping.maps --data results/air_sweep_50steps.jsonl --show
 
 Writes to results/plots_<name>/ :
   D_vs_width/H_XXXnm.png    one per height  (dispersion regime map along width)
@@ -13,14 +13,14 @@ Writes to results/plots_<name>/ :
   target_geometries.csv     every point classified TARGET, sorted by margin
 
 Classification of each (H, W) point  (TE00 is the pump mode):
-  NORMAL      D < 0
-  MARGINAL    0 <= D < dmargin        (sign not trustworthy within model error)
-  TARGET      D >= dmargin and exactly 1 guided TE mode
-  MULTIMODE   D >= dmargin and >= 2 guided TE modes
+  NORMAL      D < 0                                  (grey)
+  TARGET      D >= 0 and exactly 1 guided TE mode    (green)
+  MULTIMODE   D >= 0 and >= 2 guided TE modes        (red)
   Extra flag  |n_TE0 - n_TM0| < deg_tol  -> TE/TM near-degenerate (hybridises in bends)
 
-dmargin default 100 ps/(nm km): straight-waveguide model vs NIST measurement differed
-by ~80 ps/(nm km) (bending, sidewall angle, film index are not modelled).
+Optional: --dmargin X (ps/(nm km)) adds a fourth class, MARGINAL (0 <= D < X, yellow),
+for users who want to apply their OWN safety margin (e.g. from a measured calibration).
+The default is 0, so no margin is assumed by the package.
 """
 from __future__ import annotations
 
@@ -47,10 +47,17 @@ def unique_dir(base: Path, overwrite: bool = False) -> Path:
         k += 1
 
 
+def _stack(r) -> str:
+    """Human-readable layer stack from a result record (old records default to air/SiN)."""
+    top = r.get("cladding") or "air"
+    return (f"{r.get('core', 'si3n4')} core / {top} top / "
+            f"{r.get('box', 4.0):g} µm {r.get('substrate', 'sio2')}")
+
+
 CLASS_COL = {"NORMAL": "#d9d9d9", "MARGINAL": "#fff2b3",
              "TARGET": "#b8e6b0", "MULTIMODE": "#f7b6b2"}
 CLASS_LBL = {"NORMAL": "Normal dispersion (D < 0)",
-             "MARGINAL": "Anomalous but within model error",
+             "MARGINAL": "Anomalous but below user margin (--dmargin)",
              "TARGET": "TARGET: anomalous + single TE mode",
              "MULTIMODE": "Anomalous + multimode (TE)"}
 
@@ -95,10 +102,11 @@ def shade(ax, xs, classes):
         ax.axvspan(a, b, color=CLASS_COL[c], alpha=0.8, lw=0, zorder=0)
 
 
-def legend_patches():
+def legend_patches(dmargin=0.0):
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
-    h = [Patch(color=CLASS_COL[k], label=CLASS_LBL[k]) for k in CLASS_COL]
+    h = [Patch(color=CLASS_COL[k], label=CLASS_LBL[k]) for k in CLASS_COL
+         if k != "MARGINAL" or dmargin > 0]
     h.append(Line2D([], [], marker="v", ls="", color="purple", label="TE/TM near-degenerate"))
     return h
 
@@ -111,7 +119,7 @@ def plot_D(series, xkey, fixed_lbl, fname, a, plt):
     fig, ax = plt.subplots(figsize=(10.5, 5), dpi=140)
     shade(ax, xs, cls)
     ax.axhline(0, color="b", ls="--", lw=1)
-    for y in (a.dmargin, -a.dmargin):
+    for y in ((a.dmargin, -a.dmargin) if a.dmargin > 0 else ()):
         ax.axhline(y, color="0.4", ls=":", lw=1)
     ax.plot(xs, D, "k-o", lw=1.8, ms=5, label="TE00", zorder=3)
     if a.tm:
@@ -124,10 +132,10 @@ def plot_D(series, xkey, fixed_lbl, fname, a, plt):
                     ha="center", fontsize=7, color="0.25")
     ax.set_xlabel(("Waveguide width" if xkey == "W" else "SiN thickness") + " (µm)")
     ax.set_ylabel(r"$D$ at %.0f nm [ps/(nm·km)]" % (series[0]["wl0"] * 1e3))
-    ax.set_title(f"Air-clad Si$_3$N$_4$ on SiO$_2$ — {fixed_lbl}   "
+    ax.set_title(f"{_stack(series[0])} — {fixed_lbl}   "
                  f"(numbers = guided TE modes, {series[0]['steps']} steps/λ)", fontsize=10)
     ax.grid(alpha=0.3)
-    h = legend_patches()
+    h = legend_patches(a.dmargin)
     ax.legend(handles=ax.get_legend_handles_labels()[0] + h, fontsize=7,
               loc="upper left", bbox_to_anchor=(1.01, 1.0))
     fig.tight_layout()
@@ -161,14 +169,14 @@ def plot_modes(series, xkey, fixed_lbl, fname, a, plt):
         if hyb.any():
             ax.plot(xs[hyb], y[hyb], "o", mfc="none", mec="k", ms=11,
                     label=None if "hyb" in ax.get_legend_handles_labels()[1] else "hyb")
-    ax.axhline(ncut, color="k", lw=1.2, label=f"SiO$_2$ cutoff (n = {ncut:.3f})")
+    ax.axhline(ncut, color="k", lw=1.2, label=f"cladding cutoff (n = {ncut:.3f})")
     ax.axhline(ncut + margin, color="k", lw=0.8, ls=":", label=f"cutoff + {margin}")
     h, l = ax.get_legend_handles_labels()
     l = ["hybrid (TE/TM mixed, 0.4<TE frac<0.6)" if x == "hyb" else x for x in l]
     ax.legend(h, l, fontsize=7, loc="upper left", bbox_to_anchor=(1.01, 1.0))
     ax.set_xlabel(("Waveguide width" if xkey == "W" else "SiN thickness") + " (µm)")
     ax.set_ylabel(r"Effective index $n_\mathrm{eff}$")
-    ax.set_title(f"Modal analysis, air-clad — {fixed_lbl}  "
+    ax.set_title(f"Modal analysis, {_stack(series[0])} — {fixed_lbl}  "
                  f"(green = single guided TE mode; faded = below cutoff)", fontsize=10)
     ax.grid(alpha=0.3)
     fig.tight_layout()
@@ -197,11 +205,13 @@ def plot_map(rows, outdir, a, plt):
     im = axs[0].pcolormesh(Ws, Hs, np.clip(Dm, -lim, lim), cmap="RdBu_r",
                            norm=TwoSlopeNorm(0, -lim, lim), shading="nearest")
     if len(Hs) > 1 and len(Ws) > 1:
-        cs = axs[0].contour(Ws, Hs, Dm, levels=[0, a.dmargin], colors=["k", "k"],
-                            linestyles=["-", "--"])
+        lv = [0.0] + ([a.dmargin] if a.dmargin > 0 else [])
+        cs = axs[0].contour(Ws, Hs, Dm, levels=lv, colors=["k"] * len(lv),
+                            linestyles=["-", "--"][:len(lv)])
         axs[0].clabel(cs, fmt="%g", fontsize=8)
     fig.colorbar(im, ax=axs[0], extend="min", label="D(TE00) [ps/(nm·km)], clipped")
-    axs[0].set_title("D(TE00): solid = 0, dashed = dmargin", fontsize=10)
+    axs[0].set_title("D(TE00): solid contour = zero dispersion"
+                     + (f", dashed = {a.dmargin:g}" if a.dmargin > 0 else ""), fontsize=10)
     axs[1].pcolormesh(Ws, Hs, Cm, cmap=ListedColormap([CLASS_COL[k] for k in order]),
                       vmin=-0.5, vmax=len(order) - 0.5, shading="nearest")
     for (H, W), r in idx.items():
@@ -210,12 +220,12 @@ def plot_map(rows, outdir, a, plt):
         if degenerate(r, a.deg_tol):
             axs[1].plot(W + ((Ws[1] - Ws[0]) * 0.33 if len(Ws) > 1 else 0.03), H + ((Hs[1] - Hs[0]) * 0.30 if len(Hs) > 1 else 0.015), "v", color="purple", ms=7)
     axs[1].set_title("Regime (text: D, guided TE count; ▽ TE/TM degenerate)", fontsize=10)
-    axs[1].legend(handles=legend_patches(), fontsize=7, loc="upper center",
+    axs[1].legend(handles=legend_patches(a.dmargin), fontsize=7, loc="upper center",
                   bbox_to_anchor=(0.5, -0.13), ncol=3)
     for ax in axs:
         ax.set_xlabel("Width W (µm)")
         ax.set_ylabel("SiN thickness H (µm)")
-    fig.suptitle(f"Air-clad Si3N4 design map at {rows[0]['wl0']*1e3:.0f} nm", fontsize=11)
+    fig.suptitle(f"{_stack(rows[0])} — design map at {rows[0]['wl0']*1e3:.0f} nm", fontsize=11)
     fig.tight_layout()
     fig.savefig(outdir / "design_map.png")
     plt.close(fig) if not a.show else None
@@ -241,7 +251,11 @@ def _mat(Hs, Ws, idx, f):
     return M
 
 
-def _heat(ax, Ws, Hs, M, cmap, norm, cbar_label, fig, fmt=None, contours=(), extend="neither"):
+def _heat(ax, Ws, Hs, M, cmap, norm, cbar_label, fig, fmt=None, contours=(), extend="neither",
+          text_M=None):
+    """text_M: matrix whose values are printed in the cells (defaults to M); lets the
+    colour scale be clipped while the true values are still shown."""
+    text_M = M if text_M is None else text_M
     im = ax.pcolormesh(Ws, Hs, M, cmap=cmap, norm=norm, shading="nearest")
     fig.colorbar(im, ax=ax, label=cbar_label, extend=extend)
     if len(Hs) > 1 and len(Ws) > 1:
@@ -253,8 +267,8 @@ def _heat(ax, Ws, Hs, M, cmap, norm, cbar_label, fig, fmt=None, contours=(), ext
     if fmt:
         for i, H in enumerate(Hs):
             for j, W in enumerate(Ws):
-                if np.isfinite(M[i, j]):
-                    ax.text(W, H, fmt(M[i, j]), ha="center", va="center", fontsize=6)
+                if np.isfinite(text_M[i, j]):
+                    ax.text(W, H, fmt(text_M[i, j]), ha="center", va="center", fontsize=6)
     ax.set_xlabel("Width W (µm)"); ax.set_ylabel("SiN thickness H (µm)")
 
 
@@ -306,8 +320,9 @@ def plot_extra_maps(rows, outdir, a, plt):
     fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
     _heat(ax, Ws, Hs, np.clip(Dm, -lim, lim), "RdBu_r", TwoSlopeNorm(0, -lim, lim),
           "D(TE00) [ps/(nm·km)], clipped", fig, fmt=lambda v: f"{v:.0f}",
-          contours=[(0, "k", "-"), (a.dmargin, "k", "--")], extend="min")
-    ax.set_title("1. Dispersion D of the pump mode (solid 0, dashed = margin)", fontsize=10)
+          contours=[(0, "k", "-")] + ([(a.dmargin, "k", "--")] if a.dmargin > 0 else []),
+          extend="min", text_M=Dm)
+    ax.set_title("1. Dispersion D of the pump mode (solid contour = zero dispersion)", fontsize=10)
     save(fig, "map1_dispersion_D.png")
 
     # 2  TE-TM splitting (signed)
@@ -327,7 +342,7 @@ def plot_extra_maps(rows, outdir, a, plt):
     L = float(np.nanmax(np.abs(m1)))
     fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
     _heat(ax, Ws, Hs, m1, "BrBG", TwoSlopeNorm(0, -L, L),
-          "n_SiO2 − n_TE1  (>0: TE1 not guided)", fig, fmt=lambda v: f"{v:+.3f}",
+          "n_cut − n_TE1  (>0: TE1 not guided)", fig, fmt=lambda v: f"{v:+.3f}",
           contours=[(0, "k", "-")])
     if np.nanmin(m1tm) < 0 < np.nanmax(m1tm):
         cs = ax.contour(Ws, Hs, m1tm, levels=[0], colors=["crimson"], linestyles=["--"])
@@ -358,7 +373,8 @@ def plot_extra_maps(rows, outdir, a, plt):
         ax.text(W, H, f"{r['D_TE0']:.0f}", ha="center", va="center", fontsize=6,
                 color="w" if rc[(H, W)] == "ROBUST" else "k")
     from matplotlib.patches import Patch
-    lbl = {"NOT_TARGET": "not target (normal/marginal/multimode/degenerate)",
+    lbl = {"NOT_TARGET": ("not target (normal/marginal/multimode/degenerate)" if a.dmargin > 0
+                         else "not target (normal/multimode/degenerate)"),
            "EDGE": "target, but a grid neighbour fails", "BORDER": "target at grid border",
            "ROBUST": "ROBUST: target and all 4 neighbours target"}
     ax.legend(handles=[Patch(color=c, label=lbl[o]) for o, c in zip(order, cols)], fontsize=7,
@@ -402,7 +418,7 @@ def plot_extra_maps(rows, outdir, a, plt):
               ("map6_robust_window.png", "6"), ("map7_group_index.png", "7")]
     for ax, (fn, _) in zip(axs.flat, panels):
         ax.imshow(plt.imread(md / fn)); ax.axis("off")
-    fig.suptitle("Air-clad Si3N4 / 4 µm SiO2 — decision dashboard at "
+    fig.suptitle(f"{_stack(rows[0])} — decision dashboard at "
                  f"{wl*1e3:.0f} nm", fontsize=14)
     fig.tight_layout(); fig.savefig(md / "dashboard.png")
     if not a.show:
@@ -413,12 +429,13 @@ def plot_extra_maps(rows, outdir, a, plt):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, type=Path)
-    ap.add_argument("--dmargin", type=float, default=100.0,
-                    help="min D [ps/(nm km)] counted as safely anomalous")
+    ap.add_argument("--dmargin", type=float, default=0.0,
+                    help="optional user safety margin on D [ps/(nm km)]; 0 (default) = none. "
+                         "If > 0, points with 0 <= D < margin form a yellow MARGINAL class")
     ap.add_argument("--deg-tol", dest="deg_tol", type=float, default=0.01,
                     help="|n_TE0 - n_TM0| below this is flagged degenerate")
     ap.add_argument("--single-mode", dest="sm", choices=["strict", "margin"], default="strict",
-                    help="strict: any TE mode above n_SiO2 counts; margin: above n_SiO2+margin")
+                    help="strict: any TE mode above the cladding cutoff counts; margin: above cutoff+margin")
     ap.add_argument("--tm", action="store_true", help="also plot D of TM00")
     ap.add_argument("--n2", type=float, default=2.4e-19, help="Si3N4 Kerr index, m^2/W")
     ap.add_argument("--show", action="store_true")

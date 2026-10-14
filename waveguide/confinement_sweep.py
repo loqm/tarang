@@ -47,6 +47,9 @@ def confinement_in_geometry(
     preview_geometry: bool = False,
     display_results: bool = True,
     *,
+    top_cladding_medium: td.Medium | None = None,  # None = air top cladding
+    top_cladding_height: float = 0.0,  # Top cladding thickness (um); used if a medium is given
+    fine_min_steps_per_wvl: int = 50,  # Core mesh; >= 50 for converged n_eff and D (local solver, no FlexCredits)
     plot_dpi: int = 200,  # Resolution of displayed and saved figures (dots per inch).
 ) -> ConfinementSweepResult:
     """
@@ -125,6 +128,9 @@ def confinement_in_geometry(
                 sub_medium=sub_medium,
                 wavelength_um=wavelength_um,
                 substrate_height=substrate_height,
+                top_cladding_medium=top_cladding_medium,
+                top_cladding_height=(top_cladding_height if top_cladding_medium is not None else 0.0),
+                fine_min_steps_per_wvl=fine_min_steps_per_wvl,
                 sim_size_y=sim_size_y,
                 sim_size_z=sim_size_z,
             )
@@ -164,6 +170,9 @@ def confinement_in_geometry(
                     sub_medium=sub_medium,
                     wavelength_um=wavelength_um,
                     substrate_height=substrate_height,
+                    top_cladding_medium=top_cladding_medium,
+                    top_cladding_height=(top_cladding_height if top_cladding_medium is not None else 0.0),
+                    fine_min_steps_per_wvl=fine_min_steps_per_wvl,
                     sim_size_y=sim_size_y,
                     sim_size_z=sim_size_z,
                 )
