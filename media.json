@@ -1,7 +1,0 @@
-{
-    "sio2"      : "media/data/Nyakuchena_fusedSilica.csv",
-    "si3n4"     : "media/data/Luke_Si3N4.csv",
-    "si"        : "media/data/Wang_Si_25C.csv",
-
-    "si3n4_hong": "media/data/Hong_Si3N4_LPCVD.csv"
-}

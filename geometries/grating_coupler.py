@@ -13,28 +13,31 @@ Exposes: get_active_simulation(), get_ideal_coords().
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import renamed_params
 
 from typing import TYPE_CHECKING
 import numpy as np
 import tidy3d as td
 
-from gratingCoupler.grating_coupler import GratingConfig
+from grating_coupler.grating_coupler import GratingConfig
+from geometries._modes import core_target_neff
 
 if TYPE_CHECKING:
-    from gratingCoupler.grating_coupler import GratingCoupler
+    from grating_coupler.grating_coupler import GratingCoupler
 
 
 logger = get_logger(__name__)
 
 
+@renamed_params(substrate_medium="handle_medium", cladding_medium="top_cladding_medium")
 def get_active_simulation(
     config: GratingConfig,
 
     core_medium: td.Medium,
     box_medium: td.Medium,
 
-    substrate_medium: td.Medium,
-    cladding_medium: td.Medium | None = None,  # Optional: Defaults to Air if None
+    handle_medium: td.Medium,
+    top_cladding_medium: td.Medium | None = None,  # Optional: Defaults to Air if None
 
     is_3d: bool = False,
 
@@ -57,8 +60,8 @@ def get_active_simulation(
     inf_eff = 1e3
 
     # Default cladding to Air if not passed
-    if cladding_medium is None:
-        cladding_medium = td.Medium(permittivity=1.0)
+    if top_cladding_medium is None:
+        top_cladding_medium = td.Medium(permittivity=1.0)
 
     # -- 3D Check -- #
     if is_3d:  # 3D Simulation
@@ -140,9 +143,9 @@ def get_active_simulation(
     cladding = td.Structure(
         geometry=td.Box.from_bounds(
             rmin=(-inf_eff, y_min, 0),
-            rmax=(inf_eff, y_max, config.cladding_height),
+            rmax=(inf_eff, y_max, config.top_cladding_height),
         ),
-        medium=cladding_medium,
+        medium=top_cladding_medium,
         name="Cladding",
     )
 
@@ -150,17 +153,17 @@ def get_active_simulation(
 
     l_grating = config.n_teeth * config.period
     z_min_2d = -config.box_height - (
-        config.substrate_height if substrate_medium is not None else config.buffer
+        config.handle_height if handle_medium is not None else config.buffer
     )
 
     # 6. Deep Silicon Substrate (If requested)
-    if substrate_medium is not None:
+    if handle_medium is not None:
         substrate = td.Structure(
             geometry=td.Box.from_bounds(
-                rmin=(-inf_eff, y_min, -config.box_height - config.substrate_height),
+                rmin=(-inf_eff, y_min, -config.box_height - config.handle_height),
                 rmax=(inf_eff, y_max, -config.box_height),
             ),
-            medium=substrate_medium,
+            medium=handle_medium,
             name="Substrate",
         )
         structures.insert(
@@ -171,7 +174,7 @@ def get_active_simulation(
     # ---- Source ---- #
     source = td.GaussianBeam(
         size=(2 * config.mfd, source_y_size, 0),
-        center=[config.source_x, 0, config.cladding_height + config.source_gap],
+        center=[config.source_x, 0, config.top_cladding_height + config.source_gap],
         source_time=td.GaussianPulse(
             freq0=freq0,
             fwidth=fwidth,
@@ -190,7 +193,7 @@ def get_active_simulation(
         freqs=freqs,
         mode_spec=td.ModeSpec(
             num_modes=1,
-            target_neff=2.0,
+            target_neff=core_target_neff(core_medium, freq0),
         ),
         name="mode monitor",
     )
@@ -224,7 +227,7 @@ def get_active_simulation(
         rmax=(
             l_grating + config.buffer,
             sim_y_size / 2 if is_3d else 0,
-            config.core_height + config.cladding_height + config.buffer,
+            config.core_height + config.top_cladding_height + config.buffer,
         ),
     )
 
@@ -261,19 +264,19 @@ def get_active_simulation(
             y=y_boundary,
             z=td.Boundary.pml(),
         ),
-        medium=cladding_medium,
+        medium=top_cladding_medium,
     )
 
     # Lazy import at runtime
-    from gratingCoupler.grating_coupler import GratingCoupler
+    from grating_coupler.grating_coupler import GratingCoupler
 
     return GratingCoupler(
         sim=sim,
         config=config,
         core_medium=core_medium,
         box_medium=box_medium,
-        substrate_medium=substrate_medium,
-        cladding_medium=cladding_medium,
+        handle_medium=handle_medium,
+        top_cladding_medium=top_cladding_medium,
         is_3d=is_3d,
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,

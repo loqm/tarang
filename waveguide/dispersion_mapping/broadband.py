@@ -33,10 +33,11 @@ Plots: results/dispersion_profile_plots[_vN]/
 """
 from __future__ import annotations
 
+from waveguide.dispersion_mapping._console import safe_console
+
 import argparse
 import csv
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -210,6 +211,7 @@ def plot_all(data_path, R_um, overwrite, deg):
 
 
 def main():
+    safe_console()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--core", default="si3n4", help="core medium key in media.json")

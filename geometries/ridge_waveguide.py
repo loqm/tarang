@@ -11,6 +11,7 @@ Exposes: get_passive_simulation(), get_active_simulation().
 """
 
 from __future__ import annotations
+from tarang._compat import renamed_params
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -20,23 +21,24 @@ import tidy3d as td
 import numpy as np
 
 
+@renamed_params(sub_medium="box_medium", substrate_height="box_height", fine_min_steps_per_wvl="fine_steps_per_wvl", coarse_min_steps_per_wvl="coarse_steps_per_wvl")
 def get_passive_simulation(
     width: float,
     height: float,
     length: float,
 
     core_medium: td.Medium,
-    sub_medium: td.Medium,
+    box_medium: td.Medium,
 
     wavelength_um: float,
 
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
     
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
 
-    fine_min_steps_per_wvl: int = 20,
-    coarse_min_steps_per_wvl: int = 15,
+    fine_steps_per_wvl: int = 20,
+    coarse_steps_per_wvl: int = 15,
 
     margin_y: float = 2.0,
     margin_z: float = 2.0,
@@ -58,31 +60,31 @@ def get_passive_simulation(
 
     if sim_size_z is not None:
         sim_z = sim_size_z
-        effective_margin_z = sim_size_z - substrate_height - total_struct_height
+        effective_margin_z = sim_size_z - box_height - total_struct_height
         if effective_margin_z <= 0:
             raise ValueError(
                 f"sim_size_z ({sim_size_z:.3f} μm) must exceed "
-                f"substrate_height + height + top_cladding_height ({substrate_height + total_struct_height:.3f} μm)."
+                f"box_height + height + top_cladding_height ({box_height + total_struct_height:.3f} μm)."
             )
     else:
-        sim_z = substrate_height + total_struct_height + margin_z
+        sim_z = box_height + total_struct_height + margin_z
         effective_margin_z = margin_z
 
     sim_size = (sim_x, sim_y, sim_z)
 
-    z_center = (total_struct_height + effective_margin_z - substrate_height) / 2
+    z_center = (total_struct_height + effective_margin_z - box_height) / 2
     sim_center = (0, 0, z_center)
 
     structures = []
 
-    # 1. Substrate Layer (sits from z = -substrate_height to z = 0)
+    # 1. BOX layer (sits from z = -box_height to z = 0)
     substrate_geo = td.Box(
-        center=(0, 0, -substrate_height / 2),
-        size=(td.inf, td.inf, substrate_height),
+        center=(0, 0, -box_height / 2),
+        size=(td.inf, td.inf, box_height),
     )
     substrate = td.Structure(
         geometry=substrate_geo,
-        medium=sub_medium,
+        medium=box_medium,
     )
     structures.append(substrate)
 
@@ -118,7 +120,7 @@ def get_passive_simulation(
     eps_core = core_medium.eps_model(freq0)
     n_core = float(np.real(np.sqrt(eps_core)))
 
-    fine_dl = wavelength_um / (n_core * fine_min_steps_per_wvl)
+    fine_dl = wavelength_um / (n_core * fine_steps_per_wvl)
 
     override_geo = td.Box(
         center=(0, 0, height / 2),
@@ -133,7 +135,7 @@ def get_passive_simulation(
 
     grid_spec = td.GridSpec.auto(
         wavelength=wavelength_um,
-        min_steps_per_wvl=coarse_min_steps_per_wvl,
+        min_steps_per_wvl=coarse_steps_per_wvl,
         override_structures=[mesh_override],
     )
 
@@ -160,39 +162,40 @@ def get_passive_simulation(
         height=height,
         length=length,
         core_medium=core_medium,
-        sub_medium=sub_medium,
+        box_medium=box_medium,
         top_cladding_medium=top_cladding_medium,
         top_cladding_height=top_cladding_height,
         wavelength_um=wavelength_um,
-        substrate_height=substrate_height,
-        fine_min_steps_per_wvl=fine_min_steps_per_wvl,
-        coarse_min_steps_per_wvl=coarse_min_steps_per_wvl,
+        box_height=box_height,
+        fine_steps_per_wvl=fine_steps_per_wvl,
+        coarse_steps_per_wvl=coarse_steps_per_wvl,
         margin_y=margin_y,
         margin_z=margin_z,
         run_time=run_time,
     )
 
 
+@renamed_params(sub_medium="box_medium", substrate_height="box_height", fine_min_steps_per_wvl="fine_steps_per_wvl", coarse_min_steps_per_wvl="coarse_steps_per_wvl")
 def get_active_simulation(
     width: float,
     height: float,
     length: float,
 
     core_medium: td.Medium,
-    sub_medium: td.Medium,
+    box_medium: td.Medium,
 
     wavelength_um: float,
 
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
 
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
 
     num_modes: int = 1,
     target_mode_index: int = 0,
 
-    fine_min_steps_per_wvl: int = 20,
-    coarse_min_steps_per_wvl: int = 15,
+    fine_steps_per_wvl: int = 20,
+    coarse_steps_per_wvl: int = 15,
 
     margin_y: float = 2.0,
     margin_z: float = 2.0,
@@ -214,31 +217,31 @@ def get_active_simulation(
 
     if sim_size_z is not None:
         sim_z = sim_size_z
-        effective_margin_z = sim_size_z - substrate_height - total_struct_height
+        effective_margin_z = sim_size_z - box_height - total_struct_height
         if effective_margin_z <= 0:
             raise ValueError(
                 f"sim_size_z ({sim_size_z:.3f} μm) must exceed "
-                f"substrate_height + height + top_cladding_height ({substrate_height + total_struct_height:.3f} μm)."
+                f"box_height + height + top_cladding_height ({box_height + total_struct_height:.3f} μm)."
             )
     else:
-        sim_z = substrate_height + total_struct_height + margin_z
+        sim_z = box_height + total_struct_height + margin_z
         effective_margin_z = margin_z
 
     sim_size = (sim_x, sim_y, sim_z)
 
-    z_center = (total_struct_height + effective_margin_z - substrate_height) / 2
+    z_center = (total_struct_height + effective_margin_z - box_height) / 2
     sim_center = (0, 0, z_center)
 
     structures = []
 
     # Substrate
     substrate_geo = td.Box(
-        center=(0, 0, -substrate_height / 2),
-        size=(td.inf, td.inf, substrate_height),
+        center=(0, 0, -box_height / 2),
+        size=(td.inf, td.inf, box_height),
     )
     substrate = td.Structure(
         geometry=substrate_geo,
-        medium=sub_medium,
+        medium=box_medium,
     )
     structures.append(substrate)
 
@@ -268,7 +271,7 @@ def get_active_simulation(
     freq0 = td.C_0 / wavelength_um
     eps_core = core_medium.eps_model(freq0)
     n_core = float(np.real(np.sqrt(eps_core)))
-    fine_dl = wavelength_um / (n_core * fine_min_steps_per_wvl)
+    fine_dl = wavelength_um / (n_core * fine_steps_per_wvl)
 
     buffer_y = 0.5
     buffer_z = 0.5
@@ -316,7 +319,7 @@ def get_active_simulation(
 
     grid_spec = td.GridSpec.auto(
         wavelength=wavelength_um,
-        min_steps_per_wvl=coarse_min_steps_per_wvl,
+        min_steps_per_wvl=coarse_steps_per_wvl,
         override_structures=[mesh_override],
     )
 
@@ -345,13 +348,13 @@ def get_active_simulation(
         height=height,
         length=length,
         core_medium=core_medium,
-        sub_medium=sub_medium,
+        box_medium=box_medium,
         top_cladding_medium=top_cladding_medium,
         top_cladding_height=top_cladding_height,
         wavelength_um=wavelength_um,
-        substrate_height=substrate_height,
-        fine_min_steps_per_wvl=fine_min_steps_per_wvl,
-        coarse_min_steps_per_wvl=coarse_min_steps_per_wvl,
+        box_height=box_height,
+        fine_steps_per_wvl=fine_steps_per_wvl,
+        coarse_steps_per_wvl=coarse_steps_per_wvl,
         margin_y=margin_y,
         margin_z=margin_z,
         run_time=run_time,

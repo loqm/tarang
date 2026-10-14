@@ -33,18 +33,12 @@ import numpy as np
 import tidy3d as td
 from tidy3d.plugins.mode import ModeSolver
 
-from tarang import configure_logging
+from tarang import configure_logging, set_tidy3d_log_level
 from media.medium_helper import get_medium
 from geometries import ridge_waveguide as rw
 
 configure_logging(level="WARNING")
-try:                                   # tidy3d >= 2.12
-    td.config.logging.level = "ERROR"
-except Exception:                      # older tidy3d
-    try:
-        td.config.logging_level = "ERROR"
-    except Exception:
-        pass
+set_tidy3d_log_level("ERROR")
 
 C_UM_PS = td.C_0 / 1e12                # speed of light in um/ps
 SI_HANDLE = td.Medium(permittivity=3.4757 ** 2)
@@ -92,10 +86,10 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
     sub_m = medium(substrate)
     top_m = None if is_air(cladding) else medium(cladding)
     wg = rw.get_passive_simulation(
-        width=width, height=height, length=2.0, core_medium=core_m, sub_medium=sub_m,
-        wavelength_um=wl0, substrate_height=box, top_cladding_medium=top_m,
+        width=width, height=height, length=2.0, core_medium=core_m, box_medium=sub_m,
+        wavelength_um=wl0, box_height=box, top_cladding_medium=top_m,
         top_cladding_height=(cladding_height if top_m is not None else 0.0),
-        fine_min_steps_per_wvl=steps, margin_y=margin_y)
+        fine_steps_per_wvl=steps, margin_y=margin_y)
     sim = wg.sim
     if si_handle:
         (x0, y0, z0), (x1, y1, z1) = sim.bounds

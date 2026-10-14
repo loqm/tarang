@@ -7,34 +7,37 @@ Author: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: 2026
 
 Exposes: GratingConfig, GratingCoupler, GratingCoupler.from_config(),
-GratingCoupler.get_dir_name(), GratingCoupler.get_efficiency(),
-GratingCoupler.get_fields().
+GratingCoupler.get_dir_name(), GratingCoupler.is_cached(),
+GratingCoupler.get_efficiency(), GratingCoupler.get_fields().
+Set ``GratingCoupler.max_cost`` (FlexCredits) to cap cloud runs.
 """
 
 from __future__ import annotations
 from tarang import get_logger
-from tarang._logging import tidy3d_verbose
+from tarang._compat import RenamedAttributes, renamed_params
+from utilities.cloud_run import CloudCachedDevice
 
-import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
 import tidy3d as td
-from tidy3d import web
-
-if TYPE_CHECKING:
-    from geometries.grating_coupler import get_active_simulation
 
 
 logger = get_logger(__name__)
 
 
 @dataclass
-class GratingConfig:
+class GratingConfig(RenamedAttributes):
+    """Grating-coupler geometry and excitation (lengths in um, angles in degrees).
+
+    Layer stack, top to bottom: top cladding (top_cladding_height) / SiN core
+    (core_height) / buried oxide (box_height) / optional Si handle
+    (handle_height, used only when a handle_medium is given).
+    """
+
     wavelength_um: float
 
     theta_deg: float
@@ -42,11 +45,11 @@ class GratingConfig:
     source_x: float
     source_gap: float
 
-    # Substrate geometry
+    # Layer stack
     core_height: float
-    cladding_height: float
+    top_cladding_height: float  # Cladding above the core (was cladding_height)
     box_height: float  # Isolating oxide layer beneath core
-    substrate_height: float  # Deep silicon handle
+    handle_height: float  # Deep silicon handle (was substrate_height)
 
     # Coupler geometry
     etch_depth: float
@@ -60,21 +63,36 @@ class GratingConfig:
 
     buffer: float
 
+    _renamed_attrs = {"cladding_height": "top_cladding_height",
+                      "substrate_height": "handle_height"}
 
-class GratingCoupler:
+
+GratingConfig.__init__ = renamed_params(
+    cladding_height="top_cladding_height", substrate_height="handle_height"
+)(GratingConfig.__init__)
+
+
+class GratingCoupler(CloudCachedDevice, RenamedAttributes):
     """
     Wraps a Tidy3D Simulation object for grating couplers, binding
     its GratingConfig parameters and material media directly to the object.
+
+    Media: core_medium, box_medium (oxide under the core), handle_medium (Si
+    wafer; None terminates the domain in the BOX), top_cladding_medium (None = air).
     """
 
+    _renamed_attrs = {"substrate_medium": "handle_medium",
+                      "cladding_medium": "top_cladding_medium"}
+
+    @renamed_params(substrate_medium="handle_medium", cladding_medium="top_cladding_medium")
     def __init__(
         self,
         sim: td.Simulation,
         config: GratingConfig,
         core_medium: td.Medium,
         box_medium: td.Medium,
-        substrate_medium: td.Medium,
-        cladding_medium: td.Medium | None = None,  # Defaults to "air" if None
+        handle_medium: td.Medium,
+        top_cladding_medium: td.Medium | None = None,  # Defaults to "air" if None
         is_3d: bool = False,
         fine_steps_per_wvl: int = 20,
         coarse_steps_per_wvl: int = 15,
@@ -87,8 +105,8 @@ class GratingCoupler:
 
         self.core_medium = core_medium
         self.box_medium = box_medium
-        self.substrate_medium = substrate_medium
-        self.cladding_medium = cladding_medium
+        self.handle_medium = handle_medium
+        self.top_cladding_medium = top_cladding_medium
 
         self.is_3d = is_3d
 
@@ -96,13 +114,14 @@ class GratingCoupler:
         self.coarse_steps_per_wvl = coarse_steps_per_wvl
 
     @classmethod
+    @renamed_params(substrate_medium="handle_medium", cladding_medium="top_cladding_medium")
     def from_config(
         cls,
         config: GratingConfig,
         core_medium: td.Medium,
         box_medium: td.Medium,
-        substrate_medium: td.Medium | None = None,
-        cladding_medium: td.Medium | None = None,
+        handle_medium: td.Medium | None = None,
+        top_cladding_medium: td.Medium | None = None,
         is_3d: bool = False,
         fine_steps_per_wvl: int = 15,
         coarse_steps_per_wvl: int = 10,
@@ -116,8 +135,8 @@ class GratingCoupler:
             config=config,
             core_medium=core_medium,
             box_medium=box_medium,
-            substrate_medium=substrate_medium,
-            cladding_medium=cladding_medium,
+            handle_medium=handle_medium,
+            top_cladding_medium=top_cladding_medium,
             is_3d=is_3d,
             fine_steps_per_wvl=fine_steps_per_wvl,
             coarse_steps_per_wvl=coarse_steps_per_wvl,
@@ -126,68 +145,34 @@ class GratingCoupler:
     # --------------------------------
     # Execution and Analysis Methods
     # --------------------------------
-    def get_dir_name(self) -> str:
-        """Build a parameter-based directory name for simulation results.
-        Include the geometry settings used by this device cache.
-        """
-        dim = "3D" if self.is_3d else "2D"
+    _task_prefix = "gc"
 
+    def _readable_name(self) -> str:
+        """Short, human-readable cache stem; the full parameter set is stored in
+        simulation.json beside the results and in the fingerprint."""
         cfg = self.config
-        param_dir_name = (
+        dim = "3D" if self.is_3d else "2D"
+        return (
+            f"gc{dim}_p{cfg.period:.4f}_ff{cfg.ff:.4f}_e{cfg.etch_depth:.4f}_"
+            f"n{cfg.n_teeth}_sx{cfg.source_x:.4f}_{cfg.wavelength_um:.3f}um"
+        )
+
+    def _legacy_dir_name(self) -> str:
+        """Directory name used before v0.1.0 (geometry only, no media). Results
+        found there are reused only after their stored simulation is verified."""
+        dim = "3D" if self.is_3d else "2D"
+        cfg = self.config
+        return (
             f"{dim}_p_{cfg.period:.4f}_dc_{cfg.ff:.4f}_e_{cfg.etch_depth:.4f}_"
             f"n_{cfg.n_teeth}_w_{cfg.w_grating:.4f}_ch_{cfg.core_height:.4f}_"
-            f"clh_{cfg.cladding_height:.4f}_bh_{cfg.box_height:.4f}_sh_{cfg.substrate_height:.4f}_"
+            f"clh_{cfg.top_cladding_height:.4f}_bh_{cfg.box_height:.4f}_sh_{cfg.handle_height:.4f}_"
             f"t_{cfg.theta_deg:.4f}_mfd_{cfg.mfd:.4f}_sx_{cfg.source_x:.4f}_sg_{cfg.source_gap:.4f}_"
             f"wl_{cfg.wavelength_um:.4f}_pol_{cfg.pol_angle:.4f}_b_{cfg.buffer:.4f}"
         )
-        return param_dir_name
 
-    def _run_sim(
-        self,
-        output_dir: Path,
-        verbose: bool = False,
-    ) -> td.SimulationData:
-        """
-        Private method: Checks for API key, ensures the output directory exists,
-        and either runs the FDTD simulation on the cloud or loads existing HDF5 data.
-        """
-
-        if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-            logger.warning("[Warning] TIDY3D_API_KEY not found in environment.")
-
-        cfg = self.config
-        param_dir_name = self.get_dir_name()
-
-        full_output_dir = Path(output_dir) / param_dir_name
-        full_output_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        hdf5_target_path = full_output_dir / "raw_simulation_data.hdf5"
-
-        if hdf5_target_path.exists():
-            logger.info(
-                f"[Profiler] Cache hit. Loading existing simulation data from {hdf5_target_path}..."
-            )
-            return td.SimulationData.from_file(str(hdf5_target_path))
-
-        logger.info(
-            "[Profiler] Cache miss. Uploading architecture to Tidy3D cloud infrastructure..."
-        )
-        task_name = f"gc_sim_{cfg.wavelength_um}um"
-        sim_data = web.run(
-            self.sim,
-            task_name=task_name,
-            verbose=tidy3d_verbose(verbose),
-        )
-
-        logger.info(
-            f"[Profiler] Execution complete. Serializing data to {hdf5_target_path}..."
-        )
-        sim_data.to_file(str(hdf5_target_path))
-
-        return sim_data
+    # get_dir_name(), is_cached() and _run_sim() come from CloudCachedDevice:
+    # the cache key is the full simulation fingerprint (geometry, media, mesh,
+    # sources, monitors), and every cloud run is cost-estimated first.
 
     def get_efficiency(
         self,

@@ -1,33 +1,40 @@
 """
-ringResonator.resonator_arc
+ring_resonator.resonator_arc
 
 Author: Esraaj Sarkar Gupta
 Date: 2026
 
-Exposes: resonatorArc, resonatorArc.get_dir_name(), resonatorArc.get_mode_data(),
-resonatorArc.get_efficiency(), resonatorArc.get_loss(), resonatorArc.plot_field().
+Role: ANALYSIS WRAPPER for a waveguide bend. Holds a built Simulation, runs it
+through the verified cloud cache, and extracts transmission and bend loss. The
+Simulation itself is built by ``geometries.resonator_arc`` (same file name,
+different role: geometries/* builds, the device packages analyse).
+
+Exposes: ResonatorArc, ResonatorArc.get_dir_name(), ResonatorArc.get_mode_data(),
+ResonatorArc.get_efficiency(), ResonatorArc.get_loss(), ResonatorArc.plot_field().
 """
 
 from __future__ import annotations
 from tarang import get_logger
-from tarang._logging import tidy3d_verbose
+from tarang._compat import deprecated_module_names, renamed_params
 
 from pathlib import Path
 from typing import Optional, Union, Any
-import os
 import hashlib
 
 import matplotlib.pyplot as plt
 import numpy as np
 import tidy3d as td
-from tidy3d import web
 
-from ringResonator.ring_resonator import BaseResonator
+from ring_resonator.ring_resonator import BaseResonator
+from utilities.cloud_run import monitor_data
 
 logger = get_logger(__name__)
 
 
-class resonatorArc(BaseResonator):
+class ResonatorArc(BaseResonator):
+    _renamed_attrs = {**BaseResonator._renamed_attrs, "cladding_medium": "top_cladding_medium"}
+
+    @renamed_params(substrate_medium="box_medium", cladding_medium="top_cladding_medium", wavelength0="wavelength_um")
     def __init__(
         self,
         sim: td.Simulation,
@@ -35,12 +42,12 @@ class resonatorArc(BaseResonator):
         wg_width: float,
         wg_height: float,
         core_medium: td.Medium,
-        cladding_medium: td.Medium,
-        substrate_medium: td.Medium,
+        top_cladding_medium: td.Medium,
+        box_medium: td.Medium,
         bend_angle_deg: float,
         fine_steps_per_wvl: float,
         coarse_steps_per_wvl: float,
-        wavelength0: float,
+        wavelength_um: float,
     ):
         """Initialize the device wrapper with its simulation and physical settings.
         Store the parameters used by subsequent analysis and geometry conversion.
@@ -52,73 +59,30 @@ class resonatorArc(BaseResonator):
             wg_width=wg_width,
             wg_height=wg_height,
             core_medium=core_medium,
-            substrate_medium=substrate_medium,
-            substrate_height=2.5,  # Fixed to match Z-bounds of passive sim (-2.5 to 1.5)
-            top_cladding_medium=cladding_medium,
+            box_medium=box_medium,
+            box_height=2.5,  # Fixed to match Z-bounds of passive sim (-2.5 to 1.5)
+            top_cladding_medium=top_cladding_medium,
             top_cladding_height=1.5,  # Fixed to match Z-bounds
             fine_steps_per_wvl=fine_steps_per_wvl,
             coarse_steps_per_wvl=coarse_steps_per_wvl,
             wg_length=0.0,
-            wavelength0=wavelength0,
+            wavelength_um=wavelength_um,
         )
         self.bend_angle_deg = bend_angle_deg
-        self.cladding_medium = cladding_medium
+        self.top_cladding_medium = top_cladding_medium
         self.mode_direction = "+"
 
-    def get_dir_name(self) -> str:
-        """Generates a clean, unique parameter-based identifier containing an MD5 hash
-        for cache safety.
-        """
-        sig = f"{self.wg_width:.4f}_{self.wg_height:.4f}_{self.core_medium}_{self.cladding_medium}_{self.substrate_medium}"
+    _task_prefix = "arc_sim"
+
+    def _readable_name(self) -> str:
+        """Short, human-readable cache stem; the fingerprint is appended."""
+        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength_um:.3f}um"
+
+    def _legacy_dir_name(self) -> str:
+        """Directory name used before v0.1.0 (verified before reuse)."""
+        sig = f"{self.wg_width:.4f}_{self.wg_height:.4f}_{self.core_medium}_{self.top_cladding_medium}_{self.box_medium}"
         h = hashlib.md5(sig.encode()).hexdigest()[:8]
-        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength0:.3f}um_{h}"
-
-    def _run_sim(
-        self,
-        output_dir: Union[str, Path],
-        verbose: bool = False,
-        force_rerun: bool = False,
-    ) -> td.SimulationData:
-        """Private method: Checks for local cached HDF5 simulation data.
-        Run on the Tidy3D cloud and save results when missing or force_rerun is set.
-        """
-        if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-            logger.warning(
-                "[Warning] TIDY3D_API_KEY not found in environment variables."
-            )
-
-        param_dir = self.get_dir_name()
-        full_output_dir = Path(output_dir) / param_dir
-        full_output_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        hdf5_target_path = full_output_dir / "raw_simulation_data.hdf5"
-
-        if hdf5_target_path.exists() and not force_rerun:
-            logger.info(
-                f"[Profiler] Cache hit. Loading existing simulation data from {hdf5_target_path}..."
-            )
-            return td.SimulationData.from_file(str(hdf5_target_path))
-
-        logger.info(
-            f"[Profiler] Cache miss. Uploading {param_dir} to Tidy3D cloud infrastructure..."
-        )
-        task_name = f"arc_sim_{param_dir}"
-        sim_data = web.run(
-            self.sim,
-            task_name=task_name,
-            verbose=tidy3d_verbose(verbose),
-            folder_name="default",
-        )
-
-        logger.info(
-            f"[Profiler] Execution complete. Serializing data to {hdf5_target_path}..."
-        )
-        sim_data.to_file(str(hdf5_target_path))
-
-        return sim_data
+        return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength_um:.3f}um_{h}"
 
     # --------------------------------
     # Execution and Analysis Methods
@@ -140,12 +104,7 @@ class resonatorArc(BaseResonator):
             force_rerun=force_rerun,
         )
 
-        try:
-            return sim_data[monitor_name]
-        except KeyError:
-            raise KeyError(
-                f"Monitor '{monitor_name}' not found in simulation monitors."
-            )
+        return monitor_data(sim_data, monitor_name)
 
     def get_efficiency(
         self,
@@ -163,7 +122,7 @@ class resonatorArc(BaseResonator):
             force_rerun=force_rerun,
         )
 
-        target_freq = td.C_0 / self.wavelength0
+        target_freq = td.C_0 / self.wavelength_um
         output_monitor = sim_data[monitor_name]
         normal_axis = output_monitor.monitor.size.index(0.0)
 
@@ -253,12 +212,7 @@ class resonatorArc(BaseResonator):
             force_rerun=force_rerun,
         )
 
-        try:
-            field_data = sim_data[monitor_name]
-        except KeyError:
-            raise ValueError(
-                f"Monitor '{monitor_name}' doesn't exist in the simulation monitors."
-            )
+        field_data = monitor_data(sim_data, monitor_name)
 
         fig, ax = plt.subplots(
             figsize=(10, 4),
@@ -325,3 +279,7 @@ class resonatorArc(BaseResonator):
             plt.show()
         else:
             plt.close(fig)
+
+
+# Pre-v0.1.0 class names keep working (with a DeprecationWarning) until v0.2.0.
+__getattr__ = deprecated_module_names(globals(), {'resonatorArc': 'ResonatorArc'})

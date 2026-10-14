@@ -1,5 +1,5 @@
 """
-ringResonator.ring_gap_sweep: gap sweeps using partial-ring geometry.
+ring_resonator.ring_gap_sweep: gap sweeps using partial-ring geometry.
 
 Original critical-coupling equations: Esraaj Sarkar Gupta, 2026.
 The first monotonic coupling branch is selected using the legacy peak/filter
@@ -17,6 +17,7 @@ import numpy as np
 import tidy3d as td
 
 from tarang import get_logger
+from tarang._compat import renamed_params
 from utilities.json_helpers import log_json, save_json as _save, snapshot as _snapshot
 from utilities.sweep_helpers import cache_dir as _cache_dir, r_squared as _r_squared
 from utilities.validation import (
@@ -137,6 +138,7 @@ def _fit_coupling(
     }
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height")
 def ring_gap_sweep(
     gaps_sweep_list : list[float],  # Distinct nonnegative ring-to-bus gaps to simulate (um; at least two).
 
@@ -148,7 +150,7 @@ def ring_gap_sweep(
     volume_um3 : float,  # Positive full-ring volume for the Q_loaded^2/V figure of merit (um^3).
 
     core_medium : td.Medium,  # Tidy3D material used for the waveguide core.
-    substrate_medium : td.Medium,  # Tidy3D material beneath the waveguide.
+    box_medium : td.Medium,  # Tidy3D material beneath the waveguide.
 
     wg_width : float,  # Waveguide core width (um).
     wg_height : float,  # Waveguide core height (um).
@@ -161,7 +163,7 @@ def ring_gap_sweep(
 
     n_group : float | None =None,  # Positive group index; None computes it with the mode solver.
 
-    substrate_height : float = 4.0,  # Substrate thickness below the waveguide (um).
+    box_height : float = 4.0,  # BOX (oxide) thickness below the waveguide (um).
 
     top_cladding_medium : td.Medium | None = None,  # Optional upper cladding material; None leaves the air background.
     top_cladding_height : float = 0.0,              # Upper cladding thickness measured from z=0 (um); zero omits the layer.
@@ -312,13 +314,13 @@ def ring_gap_sweep(
             obj = partial_builder(
                 radius=radius,
                 gap=gap,
-                wavelength0=wavelength,
+                wavelength_um=wavelength,
                 span_angle_rad=span,
                 wg_width=wg_width,
                 wg_height=wg_height,
                 core_medium=core_medium,
-                substrate_medium=substrate_medium,
-                substrate_height=substrate_height,
+                box_medium=box_medium,
+                box_height=box_height,
                 top_cladding_medium=top_cladding_medium,
                 top_cladding_height=top_cladding_height,
                 fine_steps_per_wvl=fine_steps_per_wvl,
@@ -332,7 +334,7 @@ def ring_gap_sweep(
                 radius=radius,
                 gap=gap,
                 span_angle_rad=span,
-                wavelength0=wavelength,
+                wavelength_um=wavelength,
             )
             if through_monitor not in {m.name for m in obj.sim.monitors}:
                 raise ValueError(f"Missing through monitor {through_monitor!r}.")

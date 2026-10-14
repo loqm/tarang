@@ -1,14 +1,20 @@
-"""Public gratingCoupler imports.
+"""Deprecated alias of the ``grating_coupler`` package (renamed in TARANG v0.1.0).
 
-Exposes: GratingCoupler, GratingConfig.
+``import gratingCoupler`` and ``import gratingCoupler.<module>`` still work and give the same objects
+as ``grating_coupler``, with a DeprecationWarning. This alias will be removed in v0.2.0;
+please import ``grating_coupler`` instead.
 """
 
-from .grating_coupler import GratingCoupler
-from .grating_coupler import GratingConfig
+from tarang._compat import alias_package
 
-__all__ = [
-    "GratingCoupler",
-]
+alias_package("gratingCoupler", "grating_coupler")
+
+import grating_coupler as _new  # noqa: E402
+
+from grating_coupler import *  # noqa: E402,F401,F403
+
+__all__ = list(getattr(_new, "__all__", []))
 
 
-__all__ = ["GratingCoupler", "GratingConfig"]
+def __getattr__(name):
+    return getattr(_new, name)    # includes the new package's deprecated class names

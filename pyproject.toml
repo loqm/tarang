@@ -1,0 +1,91 @@
+# TARANG packaging. Install from a clone of the repository:
+#
+#   pip install -e .                    # core (Tidy3D, local mode solver, dynesty)
+#   pip install -e ".[plots]"           # + corner plots (getdist, corner)
+#   pip install -e ".[notebooks]"       # + Jupyter for the example notebooks
+#   pip install -e ".[test]"            # + pytest (what the GitHub tests use)
+#   pip install -e ".[plots,notebooks,test]"
+#
+# MultiNest (optional, Linux/macOS) needs its compiled library from conda-forge:
+#   conda install -c conda-forge multinest pymultinest
+# dynesty is installed by default and works on every OS.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tarang-photonics"
+dynamic = ["version"]                       # single source: tarang/__init__.py
+description = "Tidy3D-based simulation, dispersion engineering and optimisation of integrated photonic devices (SiN waveguides, rings, couplers)"
+readme = "Readme.md"
+requires-python = ">=3.11"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Esraaj Sarkar Gupta" },
+    { name = "Divyanshu Tiwari" },
+]
+keywords = ["photonics", "silicon nitride", "tidy3d", "FDTD", "mode solver", "dispersion", "microresonator", "frequency comb"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "tidy3d>=2.12,<3",       # tested with 2.12; 3.x may change the API
+    "numpy",
+    "pandas",
+    "pydantic>=2",           # also required by tidy3d; imported directly by media/
+    "matplotlib",
+    "dynesty>=2.1.5",        # nested sampling on every OS (pure Python)
+]
+
+[project.optional-dependencies]
+plots = [
+    "getdist",
+    "corner",
+    "matplotlib<3.13",       # getdist uses a matplotlib attribute removed in 3.13
+]
+notebooks = [
+    "jupyterlab",
+    "ipykernel",
+    "ipython",
+]
+multinest = [
+    "pymultinest",           # Python wrapper only: also install libmultinest (see top of file)
+]
+test = [
+    "tarang-photonics[plots]",
+    "pytest>=8",
+    "pytest-cov",
+]
+
+[project.urls]
+Repository = "https://github.com/loqm/tarang"
+Issues = "https://github.com/loqm/tarang/issues"
+Changelog = "https://github.com/loqm/tarang/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "tarang.__version__" }
+
+[tool.setuptools.packages.find]
+include = [
+    "tarang*",
+    "geometries*",
+    "media*",
+    "waveguide*",
+    "edge_coupler*",
+    "grating_coupler*",
+    "ring_resonator*",
+    "utilities*",
+    # pre-v0.1.0 package names, kept as deprecated aliases until v0.2.0
+    "edgeCoupler*",
+    "gratingCoupler*",
+    "ringResonator*",
+]
+
+[tool.setuptools.package-data]
+media = ["media.json", "data/*.csv"]

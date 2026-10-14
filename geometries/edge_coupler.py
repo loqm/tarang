@@ -8,12 +8,15 @@ Exposes: get_passive_simulation(), get_active_simulation(), get_optimal_plot_coo
 """
 
 from __future__ import annotations
+from tarang._compat import renamed_params
 from typing import Optional, Tuple
 
 import numpy as np
 import tidy3d as td
 
-from edgeCoupler import edgeCoupler
+from geometries._modes import core_target_neff
+
+from edge_coupler import EdgeCoupler
 from media.medium_helper import get_medium
 
 
@@ -32,6 +35,7 @@ def _estimate_run_time(
     )
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
 def get_passive_simulation(
     tip_width: float,
     taper_length: float,
@@ -40,13 +44,13 @@ def get_passive_simulation(
     wg_height: float,
 
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
+    box_medium: td.Medium,
 
-    wavelength0: float,
+    wavelength_um: float,
 
     top_cladding_medium: td.Medium = get_medium("air"),
 
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
     top_cladding_height: float = 0.0,
 
     fine_steps_per_wvl: int = 20,
@@ -55,7 +59,7 @@ def get_passive_simulation(
     settling_buffer_length: Optional[float] = None,
     symmetry: Optional[Tuple[int, int, int]] = None,
     run_time: float = 5e-12,  # Simulation duration in seconds.
-) -> edgeCoupler:
+) -> EdgeCoupler:
     """Build the passive edge-coupler geometry and simulation domain.
     Return the device wrapper without excitation sources or monitors.
     """
@@ -77,12 +81,12 @@ def get_passive_simulation(
             "along the propagation direction and has no x-mirror plane."
         )
     if symmetry[2] != 0 and not (
-        top_cladding_medium == substrate_medium
-        and top_cladding_height == substrate_height
+        top_cladding_medium == box_medium
+        and top_cladding_height == box_height
     ):
         raise ValueError(
-            "symmetry[2] (z-axis) requires top_cladding_medium == substrate_medium and "
-            "top_cladding_height == substrate_height; otherwise the structure is not "
+            "symmetry[2] (z-axis) requires top_cladding_medium == box_medium and "
+            "top_cladding_height == box_height; otherwise the structure is not "
             "z-symmetric and tidy3d will mirror only the half you defined."
         )
 
@@ -92,7 +96,7 @@ def get_passive_simulation(
         if settling_buffer_length is not None
         else max(
             5.0,
-            3.5 * wavelength0,
+            3.5 * wavelength_um,
         )
     )
     substrate_length = taper_length + L_buffer + 4.0
@@ -100,10 +104,10 @@ def get_passive_simulation(
     # 1. Substrate
     substrate = td.Structure(
         geometry=td.Box(
-            center=(substrate_length / 2, 0, -wg_height / 2 - substrate_height / 2),
-            size=(substrate_length, td.inf, substrate_height),
+            center=(substrate_length / 2, 0, -wg_height / 2 - box_height / 2),
+            size=(substrate_length, td.inf, box_height),
         ),
-        medium=substrate_medium,
+        medium=box_medium,
     )
 
     # 2. Direct Taper
@@ -149,10 +153,10 @@ def get_passive_simulation(
         structures.append(top_cladding_layer)
 
     # Mesh Override Region around core
-    freq0 = td.C_0 / wavelength0
+    freq0 = td.C_0 / wavelength_um
     eps_core = core_medium.eps_model(freq0)
     n_core = float(np.real(np.sqrt(eps_core)))
-    fine_dl = wavelength0 / (n_core * fine_steps_per_wvl)
+    fine_dl = wavelength_um / (n_core * fine_steps_per_wvl)
 
     buffer_y = 0.5
     buffer_z = 0.5
@@ -168,7 +172,7 @@ def get_passive_simulation(
     )
 
     grid_spec = td.GridSpec.auto(
-        wavelength=wavelength0,
+        wavelength=wavelength_um,
         min_steps_per_wvl=coarse_steps_per_wvl,
         override_structures=[mesh_override],
     )
@@ -186,16 +190,16 @@ def get_passive_simulation(
         symmetry=symmetry,
     )
 
-    return edgeCoupler(
+    return EdgeCoupler(
         tip_width=tip_width,
         taper_length=taper_length,
         wg_width=wg_width,
         wg_height=wg_height,
         core_medium=core_medium,
-        substrate_medium=substrate_medium,
+        box_medium=box_medium,
         top_cladding_medium=top_cladding_medium,
-        wavelength0=wavelength0,
-        substrate_height=substrate_height,
+        wavelength_um=wavelength_um,
+        box_height=box_height,
         top_cladding_height=top_cladding_height,
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
@@ -208,6 +212,7 @@ def get_passive_simulation(
     )
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
 def get_active_simulation(
     tip_width: float,
     taper_length: float,
@@ -216,13 +221,13 @@ def get_active_simulation(
     wg_height: float,
 
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
+    box_medium: td.Medium,
 
-    wavelength0: float,
+    wavelength_um: float,
 
     top_cladding_medium: td.Medium = get_medium("air"),
 
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
     top_cladding_height: float = 0.0,
 
     fine_steps_per_wvl: int = 20,
@@ -235,7 +240,7 @@ def get_active_simulation(
 
     symmetry: Optional[Tuple[int, int, int]] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
-) -> edgeCoupler:
+) -> EdgeCoupler:
     """Build an edge-coupler simulation with excitation and monitors.
     Return the configured device wrapper ready for an explicit simulation run.
     """
@@ -263,21 +268,21 @@ def get_active_simulation(
         if settling_buffer_length is not None
         else max(
             5.0,
-            3.5 * wavelength0,
+            3.5 * wavelength_um,
         )
     )
     substrate_length = taper_length + L_buffer + 4.0
 
-    freq0 = td.C_0 / wavelength0
+    freq0 = td.C_0 / wavelength_um
     fwidth = freq0 / 10.0
 
     # Build structures
     substrate = td.Structure(
         geometry=td.Box(
-            center=(substrate_length / 2, 0, -wg_height / 2 - substrate_height / 2),
-            size=(substrate_length, td.inf, substrate_height),
+            center=(substrate_length / 2, 0, -wg_height / 2 - box_height / 2),
+            size=(substrate_length, td.inf, box_height),
         ),
-        medium=substrate_medium,
+        medium=box_medium,
     )
     taper = td.Structure(
         geometry=td.PolySlab(
@@ -320,7 +325,7 @@ def get_active_simulation(
     # Mesh Override Region around core
     eps_core = core_medium.eps_model(freq0)
     n_core = float(np.real(np.sqrt(eps_core)))
-    fine_dl = wavelength0 / (n_core * fine_steps_per_wvl)
+    fine_dl = wavelength_um / (n_core * fine_steps_per_wvl)
 
     buffer_y = 0.5
     buffer_z = 0.5
@@ -336,7 +341,7 @@ def get_active_simulation(
     )
 
     grid_spec = td.GridSpec.auto(
-        wavelength=wavelength0,
+        wavelength=wavelength_um,
         min_steps_per_wvl=coarse_steps_per_wvl,
         override_structures=[mesh_override],
     )
@@ -373,7 +378,7 @@ def get_active_simulation(
             freqs=[freq0],
             mode_spec=td.ModeSpec(
                 num_modes=1,
-                target_neff=2.0,
+                target_neff=core_target_neff(core_medium, freq0),
             ),
             name="mode_transmission",
         )
@@ -389,7 +394,7 @@ def get_active_simulation(
             direction="-",
             mode_spec=td.ModeSpec(
                 num_modes=1,
-                target_neff=2.0,
+                target_neff=core_target_neff(core_medium, freq0),
             ),
             mode_index=0,
         )
@@ -452,16 +457,16 @@ def get_active_simulation(
         symmetry=symmetry,
     )
 
-    return edgeCoupler(
+    return EdgeCoupler(
         tip_width=tip_width,
         taper_length=taper_length,
         wg_width=wg_width,
         wg_height=wg_height,
         core_medium=core_medium,
-        substrate_medium=substrate_medium,
+        box_medium=box_medium,
         top_cladding_medium=top_cladding_medium,
-        wavelength0=wavelength0,
-        substrate_height=substrate_height,
+        wavelength_um=wavelength_um,
+        box_height=box_height,
         top_cladding_height=top_cladding_height,
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,

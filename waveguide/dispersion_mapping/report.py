@@ -30,6 +30,8 @@ typical of air-clad LPCVD SiN rings; replace with your cutback / ring measuremen
 """
 from __future__ import annotations
 
+from waveguide.dispersion_mapping._console import safe_console
+
 import argparse
 import csv
 import glob
@@ -135,6 +137,7 @@ def tol_text(r):
 
 
 def main():
+    safe_console()
     ap = argparse.ArgumentParser()
     ap.add_argument("--straight", nargs="+", required=True,
                     help="straight-waveguide jsonl file(s); grid and/or finalists runs")

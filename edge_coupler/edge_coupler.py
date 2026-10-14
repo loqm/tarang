@@ -1,33 +1,35 @@
 """
-edgeCoupler.edge_coupler
+edge_coupler.edge_coupler
 
-Defines the edgeCoupler wrapper class for photonics simulations.
+Defines the EdgeCoupler wrapper class for photonics simulations.
 
 Author: Esraaj Sarkar Gupta, Divyanshu Tiwari
 Date: 2026
 
-Exposes: edgeCoupler, edgeCoupler.get_dir_name(), edgeCoupler.get_mode_data(),
-edgeCoupler.get_efficiency(), edgeCoupler.get_loss_db(), edgeCoupler.plot_fields().
+Exposes: EdgeCoupler, EdgeCoupler.get_dir_name(), EdgeCoupler.get_mode_data(),
+EdgeCoupler.get_efficiency(), EdgeCoupler.get_loss_db(), EdgeCoupler.plot_fields().
 """
 
 from __future__ import annotations
 from tarang import get_logger
-from tarang._logging import tidy3d_verbose
+from tarang._compat import RenamedAttributes, deprecated_module_names, renamed_params
+from utilities.cloud_run import CloudCachedDevice, monitor_data
 
-import os
 import hashlib
 from pathlib import Path
-from typing import Dict, Any, Optional, List, TYPE_CHECKING, Union, Tuple
+from typing import Any, Optional, Union, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
 import tidy3d as td
-from tidy3d import web
 
 logger = get_logger(__name__)
 
 
-class edgeCoupler:
+class EdgeCoupler(CloudCachedDevice, RenamedAttributes):
+    _renamed_attrs = {"substrate_medium": "box_medium", "substrate_height": "box_height",
+                      "wavelength0": "wavelength_um"}
+
     """
     Wrapper class representing an edge coupler simulation domain.
 
@@ -41,6 +43,7 @@ class edgeCoupler:
             visualizing refractive index cross-sections or boundary layouts.
     """
 
+    @renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
     def __init__(
         self,
         sim: td.Simulation,
@@ -49,10 +52,10 @@ class edgeCoupler:
         wg_width: float,
         wg_height: float,
         core_medium: td.Medium,
-        substrate_medium: td.Medium,
+        box_medium: td.Medium,
         top_cladding_medium: td.Medium,
-        wavelength0: float,
-        substrate_height: float,
+        wavelength_um: float,
+        box_height: float,
         top_cladding_height: float,
         fine_steps_per_wvl: int,
         coarse_steps_per_wvl: int,
@@ -75,14 +78,14 @@ class edgeCoupler:
 
         # Device media
         self.core_medium = core_medium
-        self.substrate_medium = substrate_medium
+        self.box_medium = box_medium
         self.top_cladding_medium = top_cladding_medium
 
         # Wavelength of interest
-        self.wavelength0 = wavelength0
+        self.wavelength_um = wavelength_um
 
         # Isolating layer thicknesses
-        self.substrate_height = substrate_height
+        self.box_height = box_height
         self.top_cladding_height = top_cladding_height
 
         # Meshing resolution
@@ -117,10 +120,23 @@ class edgeCoupler:
     # Cache & Execution Management
     # --------------------------------
 
-    def get_dir_name(self) -> str:
-        """Generates a clean, unique parameter-based identifier containing an MD5 hash
-        for cache safety.
-        """
+    _task_prefix = "edge_coupler"
+
+    def _readable_name(self) -> str:
+        """Short, human-readable cache stem; the fingerprint is appended."""
+        if self.in_coupling:
+            mode_str = "incouple"
+        elif self.out_coupling:
+            mode_str = "outcouple"
+        else:
+            mode_str = "passive"
+        sym_str = f"sym{self.symmetry[0]}{self.symmetry[1]}{self.symmetry[2]}"
+        return (f"coupler_Wtip{self.tip_width:.3f}um_Ltaper{self.taper_length:.2f}um_"
+                f"{mode_str}_{sym_str}_{self.wavelength_um:.3f}um")
+
+    def _legacy_dir_name(self) -> str:
+        """Directory name used before v0.1.0. Results found there are reused only
+        after the simulation stored with them is verified against this one."""
         if self.in_coupling:
             mode_str = "incouple"
         elif self.out_coupling:
@@ -130,64 +146,18 @@ class edgeCoupler:
 
         sig = (
             f"{self.tip_width:.6f}_{self.taper_length:.6f}_{self.wg_width:.6f}_{self.wg_height:.6f}_"
-            f"{self.core_medium}_{self.substrate_medium}_{self.top_cladding_medium}_{mode_str}_"
-            f"{self.wavelength0:.6f}_{self.substrate_height:.6f}_{self.top_cladding_height:.6f}_"
+            f"{self.core_medium}_{self.box_medium}_{self.top_cladding_medium}_{mode_str}_"
+            f"{self.wavelength_um:.6f}_{self.box_height:.6f}_{self.top_cladding_height:.6f}_"
             f"{self.fine_steps_per_wvl}_{self.coarse_steps_per_wvl}_{self.settling_buffer_length:.6f}_"
             f"{self.symmetry[0]}_{self.symmetry[1]}_{self.symmetry[2]}"
         )
         h = hashlib.md5(sig.encode()).hexdigest()[:8]
 
         sym_str = f"sym{self.symmetry[0]}{self.symmetry[1]}{self.symmetry[2]}"
-        return f"coupler_Wtip{self.tip_width:.2f}um_Ltaper{self.taper_length:.2f}um_{mode_str}_{sym_str}_{self.wavelength0:.3f}um_{h}"
-
-    def _run_sim(
-        self,
-        output_dir: Union[str, Path],
-        verbose: bool = False,
-        force_rerun: bool = False,
-    ) -> td.SimulationData:
-        """Private method: Checks for local cached HDF5 simulation data or executes via
-        cloud.
-        """
-        if "TIDY3D_KEY" not in os.environ and "TIDY3D_API_KEY" not in os.environ:
-            logger.warning(
-                "[Warning] TIDY3D_API_KEY not found in environment variables."
-            )
-
-        param_dir = self.get_dir_name()
-        full_output_dir = Path(output_dir) / param_dir
-        full_output_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        hdf5_target_path = full_output_dir / "raw_simulation_data.hdf5"
-
-        if hdf5_target_path.exists() and not force_rerun:
-            logger.info(
-                f"Cache hit. Loading existing simulation data from {hdf5_target_path}..."
-            )
-            return td.SimulationData.from_file(str(hdf5_target_path))
-
-        logger.info(
-            f"Cache miss. Uploading {param_dir} to Tidy3D cloud infrastructure..."
-        )
-        task_name = f"edge_coupler_{param_dir}"
-        sim_data = web.run(
-            self.sim,
-            task_name=task_name,
-            verbose=tidy3d_verbose(verbose),
-        )
-
-        logger.info(
-            f"Execution complete. Serializing data to {hdf5_target_path}..."
-        )
-        sim_data.to_file(str(hdf5_target_path))
-
-        return sim_data
+        return f"coupler_Wtip{self.tip_width:.2f}um_Ltaper{self.taper_length:.2f}um_{mode_str}_{sym_str}_{self.wavelength_um:.3f}um_{h}"
 
     # Alias for method name consistency
-    _run_simulation = _run_sim
+    _run_simulation = CloudCachedDevice._run_sim
 
     # --------------------------------
     # Execution and Analysis Methods
@@ -217,12 +187,7 @@ class edgeCoupler:
             force_rerun=force_rerun,
         )
 
-        try:
-            return sim_data[monitor_name]
-        except KeyError:
-            raise KeyError(
-                f"Monitor '{monitor_name}' not found in simulation monitors."
-            )
+        return monitor_data(sim_data, monitor_name)
 
     def get_efficiency(
         self,
@@ -252,7 +217,7 @@ class edgeCoupler:
             f"Extracting transmission metrics from '{monitor_name}'..."
         )
         try:
-            target_freq = td.C_0 / self.wavelength0
+            target_freq = td.C_0 / self.wavelength_um
             monitor_data = sim_data[monitor_name]
 
             if hasattr(
@@ -346,12 +311,7 @@ class edgeCoupler:
             force_rerun=force_rerun,
         )
 
-        try:
-            field_data = sim_data[monitor_name]
-        except KeyError:
-            raise ValueError(
-                f"Monitor '{monitor_name}' does not exist in simulation monitors."
-            )
+        field_data = monitor_data(sim_data, monitor_name)
 
         fig, ax = plt.subplots(
             figsize=(10, 4),
@@ -427,3 +387,7 @@ class edgeCoupler:
             plt.show()
         else:
             plt.close(fig)
+
+
+# Pre-v0.1.0 class names keep working (with a DeprecationWarning) until v0.2.0.
+__getattr__ = deprecated_module_names(globals(), {'edgeCoupler': 'EdgeCoupler'})

@@ -14,10 +14,11 @@ RidgeWaveguide.get_confinement().
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import RenamedAttributes, renamed_params
 from utilities.validation import positive as _positive, values as _values, integer as _integer
 
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 import numpy as np
 import tidy3d as td
@@ -36,7 +37,12 @@ class WaveguideModeError(Exception):
     pass
 
 
-class RidgeWaveguide:
+class RidgeWaveguide(RenamedAttributes):
+    _renamed_attrs = {"sub_medium": "box_medium", "substrate_height": "box_height",
+                      "fine_min_steps_per_wvl": "fine_steps_per_wvl",
+                      "coarse_min_steps_per_wvl": "coarse_steps_per_wvl"}
+
+    @renamed_params(sub_medium="box_medium", substrate_height="box_height", fine_min_steps_per_wvl="fine_steps_per_wvl", coarse_min_steps_per_wvl="coarse_steps_per_wvl")
     def __init__(
         self,
         sim: td.Simulation,
@@ -44,13 +50,13 @@ class RidgeWaveguide:
         height: float,
         length: float,
         core_medium: td.Medium,
-        sub_medium: td.Medium,
+        box_medium: td.Medium,
         wavelength_um: float,
         top_cladding_medium: Optional[td.Medium] = None,
         top_cladding_height: float = 0.0,
-        substrate_height: float = 4.0,
-        fine_min_steps_per_wvl: int = 20,
-        coarse_min_steps_per_wvl: int = 10,
+        box_height: float = 4.0,
+        fine_steps_per_wvl: int = 20,
+        coarse_steps_per_wvl: int = 10,
         margin_y: float = 2.0,  # Buffer space on each side of the core in Y
         margin_z: float = 2.0,  # Air/PML buffer space above the top cladding/core in Z
         run_time: float = 1e-12,
@@ -66,16 +72,16 @@ class RidgeWaveguide:
         self.length = length
 
         self.core_medium = core_medium
-        self.sub_medium = sub_medium
+        self.box_medium = box_medium
 
         self.top_cladding_medium = top_cladding_medium
         self.top_cladding_height = top_cladding_height
 
         self.wavelength_um = wavelength_um
-        self.substrate_height = substrate_height
+        self.box_height = box_height
 
-        self.fine_min_steps_per_wvl = fine_min_steps_per_wvl
-        self.coarse_min_steps_per_wvl = coarse_min_steps_per_wvl
+        self.fine_steps_per_wvl = fine_steps_per_wvl
+        self.coarse_steps_per_wvl = coarse_steps_per_wvl
 
         self.margin_y = margin_y
         self.margin_z = margin_z
@@ -88,7 +94,12 @@ class RidgeWaveguide:
     ):
         """Delegate unknown attributes to the wrapped Tidy3D simulation.
         Preserve direct access to its geometry and solver settings.
+        Pre-v0.1.0 attribute names (e.g. sub_medium) are resolved first.
         """
+        if item in type(self)._renamed_attrs:
+            return RenamedAttributes.__getattr__(self, item)
+        if item == "sim":                      # not yet set (e.g. during unpickling)
+            raise AttributeError(item)
         return getattr(
             self.sim,
             item,
@@ -118,7 +129,7 @@ class RidgeWaveguide:
     def _cutoff_index(self, freq0: float) -> float:
         """Highest index surrounding the core (substrate or top cladding; air = 1).
         A mode is guided only if its n_eff exceeds this value."""
-        n_sub = float(np.real(np.sqrt(self.sub_medium.eps_model(freq0))))
+        n_sub = float(np.real(np.sqrt(self.box_medium.eps_model(freq0))))
         n_top = 1.0
         if self.top_cladding_medium is not None and self.top_cladding_height > 0:
             n_top = float(np.real(np.sqrt(self.top_cladding_medium.eps_model(freq0))))
@@ -127,13 +138,18 @@ class RidgeWaveguide:
     def get_modes(
         self,
         num_modes: int = 8,
+        require_guided: bool = False,
     ) -> Dict[str, Any]:
         """Solve optical modes and return effective indices and polarization fractions.
         Include TE/TM classifications and guiding conditions in the result.
+
+        The result always carries ``has_guided_mode``. If no mode has
+        n_eff > n_cutoff, a warning is logged and every row has is_guided=False;
+        with ``require_guided=True`` a WaveguideModeError is raised instead.
         """
         freq0 = td.C_0 / self.wavelength_um
         n_core = float(np.real(np.sqrt(self.core_medium.eps_model(freq0))))
-        n_sub = float(np.real(np.sqrt(self.sub_medium.eps_model(freq0))))
+        n_sub = float(np.real(np.sqrt(self.box_medium.eps_model(freq0))))
         n_cut = self._cutoff_index(freq0)
 
         mode_plane = td.Box(
@@ -181,11 +197,16 @@ class RidgeWaveguide:
                 }
             )
 
-        if not any(m["is_guided"] for m in modes_info):
-            # raise WaveguideModeError(f"No guided modes found for W={self.width:.3f} μm, H={self.height:.3f} μm.")
-            logger.error(
-                f"No guided modes found for W={self.width:.3f} μm, H={self.height:.3f} μm."
+        has_guided = any(m["is_guided"] for m in modes_info)
+        if not has_guided:
+            msg = (
+                f"No guided modes for W={self.width:.3f} μm, H={self.height:.3f} μm at "
+                f"{self.wavelength_um:.4f} μm: all n_eff <= n_cutoff = {n_cut:.4f}. "
+                "The listed modes are radiation/cladding modes, not waveguide modes."
             )
+            if require_guided:
+                raise WaveguideModeError(msg)
+            logger.warning(msg)
 
         return {
             "width_um": self.width,
@@ -195,6 +216,7 @@ class RidgeWaveguide:
             "n_core": n_core,
             "n_sub": n_sub,
             "n_cutoff": n_cut,
+            "has_guided_mode": has_guided,
             "modes": modes_info,
             "raw_mode_data": mode_data,
         }
@@ -220,13 +242,13 @@ class RidgeWaveguide:
             n_eff > max(n_substrate, n_top_cladding).
 
         D is a second derivative and is mesh-sensitive: use
-        fine_min_steps_per_wvl >= 50 (the 20 steps/lambda default is ~25 % off).
+        fine_steps_per_wvl >= 50 (the 20 steps/lambda default is ~25 % off).
         """
-        if self.fine_min_steps_per_wvl < 50:
+        if self.fine_steps_per_wvl < 50:
             logger.warning(
-                f"get_dispersion(): fine_min_steps_per_wvl={self.fine_min_steps_per_wvl} "
+                f"get_dispersion(): fine_steps_per_wvl={self.fine_steps_per_wvl} "
                 "is below 50; D can be off by ~25 %. Rebuild the waveguide with "
-                "fine_min_steps_per_wvl >= 50 for quantitative dispersion."
+                "fine_steps_per_wvl >= 50 for quantitative dispersion."
             )
         freq0 = td.C_0 / self.wavelength_um
         n_core_guess = float(np.real(np.sqrt(self.core_medium.eps_model(freq0))))

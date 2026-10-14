@@ -1,13 +1,18 @@
 """
-gratingCoupler/nested_sampler.py
+grating_coupler/nested_sampler.py
 
-Bayesian Parameter Space Explorer for Grating Couplers using MultiNest Nested Sampling.
+Bayesian Parameter Space Explorer for Grating Couplers using nested sampling.
+
+Backends (see utilities.nested_backends): MultiNest via PyMultiNest (Linux/macOS)
+or dynesty (pure Python, also Windows). backend="auto" picks MultiNest when its
+native library loads and dynesty otherwise. Both write MultiNest-format chains,
+so the post-processing and corner plots are identical.
 
 Available Search Pipelines:
 ---------------------------
 1. execute_search():
     Traditional nested sampling execution. Runs until statistical evidence
-    convergence (or native MultiNest stopping criteria) without budget caps.
+    convergence (evidence_tolerance) without budget caps.
 
 2. execute_search_with_budget():
     Budget-aware nested sampling execution. Enforces a strict FlexCredit limit,
@@ -27,32 +32,44 @@ GratingCouplerBayesianOptimizer.execute_search_with_budget().
 """
 
 from tarang import get_logger
-from tarang._logging import tidy3d_verbose
 
 import json
-import time
-import sys
-import io
-import contextlib
 from pathlib import Path
 from dataclasses import asdict
 import numpy as np
 
-import matplotlib
 
-# matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-import tidy3d as td
-from tidy3d import web
-
-from gratingCoupler.grating_coupler import GratingConfig, GratingCoupler
+from grating_coupler.grating_coupler import GratingConfig, GratingCoupler
+from utilities.cloud_run import CostLimitExceededError
+from utilities.nested_backends import run_nested
 from geometries.grating_coupler import get_ideal_coords
 from utilities.sim_plotter import display_2d, display_3d
 from utilities.nested_sampling_post_process import post_process_run
 from utilities.corner_plot import plot_corner
 
 logger = get_logger(__name__)
+
+
+# Pre-v0.1.0 dictionary keys -> current names (accepted with a DeprecationWarning).
+_FIXED_KEYS = {"wavelength0_um": "wavelength_um", "cladding_height": "top_cladding_height",
+               "substrate_height": "handle_height"}
+_MATERIAL_KEYS = {"sub_medium": "handle_medium", "cladding_medium": "top_cladding_medium"}
+
+
+def _renamed_keys(d: dict, old_to_new: dict, what: str) -> dict:
+    """Copy ``d`` with deprecated keys mapped to their new names."""
+    import warnings
+
+    out = dict(d)
+    for old, new in old_to_new.items():
+        if old in out:
+            if new in out:
+                raise ValueError(f"{what} has both '{old}' (deprecated) and '{new}'; keep only '{new}'.")
+            warnings.warn(
+                f"{what} key '{old}' is deprecated and will be removed in TARANG v0.2.0; "
+                f"use '{new}' instead.", DeprecationWarning, stacklevel=3)
+            out[new] = out.pop(old)
+    return out
 
 
 class BudgetExceededError(Exception):
@@ -63,7 +80,8 @@ class BudgetExceededError(Exception):
 
 class GratingCouplerBayesianOptimizer:
     """
-    Bayesian parameter space optimizer for SiN/Silicon grating couplers using MultiNest.
+    Bayesian parameter space optimizer for SiN/Silicon grating couplers using
+    nested sampling (MultiNest or dynesty; see utilities.nested_backends).
     """
 
     def __init__(
@@ -80,8 +98,8 @@ class GratingCouplerBayesianOptimizer:
         """Initialize search bounds, output directories, and budget tracking.
         Restore previous credit usage when a tracker exists.
         """
-        self.fixed_params = fixed_params
-        self.materials = materials
+        self.fixed_params = _renamed_keys(fixed_params, _FIXED_KEYS, "fixed_params")
+        self.materials = _renamed_keys(materials, _MATERIAL_KEYS, "materials")
         self.output_dir = Path(output_dir)
         self.sigma = sigma
         self.is_3d = is_3d
@@ -111,6 +129,7 @@ class GratingCouplerBayesianOptimizer:
 
         self.total_credits_used = 0.0
         self.total_evaluations = 0
+        self.last_sampler_run = None
         self.top_10_runs: list[dict] = []
         self._load_tracker_state()
 
@@ -287,14 +306,14 @@ class GratingCouplerBayesianOptimizer:
 
         try:
             config = GratingConfig(
-                wavelength_um=self.fixed_params["wavelength0_um"],
+                wavelength_um=self.fixed_params["wavelength_um"],
                 theta_deg=self.fixed_params["theta_deg"],
                 mfd=self.fixed_params["mfd"],
                 source_gap=self.fixed_params["source_gap"],
                 core_height=self.fixed_params["core_height"],
-                cladding_height=self.fixed_params["cladding_height"],
+                top_cladding_height=self.fixed_params["top_cladding_height"],
                 box_height=self.fixed_params["box_height"],
-                substrate_height=self.fixed_params["substrate_height"],
+                handle_height=self.fixed_params["handle_height"],
                 w_grating=self.fixed_params["w_grating"],
                 buffer=self.fixed_params["buffer"],
                 period=p_period,
@@ -312,8 +331,8 @@ class GratingCouplerBayesianOptimizer:
                 config=config,
                 core_medium=self.materials.get("core_medium"),
                 box_medium=self.materials.get("box_medium"),
-                substrate_medium=self.materials.get("sub_medium"),
-                cladding_medium=self.materials.get("cladding_medium"),
+                handle_medium=self.materials.get("handle_medium"),
+                top_cladding_medium=self.materials.get("top_cladding_medium"),
                 is_3d=self.is_3d,
                 fine_steps_per_wvl=self.fixed_params.get(
                     "fine_steps",
@@ -326,42 +345,28 @@ class GratingCouplerBayesianOptimizer:
             )
 
             dir_name = sim_wrapper.get_dir_name()
-            target_hdf5 = self.cache_dir / dir_name / "raw_simulation_data.hdf5"
 
-            if target_hdf5.exists():
-                cost = 0.0
-            else:
-                with contextlib.redirect_stdout(
-                    io.StringIO()
-                ), contextlib.redirect_stderr(io.StringIO()):
-                    task_id = web.upload(
-                        sim_wrapper.sim,
-                        task_name=f"gc_eval_{dir_name[:25]}",
-                        verbose=tidy3d_verbose(False),
-                    )
-                    cost = float(
-                        web.estimate_cost(
-                            task_id,
-                            verbose=tidy3d_verbose(),
-                        )
-                    )
-
-                if (
-                    self.credit_limit is not None
-                    and (self.total_credits_used + cost) > self.credit_limit
-                ):
-                    logger.warning(
-                        f"\n[Budget Warden] Credit limit reached! Next run needs {cost:.4f}, but only "
-                        f"{(self.credit_limit - self.total_credits_used):.4f} credits remain."
-                    )
-                    raise BudgetExceededError(
-                        f"FlexCredit limit of {self.credit_limit} exceeded! Current spent: {self.total_credits_used:.4f} credits."
-                    )
-
-            efficiency = sim_wrapper.get_efficiency(
-                output_dir=self.cache_dir,
-                verbose=False,
-            )
+            # Budget guard: the run is cost-estimated before it starts, and it is
+            # not started if it would exceed the remaining credit (audit C6). A
+            # cached evaluation costs nothing.
+            if self.credit_limit is not None:
+                sim_wrapper.max_cost = max(0.0, self.credit_limit - self.total_credits_used)
+            try:
+                efficiency = sim_wrapper.get_efficiency(
+                    output_dir=self.cache_dir,
+                    verbose=False,
+                )
+            except CostLimitExceededError as exc:
+                logger.warning(
+                    f"\n[Budget Warden] Credit limit reached! Next run needs {exc.estimated:.4f}, "
+                    f"but only {exc.limit:.4f} credits remain."
+                )
+                raise BudgetExceededError(
+                    f"FlexCredit limit of {self.credit_limit} exceeded! "
+                    f"Current spent: {self.total_credits_used:.4f} credits."
+                ) from exc
+            run = sim_wrapper.last_run
+            cost = 0.0 if (run is None or run.from_cache) else float(run.estimated_cost)
 
             logger.info(
                 f"[FDTD Run Audit] Period: {p_period:.4f} μm | FF: {p_dc:.4f} | "
@@ -451,10 +456,16 @@ class GratingCouplerBayesianOptimizer:
         n_live_points: int = 150,
         evidence_tolerance: float = 0.3,
         *,
+        backend: str = "auto",
+        seed: int | None = None,
+        dynesty_kwargs: dict | None = None,
         plot_dpi: int = 150,  # Resolution of displayed and saved figures (dots per inch).
     ) -> dict:
-        """Execute an unbudgeted MultiNest search or load existing results.
+        """Execute an unbudgeted nested-sampling search or load existing results.
         Post-process completed chains into the returned summary dictionary.
+
+        backend: "auto" (MultiNest if installed, else dynesty), "multinest" or
+        "dynesty". seed: reproducible dynesty runs (stored for resuming).
         """
         self.credit_limit = None
 
@@ -470,23 +481,20 @@ class GratingCouplerBayesianOptimizer:
                 return json.load(f)
 
         logger.info(
-            f"\n[Bayesian Engine] Launching standard MultiNest space extraction ({self.dimensions})..."
+            f"\n[Bayesian Engine] Launching nested sampling ({self.dimensions}, backend={backend})..."
         )
 
-        import pymultinest
-
-        pymultinest.run(
-            LogLikelihood=self.log_likelihood,
-            Prior=self.prior,
-            n_dims=5,
-            n_params=5,
-            outputfiles_basename=self.basename,
-            n_live_points=n_live_points,
+        self.last_sampler_run = run_nested(
+            self.log_likelihood,
+            self.prior,
+            5,
+            self.basename,
+            backend=backend,
+            n_live=n_live_points,
             evidence_tolerance=evidence_tolerance,
-            importance_nested_sampling=False,
-            multimodal=True,
             resume=True,
-            verbose=False,
+            seed=seed,
+            dynesty_kwargs=dynesty_kwargs,
         )
 
         return self._post_process_results(
@@ -500,10 +508,17 @@ class GratingCouplerBayesianOptimizer:
         n_live_points: int = 150,
         evidence_tolerance: float = 0.3,
         *,
+        backend: str = "auto",
+        seed: int | None = None,
+        dynesty_kwargs: dict | None = None,
         plot_dpi: int = 150,  # Resolution of displayed and saved figures (dots per inch).
     ) -> dict:
-        """Run or resume MultiNest within the supplied credit limit.
+        """Run or resume nested sampling within the supplied credit limit.
         Save progress and return a paused status when the budget is exhausted.
+
+        Resuming with a higher credit_limit continues the run. MultiNest resumes
+        from its resume file; dynesty replays from the stored seed, and every
+        earlier evaluation is a free cache hit.
         """
         self.credit_limit = credit_limit
 
@@ -519,34 +534,31 @@ class GratingCouplerBayesianOptimizer:
                 return json.load(f)
 
         logger.info(
-            f"\n[Bayesian Engine] Launching budget-aware MultiNest space extraction ({self.dimensions})..."
+            f"\n[Bayesian Engine] Launching budget-aware nested sampling ({self.dimensions}, backend={backend})..."
         )
         logger.info(
             f"[Budget Warden] Active Cap: {self.credit_limit:.4f} FlexCredits | Spent So Far: {self.total_credits_used:.4f} FlexCredits"
         )
 
-        import pymultinest
-
         budget_halted = False
         try:
-            pymultinest.run(
-                LogLikelihood=self.log_likelihood,
-                Prior=self.prior,
-                n_dims=5,
-                n_params=5,
-                outputfiles_basename=self.basename,
-                n_live_points=n_live_points,
+            self.last_sampler_run = run_nested(
+                self.log_likelihood,
+                self.prior,
+                5,
+                self.basename,
+                backend=backend,
+                n_live=n_live_points,
                 evidence_tolerance=evidence_tolerance,
-                importance_nested_sampling=False,
-                multimodal=True,
                 resume=True,
-                verbose=False,
+                seed=seed,
+                dynesty_kwargs=dynesty_kwargs,
             )
         except BudgetExceededError as e:
             budget_halted = True
             logger.warning(f"\n[Budget Warden] Execution paused cleanly: {e}")
             logger.info(
-                "[Budget Warden] MultiNest chains and credit ledger are saved. Pass a higher limit to resume."
+                "[Budget Warden] Chains and credit ledger are saved. Pass a higher limit to resume."
             )
 
         self.report_top_configurations()
@@ -612,14 +624,14 @@ class GratingCouplerBayesianOptimizer:
         if space_variance and all(k in space_variance for k in required_keys):
             try:
                 opt_config = GratingConfig(
-                    wavelength_um=self.fixed_params["wavelength0_um"],
+                    wavelength_um=self.fixed_params["wavelength_um"],
                     theta_deg=self.fixed_params["theta_deg"],
                     mfd=self.fixed_params["mfd"],
                     source_gap=self.fixed_params["source_gap"],
                     core_height=self.fixed_params["core_height"],
-                    cladding_height=self.fixed_params["cladding_height"],
+                    top_cladding_height=self.fixed_params["top_cladding_height"],
                     box_height=self.fixed_params["box_height"],
-                    substrate_height=self.fixed_params["substrate_height"],
+                    handle_height=self.fixed_params["handle_height"],
                     w_grating=self.fixed_params["w_grating"],
                     buffer=self.fixed_params["buffer"],
                     period=space_variance["period"]["marginalized_mean"],
@@ -639,8 +651,8 @@ class GratingCouplerBayesianOptimizer:
                     config=opt_config,
                     core_medium=self.materials.get("core_medium"),
                     box_medium=self.materials.get("box_medium"),
-                    substrate_medium=self.materials.get("sub_medium"),
-                    cladding_medium=self.materials.get("cladding_medium"),
+                    handle_medium=self.materials.get("handle_medium"),
+                    top_cladding_medium=self.materials.get("top_cladding_medium"),
                     is_3d=self.is_3d,
                     fine_steps_per_wvl=25,
                     coarse_steps_per_wvl=15,
@@ -679,6 +691,12 @@ class GratingCouplerBayesianOptimizer:
                 )
 
         summary["status"] = "CONVERGED"
+        run = getattr(self, "last_sampler_run", None)
+        if run is not None:
+            summary["sampler_backend"] = run.backend
+            summary["log_evidence"] = run.log_evidence
+            summary["log_evidence_err"] = run.log_evidence_err
+            summary["sampler_seed"] = run.seed
         with open(
             result_file,
             "w",

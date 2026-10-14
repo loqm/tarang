@@ -14,7 +14,9 @@ Robust dispersion mapping and design selection for ridge waveguides, built on TA
 | Broadband D(λ), zero-dispersion wavelengths, ring integrated dispersion D_int(μ), D₂, D₃ | `broadband` |
 | Finalists against a baseline: tolerance, hazards, bends, Q and threshold estimate; markdown report | `report` |
 
-## Usage (from the TARANG repository root)
+## Usage
+
+Run from any folder once TARANG is installed (see the main README). Results are written to `results/` inside the folder you run from.
 
 ```powershell
 python -m waveguide.dispersion_mapping.sweep --heights 0.60:0.90:0.05 --widths 0.60:1.60:0.10 --steps 50 --workers 4
@@ -28,7 +30,7 @@ python -m waveguide.dispersion_mapping.report --straight results/air_sweep_70ste
 
 **Material options** (all tools): `--core si3n4`, `--substrate sio2`, `--cladding air`. Any key in `media/media.json` works, e.g. `--core si3n4_hong` or `--cladding sio2`.
 
-**Sweep-only options:** `--n-shift ±0.02` (core-index uncertainty), `--si-handle`, `--bend-radius R`, `--wl 1.30`.
+**Sweep-only options:** `--n-shift ±0.02` (core-index uncertainty), `--si-handle` (a silicon layer below the BOX, constant n = 3.4757), `--bend-radius R`, `--wl 1.30`.
 
 Python API:
 

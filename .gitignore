@@ -7,9 +7,21 @@ media/fitted_media/*
 results/*
 *example_results/*
 *.png
+# ...except figures that belong to the documentation (README, notebooks)
+!docs/**/*.png
 *.hdf5
 
 *.pyc
-*.toml
+__pycache__/
+
+# Packaging artefacts
+build/
+dist/
+*.egg-info/
 
 TESTING_*
+
+# Test and coverage artefacts
+.coverage
+coverage.xml
+.tarang-cache/

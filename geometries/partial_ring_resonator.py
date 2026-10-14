@@ -5,7 +5,7 @@ Authors: Esraaj Sarkar Gupta
 Date: 2026
 
 Constructs a partial ring resonator + waveguide simulation physically clipped
-to a specified span angle centered at (0, -R), wrapped in a partialRingResonator.
+to a specified span angle centered at (0, -R), wrapped in a PartialRingResonator.
 
 This module defines a simulation with Absorber layers in the PML, specifically to
 handle guided wave truncation. Light that leaves the end of a ring hits the PML at
@@ -16,17 +16,21 @@ Exposes: get_passive_simulation(), get_active_simulation(), get_optimal_plot_coo
 
 from __future__ import annotations
 from tarang import get_logger
+from tarang._compat import renamed_params
 
 from typing import Optional, Tuple
 import warnings
 import numpy as np
 import tidy3d as td
 
-from ringResonator.ring_resonator import partialRingResonator
+from geometries._modes import core_target_neff
+
+from ring_resonator.ring_resonator import PartialRingResonator
 
 logger = get_logger(__name__)
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
 def get_passive_simulation(
     radius: float,
     gap: float,
@@ -35,14 +39,14 @@ def get_passive_simulation(
     wg_height: float,
 
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
+    box_medium: td.Medium,
 
-    wavelength0: float,
+    wavelength_um: float,
 
     span_angle_rad: float,  # In Radians
     num_absorber_layers: int = 60,
 
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
 
@@ -51,7 +55,7 @@ def get_passive_simulation(
 
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
-) -> partialRingResonator:
+) -> PartialRingResonator:
     """Constructs a passive simulation with the ring physically clipped to
     span_angle_rad.
     """
@@ -66,7 +70,7 @@ def get_passive_simulation(
         warnings.warn(
             "For a 180° span angle, using the 'half_ring_resonator' module is recommended for better performance.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,  # caller of the @renamed_params wrapper
         )
 
     air_medium = td.Medium(permittivity=1.0)
@@ -112,10 +116,10 @@ def get_passive_simulation(
     # -- Structures -- #
     substrate = td.Structure(
         geometry=td.Box(
-            center=(0, 0, -substrate_height / 2.0),
-            size=(td.inf, td.inf, substrate_height),
+            center=(0, 0, -box_height / 2.0),
+            size=(td.inf, td.inf, box_height),
         ),
-        medium=substrate_medium,
+        medium=box_medium,
         name="Substrate",
     )
 
@@ -182,13 +186,13 @@ def get_passive_simulation(
         (max_path_length / (td.C_0 / n_group_approx)) * 3.0,
     )
 
-    freq0 = td.C_0 / wavelength0
+    freq0 = td.C_0 / wavelength_um
     try:
         n_core_approx = float(np.real(core_medium.n_complex(freq0)))
     except Exception:
         n_core_approx = 2.0
 
-    dl_fine = wavelength0 / (n_core_approx * fine_steps_per_wvl)
+    dl_fine = wavelength_um / (n_core_approx * fine_steps_per_wvl)
 
     mesh_override = td.MeshOverrideStructure(
         geometry=td.Box(
@@ -207,7 +211,7 @@ def get_passive_simulation(
         size=(domain_size_x, domain_size_y, 3.000),
         grid_spec=td.GridSpec.auto(
             min_steps_per_wvl=coarse_steps_per_wvl,
-            wavelength=wavelength0,
+            wavelength=wavelength_um,
             override_structures=[mesh_override],
         ),
         structures=structures,
@@ -227,7 +231,7 @@ def get_passive_simulation(
         medium=air_medium,
     )
 
-    return partialRingResonator(
+    return PartialRingResonator(
         span_angle_rad=span_angle_rad,
         sim=sim_passive,
         radius=radius,
@@ -235,8 +239,8 @@ def get_passive_simulation(
         wg_width=wg_width,
         wg_height=wg_height,
         core_medium=core_medium,
-        substrate_medium=substrate_medium,
-        substrate_height=substrate_height,
+        box_medium=box_medium,
+        box_height=box_height,
         top_cladding_medium=(
             top_cladding_medium if top_cladding_medium is not None else air_medium
         ),
@@ -244,10 +248,11 @@ def get_passive_simulation(
         fine_steps_per_wvl=fine_steps_per_wvl,
         coarse_steps_per_wvl=coarse_steps_per_wvl,
         wg_length=domain_size_x,
-        wavelength0=wavelength0,
+        wavelength_um=wavelength_um,
     )
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
 def get_active_simulation(
     radius: float,
     gap: float,
@@ -256,14 +261,14 @@ def get_active_simulation(
     wg_height: float,
 
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
+    box_medium: td.Medium,
 
-    wavelength0: float,
+    wavelength_um: float,
 
     span_angle_rad: float,
     num_absorber_layers: int = 60,
 
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
 
     top_cladding_medium: Optional[td.Medium] = None,
     top_cladding_height: float = 0.0,
@@ -273,7 +278,7 @@ def get_active_simulation(
 
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
-) -> partialRingResonator:
+) -> PartialRingResonator:
     """Add bus excitation and coupling monitors to the passive partial ring.
     The span is the total angle; clipped ring ends require reflection checks.
     """
@@ -283,7 +288,7 @@ def get_active_simulation(
         ("radius", radius),
         ("wg_width", wg_width),
         ("wg_height", wg_height),
-        ("wavelength0", wavelength0),
+        ("wavelength_um", wavelength_um),
     ]:
         if not np.isfinite(value) or value <= 0:
             raise ValueError(f"{name} must be finite and positive.")
@@ -295,11 +300,11 @@ def get_active_simulation(
         wg_width=wg_width,
         wg_height=wg_height,
         core_medium=core_medium,
-        substrate_medium=substrate_medium,
-        wavelength0=wavelength0,
+        box_medium=box_medium,
+        wavelength_um=wavelength_um,
         span_angle_rad=span_angle_rad,
         num_absorber_layers=num_absorber_layers,
-        substrate_height=substrate_height,
+        box_height=box_height,
         top_cladding_medium=top_cladding_medium,
         top_cladding_height=top_cladding_height,
         fine_steps_per_wvl=fine_steps_per_wvl,
@@ -308,11 +313,8 @@ def get_active_simulation(
         run_time=run_time,
     )
     sim = obj.sim
-    frequency = td.C_0 / wavelength0
-    try:
-        target_neff = float(np.real(core_medium.n_complex(frequency)))
-    except Exception:
-        target_neff = 2.0
+    frequency = td.C_0 / wavelength_um
+    target_neff = core_target_neff(core_medium, frequency)
     mode_spec = td.ModeSpec(
         num_modes=1,
         target_neff=target_neff,
@@ -407,7 +409,7 @@ def get_active_simulation(
         "The supplied partial-ring geometry ends inside the simulation domain. "
         "Check ring-port reflections and span convergence; its endpoints are not matched absorbers.",
         UserWarning,
-        stacklevel=2,
+        stacklevel=3,  # caller of the @renamed_params wrapper
     )
     return obj
 

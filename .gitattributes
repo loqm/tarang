@@ -1,1 +1,37 @@
+# GitHub language statistics: count the Python code, not the notebook outputs
 *.ipynb linguist-detectable=false
+
+# Line endings: text files are stored with LF in the repository, whatever the
+# contributor's OS or core.autocrlf setting. Windows checkouts may still show CRLF
+# in the working copy; Git converts on commit.
+*.py        text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+*.ini       text eol=lf
+*.cfg       text eol=lf
+*.cff       text eol=lf
+*.txt       text eol=lf
+*.json      text eol=lf
+*.ipynb     text eol=lf
+*.svg       text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+.gitleaksignore text eol=lf
+MANIFEST.in    text eol=lf
+LICENSE        text eol=lf
+
+# Material data (media/data/*.csv) is deliberately NOT listed: two of the files are
+# stored with CRLF, and the fitted-material cache and simulation fingerprints are
+# keyed on each file's exact bytes. Normalising them would invalidate existing
+# caches for no physical change.
+
+# Binary files: never convert, never diff as text
+*.png       binary
+*.jpg       binary
+*.pdf       binary
+*.hdf5      binary
+*.h5        binary
+*.gds       binary
+*.npz       binary

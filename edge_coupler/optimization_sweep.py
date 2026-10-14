@@ -11,14 +11,14 @@ Exposes: parametric_optimization_sweep().
 """
 
 from tarang import get_logger
+from tarang._compat import renamed_params
 from utilities.validation import positive as _positive, values as _values
-from tarang._logging import tidy3d_verbose
+from utilities.cloud_run import run_batch_cached
 
 import tidy3d as td
-from tidy3d import web
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Optional, Tuple
+from typing import Optional
 from pathlib import Path
 
 from media import get_medium
@@ -26,6 +26,7 @@ from media import get_medium
 logger = get_logger(__name__)
 
 
+@renamed_params(substrate_medium="box_medium", substrate_height="box_height", wavelength0="wavelength_um")
 def parametric_optimization_sweep(
     sweep_taper_lengths: list[float],
     sweep_tip_widths: list[float],
@@ -33,10 +34,10 @@ def parametric_optimization_sweep(
     wg_width: float,
     wg_height: float,
     core_medium: td.Medium,
-    substrate_medium: td.Medium,
-    wavelength0: float,
+    box_medium: td.Medium,
+    wavelength_um: float,
     top_cladding_medium: td.Medium = get_medium("air"),
-    substrate_height: float = 4.0,
+    box_height: float = 4.0,
     top_cladding_height: float = 0.0,
     fine_steps_per_wvl: int = 20,
     coarse_steps_per_wvl: int = 15,
@@ -44,6 +45,7 @@ def parametric_optimization_sweep(
     in_coupling: Optional[bool] = None,
     out_coupling: Optional[bool] = None,
     batching: bool = True,  # Run the sweep simulations in a single batch?
+    max_cost: Optional[float] = None,  # FlexCredit ceiling for the whole sweep (batch) or each run
     show: bool = True,  # Display the efficiency matrix?
     save: bool = True,
     *,
@@ -52,6 +54,10 @@ def parametric_optimization_sweep(
     """
     This function carries out a parametric sweep of edge coupler taper lengths and
     tip widths.
+
+    With ``batching=True`` all uncached points run as one Tidy3D batch and
+    ``max_cost`` caps the batch total; with ``batching=False`` points run one by one
+    and ``max_cost`` caps each run.
     """
 
     sweep_taper_lengths = _values("sweep_taper_lengths", sweep_taper_lengths)
@@ -59,8 +65,8 @@ def parametric_optimization_sweep(
 
     wg_width = _positive("wg_width", wg_width)
     wg_height = _positive("wg_height", wg_height)
-    wavelength0 = _positive("wavelength0", wavelength0)
-    substrate_height = _positive("substrate_height", substrate_height)
+    wavelength_um = _positive("wavelength_um", wavelength_um)
+    box_height = _positive("box_height", box_height)
 
     fine_steps_per_wvl = int(_positive("fine_steps_per_wvl", fine_steps_per_wvl))
     coarse_steps_per_wvl = int(_positive("coarse_steps_per_wvl", coarse_steps_per_wvl))
@@ -91,7 +97,8 @@ def parametric_optimization_sweep(
 
     # Define parameter space and instantiate simulations
     couplers: list = list([])
-    sim_dict: dict = dict({})
+    jobs: dict = dict({})
+    legacy: dict = dict({})
 
     logger.info(
         f"Initializing {len(sweep_taper_lengths) * len(sweep_tip_widths)} simulations for the sweep..."
@@ -105,10 +112,10 @@ def parametric_optimization_sweep(
                 wg_width=wg_width,
                 wg_height=wg_height,
                 core_medium=core_medium,
-                substrate_medium=substrate_medium,
-                wavelength0=wavelength0,
+                box_medium=box_medium,
+                wavelength_um=wavelength_um,
                 top_cladding_medium=top_cladding_medium,
-                substrate_height=substrate_height,
+                box_height=box_height,
                 top_cladding_height=top_cladding_height,
                 fine_steps_per_wvl=fine_steps_per_wvl,
                 coarse_steps_per_wvl=coarse_steps_per_wvl,
@@ -118,35 +125,25 @@ def parametric_optimization_sweep(
             )
             row.append(ec)
 
-            # Map for batching: Use the task name the wrapper expects
-            task_name = f"edge_coupler_{ec.get_dir_name()}"
-            sim_dict[task_name] = ec.sim
+            # Map for batching: key -> (simulation, readable cache stem)
+            ec.max_cost = max_cost
+            jobs[(L, W)] = (ec.sim, ec._readable_name())
+            legacy[(L, W)] = ec._legacy_dir_name()
 
         couplers.append(row)
 
-    # Carry out the simulations
+    # Carry out the simulations. Cached results are verified and skipped; the
+    # FlexCredit estimate for the rest is logged and checked against max_cost
+    # before anything starts.
     if batching:
-        logger.info("Submitting batch to Tidy3D cloud infrastructure...")
-        batch = web.Batch(
-            simulations=sim_dict,
-            verbose=tidy3d_verbose(True),
+        logger.info("Submitting uncached sweep points as one Tidy3D batch...")
+        run_batch_cached(
+            jobs,
+            output_dir,
+            legacy_names=legacy,
+            max_cost=max_cost,
+            verbose=True,
         )
-        batch_results = batch.run(path_dir=output_dir / "batch_downloads")
-
-        # Distribute downloaded data to cache locations expected by the wrapper
-        for task_name, sim_data in batch_results.items():
-            param_dir = task_name.replace(
-                "edge_coupler_",
-                "",
-            )
-            target_path = output_dir / param_dir / "raw_simulation_data.hdf5"
-            target_path.parent.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-
-            if not target_path.exists():
-                sim_data.to_file(str(target_path))
 
     # Extract efficiencies
     efficiencies = np.zeros((len(sweep_taper_lengths), len(sweep_tip_widths)))

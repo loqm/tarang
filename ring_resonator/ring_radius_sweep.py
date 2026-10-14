@@ -1,5 +1,5 @@
 """
-ringResonator.ring_radius_sweep.py
+ring_resonator.ring_radius_sweep.py
 
 FDTD cutback and supplied-loss analytical sweeps; JSON is an output, not a cache.
 
@@ -19,6 +19,7 @@ import numpy as np
 import tidy3d as td
 
 from tarang import get_logger
+from tarang._compat import renamed_params
 from utilities.json_helpers import log_json, save_json as _save, snapshot as _snapshot
 from utilities.sweep_helpers import cache_dir as _cache_dir, r_squared as _r_squared
 from utilities.validation import (
@@ -36,13 +37,14 @@ _emit = partial(
 )
 
 
+@renamed_params(substrate_medium="box_medium", cladding_medium="top_cladding_medium")
 def radius_sweep(
     radii_sweep_list : list[float],  # Distinct ring radii to evaluate (um).
 
     output_dir : Path|str,         # Directory for reports, plots, and any simulation cache.
 
     core_medium : td.Medium,        # Tidy3D medium used for the waveguide core.
-    substrate_medium : td.Medium,   # Tidy3D medium for the substrate (BOX layer).
+    box_medium : td.Medium,   # Tidy3D medium for the BOX (oxide under the core).
 
     wg_width : float,       # Waveguide core width (um).
     wg_height : float,      # Waveguide core height (um).
@@ -51,7 +53,7 @@ def radius_sweep(
 
     scattering_loss_db_cm : float,  # Required nonnegative distributed scattering loss (dB/cm).
 
-    cladding_medium : td.Medium = None,  # Upper cladding material; None uses air.
+    top_cladding_medium : td.Medium = None,  # Upper cladding material; None uses air.
 
     fine_steps_per_wvl : int = 20,      # Mesh resolution in the core region (steps per wavelength).
     coarse_steps_per_wvl : int = 15,    # Background mesh resolution (steps per wavelength).
@@ -158,9 +160,9 @@ def radius_sweep(
             value,
         )
 
-    if cladding_medium is None:
+    if top_cladding_medium is None:
         from media import get_medium
-        cladding_medium = get_medium("air")
+        top_cladding_medium = get_medium("air")
 
     if arc_builder is None:
         from geometries.resonator_arc import get_active_simulation
@@ -230,12 +232,12 @@ def radius_sweep(
                 obj = arc_builder(
                     radius=radius,
                     bend_angle_deg=angle,
-                    wavelength0=wavelength_um,
+                    wavelength_um=wavelength_um,
                     wg_width=wg_width,
                     wg_height=wg_height,
                     core_medium=core_medium,
-                    substrate_medium=substrate_medium,
-                    cladding_medium=cladding_medium,
+                    box_medium=box_medium,
+                    top_cladding_medium=top_cladding_medium,
                     fine_steps_per_wvl=fine_steps_per_wvl,
                     coarse_steps_per_wvl=coarse_steps_per_wvl,
                     num_absorber_layers=num_absorber_layers,
@@ -247,7 +249,7 @@ def radius_sweep(
                     obj,
                     radius=radius,
                     bend_angle_deg=angle,
-                    wavelength0=wavelength_um,
+                    wavelength_um=wavelength_um,
                 )
                 names = {m.name for m in obj.sim.monitors}
                 if not {input_monitor, output_monitor} <= names:
@@ -497,19 +499,20 @@ def radius_sweep(
     return report["results"]
 
 
+@renamed_params(substrate_medium="box_medium", cladding_medium="top_cladding_medium")
 def radius_sweep_analytical(
     radii_sweep_list : list,  # Distinct ring radii to evaluate (um).
 
     output_dir : Path|str,  # Directory for the analytical report and radius summary outputs.
 
     core_medium : td.Medium,        # Tidy3D medium used for the waveguide core.
-    substrate_medium : td.Medium,   # Tidy3D medium for the substrate (BOX layer).
+    box_medium : td.Medium,   # Tidy3D medium for the BOX (oxide under the core).
 
     wg_width : float,       # Waveguide core width (um).
     wg_height : float,      # Waveguide core height (um).
 
     wavelength_um : float,  # Central vacuum wavelength (um).
-    cladding_medium=None,  # Upper cladding material (TOX Layer); None uses air.
+    top_cladding_medium=None,  # Upper cladding material (TOX Layer); None uses air.
 
     fine_steps_per_wvl : int = 20,      # Mesh resolution in the core region (steps per wavelength).
     coarse_steps_per_wvl : int = 15,    # Background mesh resolution (steps per wavelength).
@@ -589,8 +592,8 @@ def radius_sweep_analytical(
         "plot_dpi",
         plot_dpi,
     )
-    if cladding_medium is None:
-        cladding_medium = td.Medium(permittivity=1.0)
+    if top_cladding_medium is None:
+        top_cladding_medium = td.Medium(permittivity=1.0)
     group_options = dict(group_index_kwargs or {})
     volumes = {
         str(r): _resolve_volume(
@@ -668,14 +671,14 @@ def radius_sweep_analytical(
                 wg_width=wg_width,
                 wg_height=wg_height,
                 core_medium=core_medium,
-                substrate_medium=substrate_medium,
-                substrate_height=2.5,
-                top_cladding_medium=cladding_medium,
+                box_medium=box_medium,
+                box_height=2.5,
+                top_cladding_medium=top_cladding_medium,
                 top_cladding_height=1.5,
                 fine_steps_per_wvl=fine_steps_per_wvl,
                 coarse_steps_per_wvl=coarse_steps_per_wvl,
                 wg_length=0.0,
-                wavelength0=wavelength_um,
+                wavelength_um=wavelength_um,
             )
             group = (
                 groups[str(radius)]
