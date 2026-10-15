@@ -34,10 +34,17 @@ working until v0.2.0; old imports are updated with one command (see
   `[plots]`, `[notebooks]`, `[multinest]`, `[test]`; cross-platform `environment.yml`.
 - **Material `si_franta`**: float-zone crystalline silicon (Franta 2017, 0.03–310 µm),
   for silicon at 1550 nm, where the `si` dataset has no data.
-- **Documentation**: this changelog, `CONTRIBUTING.md`, `CITATION.cff`,
+- **Documentation**: a rewritten README (contents table, where-to-start diagram, quick
+  start with the figures it produces, cost control, troubleshooting), this changelog, `CONTRIBUTING.md`, `CITATION.cff`,
   `tarang/media/data/SOURCES.md` (reference, sample and range of every material dataset), and
   material fit-versus-data figures (`docs/make_material_figures.py`).
-- **Tests and CI**: 160+ tests (fake cloud, no FlexCredits) run on every pull request on
+- **Example notebooks** `dispersion_mapping_example.ipynb` (choosing core height and
+  width: design map, mesh convergence, tolerance report, integrated dispersion; local) and
+  `cloud_basics_example.ipynb` (fingerprints, cache, cost limits). The other notebooks
+  open with a table of the functions they show, set a cost cap for their cloud cells, and
+  now also cover `get_dispersion_vs_wavelength`, the guided-mode check, the FDTD radius
+  sweep and the critical-coupling gap sweep.
+- **Tests and CI**: 200+ tests (fake cloud, no FlexCredits) run on every pull request on
   Ubuntu and Windows with Python 3.11 and 3.12, plus a MultiNest job, a job that builds
   and installs the package, a conda-environment check, and an optional real-cloud smoke
   test started by hand.
@@ -74,6 +81,12 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Fixed
 
+- **Result cache missed results run in the session that fitted the materials.** A fresh
+  fit returned the fitter's own object, whose index differed from the saved copy in the
+  last digit. The mode solver's `target_neff` comes from that index, so a simulation built
+  in the fitting session had a different fingerprint from the same simulation in any later
+  session, and a cloud result run then was not found again. `get_medium` now returns the
+  saved copy in both cases. Results run in later sessions are unaffected.
 - Example notebooks: the waveguide and grating-coupler notebooks fitted their materials
   over 0.6–1.2 µm but simulated at 1.55 µm. (For these smooth materials the extrapolated
   index happened to agree to four decimals, so earlier results stand.) They now fit over

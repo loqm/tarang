@@ -4,5 +4,5 @@
 include pytest.ini environment.yml CHANGELOG.md CONTRIBUTING.md CITATION.cff
 recursive-include tarang *.md
 recursive-include examples *.ipynb *.py
-recursive-include docs *.svg *.png *.py
+recursive-include docs *.svg *.png *.py *.csv
 recursive-include tests *.py *.md

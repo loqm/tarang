@@ -2,12 +2,12 @@
 
 ```bash
 python -m pytest                     # whole suite, ~4 min, no FlexCredits
-python -m pytest -m "not slow"       # quick check, under a minute (skips 12 mode-solve / fitting tests)
+python -m pytest -m "not slow"       # quick check, under a minute (skips 13 mode-solve / fitting tests)
 python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `210 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `223 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -85,7 +85,7 @@ in `results/cloud_smoke/` that later offline tests can use.
 | `test_reference_point_800x800` | n_TE in 1.65–1.68, TM above TE, one guided TE mode, D > 0, smooth n_eff(λ) fit |
 | `test_index_shift_raises_dispersion` | Raising the core index by 0.02 increases D, the expected physical trend |
 
-## `test_cloud_run.py`: verified cache, cost guard and API key (15 tests, Phases 3a and 4)
+## `test_cloud_run.py`: verified cache, cost guard and API key (16 tests, Phases 3a, 4 and 9)
 
 | Test | Checks |
 |---|---|
@@ -103,6 +103,7 @@ in `results/cloud_smoke/` that later offline tests can use.
 | `test_api_key_found_in_simcloud_variable`, `..._in_tidy3d_config` (2) | The key is found where Tidy3D really looks: `SIMCLOUD_APIKEY` or the `tidy3d configure` file |
 | `test_old_tarang_key_variable_is_passed_on` | `TIDY3D_API_KEY` (from earlier TARANG docs, ignored by Tidy3D) is passed on as `SIMCLOUD_APIKEY`, with a message |
 | `test_missing_key_warns_with_the_fix` | No key: the warning says to run `tidy3d configure` |
+| `test_fresh_fit_and_cached_fit_give_the_same_fingerprint` (slow) | A simulation built right after a material is fitted has the same fingerprint as in a later session that reads the fit from the cache, so a result run in the fitting session is found again (it was not before Phase 9) |
 
 ## `test_phase3a_fixes.py`: correctness fixes (24 tests, Phase 3a)
 
@@ -264,10 +265,10 @@ material, unknown pip extra).
 | `test_relative_links_resolve[...]` (6) | Every relative link and image points to an existing file, and every `#anchor` to an existing heading |
 | `test_citation_matches_package` | `CITATION.cff` is CFF 1.2.0 with the package's version, licence and authors, and its release date matches the CHANGELOG |
 | `test_changelog_has_current_version` | `CHANGELOG.md` has a section for `tarang.__version__` |
-| `test_every_material_is_documented` | Every key in `tarang/media/media.json` and every CSV in `tarang/media/data/` is described in `SOURCES.md`, and every key is in the README's material table |
-| `test_readme_first_run_examples_execute` (slow) | README section 4 steps 1–3 and the logging example run as written in an empty folder: materials fit, the waveguide builds, modes, dispersion and confinement are computed, and the files the README mentions are written |
+| `test_every_material_is_documented` | Every key in `tarang/media/media.json` and every CSV in `tarang/media/data/` is described in `SOURCES.md`, and every key is in the README's material table. Fails if the data folder holds no CSVs, so a moved folder cannot make it pass vacuously |
+| `test_readme_first_run_examples_execute` (slow) | README quick-start steps 1–3 and the logging example run as written in an empty folder: materials fit, the waveguide builds, modes, dispersion and confinement are computed, and the files the README mentions are written |
 
-## `test_notebooks.py`: the example notebooks (31 tests, Phases 7 and 8)
+## `test_notebooks.py`: the example notebooks (43 tests, Phases 7–9)
 
 The notebooks live in `examples/`. They are committed without outputs: stored outputs go stale with every code change,
 had grown the repository by about 10 MB, and contained paths from the author's machine.
@@ -275,13 +276,13 @@ Each check below was confirmed to fail on the notebooks as they were before Phas
 
 | Test | Checks |
 |---|---|
-| `test_there_are_notebooks` | The five example notebooks are found |
-| `test_committed_without_outputs[...]` (5) | No outputs or execution counts are stored |
-| `test_no_personal_paths[...]` (5) | No `/home/<user>`, `/Users/<user>` or `C:\\Users\\...` paths |
-| `test_code_compiles_and_uses_real_names[...]` (5) | Code cells are valid Python; every TARANG name exists and every keyword argument is a real parameter |
-| `test_image_links_exist[...]` (5) | Every image a notebook shows is committed |
-| `test_markdown_links_resolve[...]` (5) | Every relative link in a notebook's text points to an existing file (links are relative to `examples/`) |
-| `test_materials_fitted_over_the_simulated_wavelength[...]` (5) | A material is fitted over a band that contains the wavelength the same notebook simulates (the 1550 nm examples used to fit over 0.6–1.2 µm) |
+| `test_there_are_notebooks` | The example notebooks are found (seven) |
+| `test_committed_without_outputs[...]` (7) | No outputs or execution counts are stored |
+| `test_no_personal_paths[...]` (7) | No `/home/<user>`, `/Users/<user>` or `C:\\Users\\...` paths |
+| `test_code_compiles_and_uses_real_names[...]` (7) | Code cells are valid Python; every TARANG name exists and every keyword argument is a real parameter |
+| `test_image_links_exist[...]` (7) | Every image a notebook shows is committed |
+| `test_markdown_links_resolve[...]` (7) | Every relative link in a notebook's text points to an existing file (links are relative to `examples/`) |
+| `test_materials_fitted_over_the_simulated_wavelength[...]` (7) | A material is fitted over a band that contains the wavelength the same notebook simulates (the 1550 nm examples used to fit over 0.6–1.2 µm) |
 
 ## `test_migrate.py`: updating old scripts (19 tests, Phase 8)
 

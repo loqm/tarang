@@ -214,22 +214,24 @@ def test_every_material_is_documented():
         assert f"`{key}`" in sources, f"{key} missing from SOURCES.md"
         assert f"`{key}`" in readme, f"{key} missing from the README material table"
         assert Path(rel).name in sources, f"{rel} missing from SOURCES.md"
-    for csv in (ROOT / "media" / "data").glob("*.csv"):
+    csvs = list((ROOT / "tarang" / "media" / "data").glob("*.csv"))
+    assert len(csvs) >= len(database), "no material CSVs found: wrong data folder?"
+    for csv in csvs:
         assert csv.name in sources, f"{csv.name} is not documented in SOURCES.md"
 
 
 # ---- run the README's first steps ---------------------------------------------------- #
 @pytest.mark.slow
 def test_readme_first_run_examples_execute(tmp_path, monkeypatch, no_show):
-    """Steps 1-3 of README section 4 and the logging example, executed in order in a
+    """Steps 1-3 of the README quick start and the logging example, executed in order in a
     temporary folder (local mode solver only). Step 4, a 2 x 4 dispersion sweep, is
     checked for names and keywords above but not run here (several minutes)."""
     readme = _text("Readme.md")
-    section4 = readme.split("## 4. ", 1)[1].split("\n## 5. ", 1)[0]
-    section8 = readme.split("## 8. ", 1)[1].split("\n## 9. ", 1)[0]
-    blocks = re.findall(r"```python\n(.*?)```", section4, re.S)
+    def section(title):
+        return readme.split(f"\n## {title}", 1)[1].split("\n## ", 1)[0]
+    blocks = re.findall(r"```python\n(.*?)```", section("Quick start"), re.S)
     blocks = [b for b in blocks if "dispersion_in_geometry" not in b]
-    blocks += re.findall(r"```python\n(.*?)```", section8, re.S)
+    blocks += re.findall(r"```python\n(.*?)```", section("Logging"), re.S)
     assert len(blocks) == 4
 
     monkeypatch.chdir(tmp_path)

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 305" width="1160" height="305" role="img" aria-labelledby="t d">
+<title id="t">What happens on every cloud run</title>
+<desc id="d">TARANG builds the simulation and computes its fingerprint. If a verified result with that fingerprint is on disk, it is loaded for free. Otherwise the simulation is uploaded as a draft and priced; if the estimate is above the limit, the draft is deleted and CostLimitExceededError is raised with nothing charged; otherwise it runs on the cloud and the result is stored under its fingerprint, so it is never run twice.</desc>
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1c3f6e"/></marker>
+</defs>
+<rect width="1160" height="305" rx="10" fill="#f7f9fc"/>
+<text x="40" y="44" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="600" fill="#1c3f6e">Every cloud run: never paid twice, never above your limit</text>
+
+<g font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" text-anchor="middle">
+<!-- build -->
+<rect x="40" y="80" width="150" height="62" rx="7" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
+<text x="115" y="106" font-size="14" font-weight="600" fill="#1c3f6e">Build simulation</text>
+<text x="115" y="126" font-size="11.5" fill="#3167a8">local, free</text>
+<!-- fingerprint -->
+<rect x="220" y="80" width="170" height="62" rx="7" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
+<text x="305" y="106" font-size="14" font-weight="600" fill="#1c3f6e">Fingerprint</text>
+<text x="305" y="126" font-size="11.5" fill="#3167a8">SHA-256, whole simulation</text>
+<!-- cache? -->
+<polygon points="490,72 560,111 490,150 420,111" fill="#ffffff" stroke="#6d7a89" stroke-width="1.6"/>
+<text x="490" y="108" font-size="13" font-weight="600" fill="#1c3f6e">On disk?</text>
+<text x="490" y="124" font-size="11" fill="#6d7a89">verified</text>
+<!-- load -->
+<rect x="420" y="200" width="140" height="62" rx="7" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
+<text x="490" y="226" font-size="14" font-weight="600" fill="#1c3f6e">Load result</text>
+<text x="490" y="246" font-size="11.5" fill="#3167a8">free</text>
+<!-- price -->
+<rect x="595" y="80" width="160" height="62" rx="7" fill="#fbe7d2" stroke="#d98032" stroke-width="1.6"/>
+<text x="675" y="106" font-size="14" font-weight="600" fill="#1c3f6e">Upload draft</text>
+<text x="675" y="126" font-size="11.5" fill="#d98032">get the cost estimate</text>
+<!-- limit? -->
+<polygon points="860,72 935,111 860,150 785,111" fill="#ffffff" stroke="#6d7a89" stroke-width="1.6"/>
+<text x="860" y="108" font-size="13" font-weight="600" fill="#1c3f6e">≤ limit?</text>
+<text x="860" y="124" font-size="11" fill="#6d7a89">max_cost</text>
+<!-- refuse -->
+<rect x="755" y="200" width="210" height="62" rx="7" fill="#ffffff" stroke="#6d7a89" stroke-width="1.6"/>
+<text x="860" y="224" font-size="13" font-weight="600" fill="#1c3f6e">Delete draft, raise</text>
+<text x="860" y="244" font-size="11.5" fill="#6d7a89">CostLimitExceededError: 0 charged</text>
+<!-- run -->
+<rect x="975" y="80" width="150" height="62" rx="7" fill="#fbe7d2" stroke="#d98032" stroke-width="1.6"/>
+<text x="1050" y="106" font-size="14" font-weight="600" fill="#1c3f6e">Run, then store</text>
+<text x="1050" y="126" font-size="11.5" fill="#d98032">under the fingerprint</text>
+</g>
+
+<g stroke="#1c3f6e" stroke-width="2" fill="none">
+<line x1="190" y1="111" x2="214" y2="111" marker-end="url(#a)"/>
+<line x1="385" y1="111" x2="414" y2="111" marker-end="url(#a)"/>
+<line x1="560" y1="111" x2="589" y2="111" marker-end="url(#a)"/>
+<line x1="490" y1="150" x2="490" y2="194" marker-end="url(#a)"/>
+<line x1="755" y1="111" x2="779" y2="111" marker-end="url(#a)"/>
+<line x1="860" y1="150" x2="860" y2="194" marker-end="url(#a)"/>
+<line x1="935" y1="111" x2="969" y2="111" marker-end="url(#a)"/>
+<path d="M1050 142 V290 H140 V148" stroke-dasharray="5 4" marker-end="url(#a)"/>
+</g>
+<g font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#6d7a89">
+<text x="574" y="102">no</text>
+<text x="498" y="180">yes</text>
+<text x="946" y="102">yes</text>
+<text x="868" y="180">no</text>
+<text x="600" y="283" fill="#3167a8">the same simulation later: found on disk, free</text>
+</g>
+</svg>
