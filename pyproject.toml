@@ -57,8 +57,11 @@ notebooks = [
 multinest = [
     "pymultinest",           # Python wrapper only: also install libmultinest (see top of file)
 ]
+layout = [
+    "gdstk>=0.9",            # GDS export of designs (python -m tarang.design)
+]
 test = [
-    "tarang-photonics[plots]",
+    "tarang-photonics[plots,layout]",
     "pytest>=8",
     "pytest-cov",
 ]

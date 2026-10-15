@@ -139,9 +139,9 @@ def test_core_dependencies_are_required_not_optional(module):
 
 
 def test_optional_imports_are_guarded():
-    """getdist, corner and pymultinest are extras: TARANG must import without them,
-    so they may only be imported inside functions or try blocks, never at module top."""
-    optional = {"getdist", "corner", "pymultinest"}
+    """getdist, corner, pymultinest and gdstk are extras: TARANG must import without
+    them, so they may only be imported inside functions or try blocks, never at module top."""
+    optional = {"getdist", "corner", "pymultinest", "gdstk"}
     offenders = []
     for pkg in _top_level_packages():
         for path in (ROOT / pkg).rglob("*.py"):
@@ -163,6 +163,7 @@ def test_test_extra_installs_what_the_test_suite_imports():
     assert {"pytest", "pytest-cov", "tarang-photonics"} <= test_extra
     plots = {_requirement_name(r) for r in PROJECT["optional-dependencies"]["plots"]}
     assert {"getdist", "corner"} <= plots
+    assert "gdstk" in {_requirement_name(r) for r in PROJECT["optional-dependencies"]["layout"]}
 
 
 # ---- environment.yml and CI agree with pyproject.toml --------------------------- #

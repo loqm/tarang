@@ -58,20 +58,27 @@ def unique_dir(base: Path, overwrite: bool = False) -> Path:
         k += 1
 
 
-def solve_profile(H, W, wl_min, wl_max, nwl, steps, bend_radius, num_modes=10, mat=None):
+def default_pump(wl_min: float, wl_max: float) -> float:
+    """Pump wavelength for D_int: 1.55 um when it is in the band, else the band centre."""
+    return 1.55 if wl_min <= 1.55 <= wl_max else round((wl_min + wl_max) / 2, 4)
+
+
+def solve_profile(H, W, wl_min, wl_max, nwl, steps, bend_radius, num_modes=10, mat=None,
+                  pump=None):
     mat = dict(mat or {})
     import tidy3d as td
     from tidy3d.plugins.mode import ModeSolver
     from tarang.waveguide.dispersion_mapping import core as sc
+    pump = pump or default_pump(wl_min, wl_max)
     sim = sc.build_sim(H, W, wl0=(wl_min + wl_max) / 2, steps=steps,
-                       margin_y=(3.0 if bend_radius else 2.0), **mat)
-    core_m = sc.medium(mat.get("core", sc.DEFAULT_CORE))
-    sub_m = sc.medium(mat.get("substrate", sc.DEFAULT_SUBSTRATE))
+                       margin_y=(3.0 if bend_radius else 2.0), band=(wl_min, wl_max), **mat)
+    core_m = sc.medium_for(mat.get("core", sc.DEFAULT_CORE), wl_min, wl_max)
+    sub_m = sc.medium_for(mat.get("substrate", sc.DEFAULT_SUBSTRATE), wl_min, wl_max)
     top_key = mat.get("cladding")
-    top_m = None if sc.is_air(top_key) else sc.medium(top_key)
+    top_m = None if sc.is_air(top_key) else sc.medium_for(top_key, wl_min, wl_max)
     wls = np.linspace(wl_min, wl_max, nwl)
     plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
-    kw = dict(num_modes=num_modes, target_neff=sc.n_of(core_m, 1.55))
+    kw = dict(num_modes=num_modes, target_neff=sc.n_of(core_m, pump))
     if bend_radius:
         kw.update(bend_radius=float(bend_radius), bend_axis=1, num_pml=(12, 12))
     data = ModeSolver(simulation=sim, plane=plane, freqs=td.C_0 / wls,
@@ -90,13 +97,14 @@ def solve_profile(H, W, wl_min, wl_max, nwl, steps, bend_radius, num_modes=10, m
     return dict(H=H, W=W, steps=steps, bend_radius=bend_radius,
                 core=mat.get("core", sc.DEFAULT_CORE),
                 substrate=mat.get("substrate", sc.DEFAULT_SUBSTRATE),
-                cladding=None if sc.is_air(top_key) else top_key,
+                cladding=None if sc.is_air(top_key) else top_key, pump=pump,
                 wl=list(map(float, wls)),
                 neff_TE0=neff, te_frac_TE0=tefrac, n_cut=ncut)
 
 
 def analyse(rec, R_um, deg=8, mu_max=None):
     wl = np.array(rec["wl"]); n = np.array(rec["neff_TE0"], float)
+    pump = rec.get("pump") or default_pump(min(rec["wl"]), max(rec["wl"]))
     good = np.isfinite(n) & (n > np.array(rec["n_cut"]))          # guided only
     wl, n = wl[good], n[good]
     x = (wl - wl.mean()) / (wl.max() - wl.min())                     # scaled for conditioning
@@ -116,7 +124,7 @@ def analyse(rec, R_um, deg=8, mu_max=None):
     om = 2 * np.pi * C / (wf * 1e-6)
     m_of = nf * om * R / C                                            # decreasing in wf
     order = np.argsort(om); om_s, m_s = om[order], m_of[order]
-    om0 = 2 * np.pi * C / 1.55e-6
+    om0 = 2 * np.pi * C / (pump * 1e-6)
     m0 = int(round(np.interp(om0, om_s, m_s)))
     om_p = np.interp(m0, m_s, om_s)                                   # exact pump resonance
     mus = np.arange(int(np.ceil(m_s.min())) - m0, int(np.floor(m_s.max())) - m0 + 1)
@@ -129,10 +137,11 @@ def analyse(rec, R_um, deg=8, mu_max=None):
                    Dint[np.abs(mus) <= max(5, len(mus) // 20)], 3)
     D2, D3 = 2 * q[1], 6 * q[0]
     lam_mu = 2 * np.pi * C / om_mu * 1e9
-    i0 = np.argmin(np.abs(wf - 1.55))
+    i0 = np.argmin(np.abs(wf - pump))
     return dict(wf=wf, nf=nf, ng=ng, D=D, zdw=zdw, resid=resid, mus=mus, Dint=Dint,
                 lam_mu=lam_mu, FSR_GHz=D1 / (2 * np.pi) / 1e9, D2_2pi_MHz=D2 / (2 * np.pi) / 1e6,
                 D3_2pi_kHz=D3 / (2 * np.pi) / 1e3, D_pump=float(D[i0]), ng_pump=float(ng[i0]),
+                pump=pump,
                 wl_raw=wl, n_raw=n)
 
 
@@ -162,7 +171,7 @@ def plot_all(data_path, R_um, overwrite, deg):
         ax[0, 0].set_ylabel("n_eff(TE00)"); ax[0, 0].legend(fontsize=8)
         ax[0, 1].plot(A["wf"], A["ng"]); ax[0, 1].set_ylabel("n_g(TE00)")
         ax[1, 0].plot(A["wf"], A["D"], "k-"); ax[1, 0].axhline(0, color="b", ls="--")
-        ax[1, 0].axvline(1.55, color="0.5", ls=":")
+        ax[1, 0].axvline(A["pump"], color="0.5", ls=":")
         for z in A["zdw"]:
             ax[1, 0].axvline(z, color="crimson", ls="--", lw=1)
             ax[1, 0].text(z, ax[1, 0].get_ylim()[1] * 0.9, f" ZDW {z*1e3:.0f} nm",
@@ -171,7 +180,7 @@ def plot_all(data_path, R_um, overwrite, deg):
         for a_ in (ax[0, 0], ax[0, 1], ax[1, 0]):
             a_.set_xlabel("wavelength (µm)"); a_.grid(alpha=0.3)
         ax[1, 1].plot(A["lam_mu"], A["Dint"] / (2 * np.pi) / 1e9, "-", color="teal")
-        ax[1, 1].axhline(0, color="k", lw=0.8); ax[1, 1].axvline(1550, color="0.5", ls=":")
+        ax[1, 1].axhline(0, color="k", lw=0.8); ax[1, 1].axvline(A["pump"] * 1e3, color="0.5", ls=":")
         ax[1, 1].set_xlabel("resonance wavelength (nm)")
         ax[1, 1].set_ylabel("D_int / 2π (GHz)")
         ax[1, 1].set_title(f"Ring R = {Rb or R_um:g} µm: FSR {A['FSR_GHz']:.0f} GHz, "
@@ -186,7 +195,7 @@ def plot_all(data_path, R_um, overwrite, deg):
         fig.savefig(out / f"{tag}.png"); plt.close(fig)
         axD.plot(A["wf"], A["D"], lw=2, label=name)
         axI.plot(A["lam_mu"], A["Dint"] / (2 * np.pi) / 1e9, lw=2, label=name)
-        rows.append(dict(geometry=name, steps=st, D_pump=round(A["D_pump"], 1),
+        rows.append(dict(geometry=name, steps=st, pump_um=A["pump"], D_pump=round(A["D_pump"], 1),
                          ng_pump=round(A["ng_pump"], 4),
                          ZDWs_nm=";".join(f"{z*1e3:.0f}" for z in A["zdw"]) or "none in band",
                          R_um=Rb or R_um, FSR_GHz=round(float(A["FSR_GHz"]), 1),
@@ -217,6 +226,8 @@ def main():
     ap.add_argument("--core", default="si3n4", help="core medium key in media.json")
     ap.add_argument("--substrate", default="sio2", help="substrate (BOX) medium key")
     ap.add_argument("--cladding", default="air", help='top cladding medium key, or "air"')
+    ap.add_argument("--box", type=float, default=4.0, help="BOX thickness, um")
+    ap.add_argument("--cladding-height", type=float, default=2.0, help="top cladding thickness, um")
     ap.add_argument("--points", default="0.80x0.80,0.70x1.00")
     ap.add_argument("--wl-min", type=float, default=1.20)
     ap.add_argument("--wl-max", type=float, default=2.00)
@@ -226,6 +237,9 @@ def main():
                     help="solve the BENT waveguide at this radius (um)")
     ap.add_argument("--radius", type=float, default=100.0,
                     help="ring radius (um) used for D_int of straight-guide profiles")
+    ap.add_argument("--pump", type=float, default=None,
+                    help="pump wavelength (um) for D_int and D_pump; default 1.55 if in the "
+                         "band, else the band centre")
     ap.add_argument("--fit-degree", type=int, default=8)
     ap.add_argument("--data", default="results/dispersion_profiles.jsonl")
     ap.add_argument("--plot-only", action="store_true")
@@ -247,7 +261,9 @@ def main():
             t = time.time()
             try:
                 rec = solve_profile(H, W, a.wl_min, a.wl_max, a.nwl, a.steps, a.bend_radius,
-                                    mat=dict(core=a.core, substrate=a.substrate, cladding=clad))
+                                    mat=dict(core=a.core, substrate=a.substrate, cladding=clad,
+                                             box=a.box, cladding_height=a.cladding_height),
+                                    pump=a.pump)
             except Exception as e:
                 rec = dict(H=H, W=W, steps=a.steps, bend_radius=a.bend_radius,
                            error=f"{type(e).__name__}: {e}")

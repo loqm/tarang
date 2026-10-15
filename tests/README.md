@@ -2,12 +2,12 @@
 
 ```bash
 python -m pytest                     # whole suite, ~4 min, no FlexCredits
-python -m pytest -m "not slow"       # quick check, under a minute (skips 13 mode-solve / fitting tests)
+python -m pytest -m "not slow"       # quick check, under a minute (skips 15 mode-solve / fitting tests)
 python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `223 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `246 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -77,13 +77,14 @@ in `results/cloud_smoke/` that later offline tests can use.
 | `test_fix3_top_cladding_in_mode_count` | With an SiO₂ top cladding, guided modes are counted against max(n_sub, n_top), so the same core is multimode |
 | `test_fix2_fix4_dispersion_in_geometry_options` | The sweep accepts a top cladding and a mesh setting, and skips failed points instead of crashing |
 
-## `test_dispersion_mapping.py`: dispersion-mapping package (3 tests, PR #1)
+## `test_dispersion_mapping.py`: dispersion-mapping package (4 tests, PR #1 and Phase 10)
 
 | Test | Checks |
 |---|---|
 | `test_media_registry_has_malitson` | The package reads the corrected SiO₂ (1.444) |
 | `test_reference_point_800x800` | n_TE in 1.65–1.68, TM above TE, one guided TE mode, D > 0, smooth n_eff(λ) fit |
 | `test_index_shift_raises_dispersion` | Raising the core index by 0.02 increases D, the expected physical trend |
+| `test_materials_are_fitted_over_the_band_that_is_solved` | Telecom bands keep the 1.1–2.4 µm material fit (results unchanged); a 780 nm band gets a fit that covers it; the D_int pump lies in the solved band |
 
 ## `test_cloud_run.py`: verified cache, cost guard and API key (16 tests, Phases 3a, 4 and 9)
 
@@ -105,7 +106,7 @@ in `results/cloud_smoke/` that later offline tests can use.
 | `test_missing_key_warns_with_the_fix` | No key: the warning says to run `tidy3d configure` |
 | `test_fresh_fit_and_cached_fit_give_the_same_fingerprint` (slow) | A simulation built right after a material is fitted has the same fingerprint as in a later session that reads the fit from the cache, so a result run in the fitting session is found again (it was not before Phase 9) |
 
-## `test_phase3a_fixes.py`: correctness fixes (24 tests, Phase 3a)
+## `test_phase3a_fixes.py`: correctness fixes (28 tests, Phases 3a and 10)
 
 | Test | Checks |
 |---|---|
@@ -122,6 +123,10 @@ in `results/cloud_smoke/` that later offline tests can use.
 | `test_c4_get_modes_flags_unguided` | **C4:** a 150×100 nm core reports `has_guided_mode = False`, and `require_guided=True` raises |
 | `test_r1_log_level_helper` | **R1:** `set_tidy3d_log_level` works on Tidy3D 2.12 |
 | `test_r1_notebooks_use_no_removed_config` | No notebook assigns the removed `td.config.logging_level` / `show_progress_bars` |
+| `test_get_medium_accepts_your_own_csv_file` (slow) | A material given as a CSV path is fitted and cached like a built-in one; a missing file is reported |
+| `test_fit_follows_sparse_data_between_the_points` (slow) | `si3n4` over 0.68–0.88 µm (three data points) follows the data between the points, by whichever route the fit takes on that machine; the 1550 nm fit is kept unchanged |
+| `test_swinging_fit_is_refitted` | A fit that strays between the points (forced, so it runs the same everywhere) is refitted with fewer poles, flagged `smoothness_fallback`, reported, and reused from the cache |
+| `test_fit_that_never_follows_the_data_is_refused` | With no acceptable fit, `get_medium` tries fewer poles, then wider ranges, then raises and caches nothing (stand-in fitter, instant) |
 
 ## `test_nested_backends.py`: nested sampling on every OS (11 tests, Phase 3b)
 
@@ -161,13 +166,14 @@ see `test_migrate.py`.)
 | `test_no_public_signature_uses_old_names` | No public function in the device packages still takes an old name |
 | `test_every_alias_points_at_a_real_parameter` | Every alias maps to a parameter that exists (guards against typos) |
 
-## `test_geometries.py`: every builder, validated (28 tests, Phase 4)
+## `test_geometries.py`: every builder, validated (31 tests, Phases 4 and 10)
 
 | Test | Checks |
 |---|---|
-| `test_builder_passes_tidy3d_pre_upload_validation[...]` (16) | All 16 builders (ridge, edge passive/out/in, full/half/partial ring passive/active, arc passive/active, grating 2D, 2D with Si handle, 3D) pass Tidy3D's own server-side check `validate_pre_upload()`, so a broken geometry is caught before any upload. Active builds have a source |
+| `test_builder_passes_tidy3d_pre_upload_validation[...]` (18) | All 18 builds (ridge, edge passive/out/in, full/half/partial ring passive/active, arc passive/active, grating 2D, 2D with Si handle, 3D, and full-etch 2D and 3D) pass Tidy3D's own server-side check `validate_pre_upload()`, so a broken geometry is caught before any upload. Active builds have a source |
 | `test_analysis_monitor_names_exist_in_builder[...]` (8) | Every monitor the analysis methods read by name (e.g. `field_xy`, `mode monitor`, `Mode Monitor In`) is created by the matching builder |
 | `test_grating_handle_layer_present_only_when_requested` | The Si handle appears only when `handle_medium` is given |
+| `test_full_etch_grating_has_no_floor_and_deeper_etch_is_refused` | A full etch (etch depth = film thickness) leaves no core under the grooves; an etch deeper than the film raises |
 | `test_ring_conversions_keep_geometry` | `to_half_ring()` / `to_full_ring()` return the right classes with unchanged radius, gap and width |
 | `test_fsr_formulas` | FSR = λ²/(n_g·2πR) and c/(n_g·2πR), consistent with each other |
 | `test_monitor_data_explains_what_is_missing` | A missing monitor is reported as "not defined" or "defined but no data", and old `except KeyError` / `except ValueError` handlers still catch it |
@@ -233,8 +239,8 @@ file outside `tarang/media/data/`).
 | `test_material_files_are_package_data` | Every material in `tarang/media/media.json` points to an existing CSV that is covered by the package-data patterns |
 | `test_every_third_party_import_is_declared` | Every non-standard-library import in the code is a declared dependency or extra |
 | `test_core_dependencies_are_required_not_optional` (×6) | tidy3d, numpy, pandas, pydantic, matplotlib and dynesty are required, not extras |
-| `test_optional_imports_are_guarded` | getdist, corner and pymultinest are never imported at module top, so TARANG imports without the extras |
-| `test_test_extra_installs_what_the_test_suite_imports` | `.[test]` brings pytest, pytest-cov and the plotting libraries |
+| `test_optional_imports_are_guarded` | getdist, corner, pymultinest and gdstk are never imported at module top, so TARANG imports without the extras |
+| `test_test_extra_installs_what_the_test_suite_imports` | `.[test]` brings pytest, pytest-cov, the plotting libraries and gdstk (`layout` extra) |
 | `test_environment_yml_installs_this_package` | `environment.yml` pins Python 3.11+ and installs TARANG with the test extra |
 | `test_ci_installs_from_pyproject` | The GitHub workflow installs from `pyproject.toml` (not the removed `requirements-test.txt`) and tests only supported Python versions. Skipped when run from a source archive |
 
@@ -244,7 +250,7 @@ Run with `python -I tests/installed_smoke.py` **from a folder outside the
 repository**, after `pip install`. `-I` makes sure Python uses the installed copy,
 not the repository folders. It checks that every module imports, every packaged
 material loads and fits, a ridge-waveguide simulation passes Tidy3D's server-side
-validation, the dynesty backend is available and `python -m tarang.migrate` works.
+validation, the dynesty backend is available, and `python -m tarang.migrate` and `python -m tarang.design` work.
 No network, no FlexCredits.
 
 ## `test_docs.py`: the documentation matches the code (24 tests, Phase 6)
@@ -302,3 +308,27 @@ needs no other edits.
 | `test_every_target_module_exists` | Every new module name in the tool's mapping imports |
 | `test_notebook_code_cells_are_migrated_and_magics_kept` | In a notebook only code cells change; `%matplotlib` and `!pip` lines and Markdown cells are kept |
 | `test_command_line_dry_run_then_write_keeps_line_endings` | Without `--write` nothing is changed and the files that would change are listed; with `--write` Windows (CRLF) line endings are kept; a file that is not valid Python is reported and left untouched; a mistyped path is reported |
+
+## `test_design.py`: the guided design tool (15 tests, Phase 10)
+
+The local stages call the dispersion-mapping tools, tested above; these tests check the
+tool around them on a design whose earlier results are filled in by hand, with the fake
+cloud for the cloud stages.
+
+| Test | Checks |
+|---|---|
+| `test_settings_file_round_trip_and_unknown_keys` | `design.toml` is written and read back exactly; unset values stay unset; a misspelt setting is an error |
+| `test_list_and_range_answers` | Answers such as `0.6, 0.8` and `0.60:0.90:0.10` become lists |
+| `test_non_interactive_answers_use_defaults_and_are_recorded` | With `--yes`, defaults are used and written to the settings |
+| `test_interactive_answer_is_checked_and_stored` | A wrong answer is refused with a message and asked again |
+| `test_a_settings_change_reruns_that_stage_and_later_ones` | Changing the FSR target reruns the ring stage and every later one, not the cross-section |
+| `test_physics_helpers` | R from FSR and back; slab TE index of 220 nm Si (2.848); Q_int from loss; loaded Q |
+| `test_over_coupled_gap_is_narrower_and_k1_is_critical` | The over-coupled gap from the coupling fit is narrower, and K = 1 gives the critical gap |
+| `test_candidates_are_ranked_by_robustness` | Map points that are anomalous and single-mode are ranked by how many neighbours are too |
+| `test_gap_stage_prices_every_gap_then_runs` | Every gap is priced (uploaded and deleted) before the sweep runs; the cost is added to the budget |
+| `test_gap_stage_over_budget_is_skipped_without_running` | Above the budget nothing starts and the stage is marked skipped |
+| `test_grating_stage_runs_grid_then_fibre_position` | Full etch uses the film thickness; the Bragg estimate is sensible; grid then fibre-position runs; table written |
+| `test_layout_reproduces_the_design_dimensions` | GDS files exist; ring outer radius R + W/2 and the gap above the bus are exact; both couplers have all teeth; parameters in JSON and MATLAB |
+| `test_trench_tone_draws_the_etched_regions` | Trench tone draws a trench of the requested width around the core |
+| `test_report_lists_values_to_check_elsewhere` | The report has every section; `check_values.csv` and `design_summary.json` are written, with no solver-specific content |
+| `test_command_line_lists_the_stages` | `python -m tarang.design --list` works |

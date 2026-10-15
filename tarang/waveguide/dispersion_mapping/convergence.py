@@ -144,6 +144,8 @@ def main():
     ap.add_argument("--core", default="si3n4", help="core medium key in media.json")
     ap.add_argument("--substrate", default="sio2", help="substrate (BOX) medium key")
     ap.add_argument("--cladding", default="air", help='top cladding medium key, or "air"')
+    ap.add_argument("--box", type=float, default=4.0, help="BOX thickness, um")
+    ap.add_argument("--cladding-height", type=float, default=2.0, help="top cladding thickness, um")
     ap.add_argument("--points", default="0.80x0.80,0.70x1.00", help='"HxW,HxW" in um')
     ap.add_argument("--steps-list", default="20,30,40,50,70,90")
     ap.add_argument("--bend-radius", type=float, default=None)
@@ -155,7 +157,8 @@ def main():
     ap.add_argument("--overwrite", action="store_true", help="reuse the plots folder")
     a = ap.parse_args()
     clad = None if str(a.cladding).lower() in ("", "air", "none") else a.cladding
-    mat = dict(core=a.core, substrate=a.substrate, cladding=clad)
+    mat = dict(core=a.core, substrate=a.substrate, cladding=clad, box=a.box,
+               cladding_height=a.cladding_height)
     data = Path(a.data); data.parent.mkdir(parents=True, exist_ok=True)
 
     if not a.plot_only:

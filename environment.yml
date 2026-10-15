@@ -21,4 +21,4 @@ dependencies:
   # - multinest
   # - pymultinest
   - pip:
-      - -e .[plots,notebooks,test]
+      - -e .[plots,notebooks,layout,test]

@@ -23,6 +23,7 @@ publish.
 | [Pipeline](#pipeline) and [Capabilities](#capabilities) | what each stage computes, and which stages cost credits |
 | [Installation](#installation) | one block of commands |
 | [Quick start](#quick-start-local-no-credits) | five steps, all local and free, with the figures they produce |
+| [Guided design](#guided-design-one-command) | one command from materials to GDS, at any wavelength |
 | [Cloud runs and cost control](#cloud-runs-and-cost-control) | caching, cost limits, resuming |
 | [Materials](#materials), [Logging](#logging), [Repository layout](#repository-layout) | reference, including the two `tarang.migrate` commands for old scripts |
 | [Known limitations](#known-limitations), [Troubleshooting](#troubleshooting) | what to watch for, and fixes for common errors |
@@ -61,6 +62,7 @@ Settle a geometry in the blue stages before running orange ones.
 | Grating coupler | 2D/3D coupling efficiency; nested-sampling design search | `tarang.grating_coupler.GratingCoupler`, `tarang.grating_coupler.nested_sampler` |
 | Edge coupler | Inverse-taper efficiency; tip × taper sweep | `tarang.edge_coupler.EdgeCoupler`, `tarang.edge_coupler.parametric_optimization_sweep` |
 | Plots | Geometry views, corner plots | `tarang.utilities.sim_plotter`, `tarang.utilities.plot_corner` |
+| Guided design | All stages in one session: cross-section, ring, gap, grating coupler, GDS, report | `python -m tarang.design` |
 
 ---
 
@@ -83,7 +85,8 @@ Without conda, into an existing environment: `pip install -e ".[plots,notebooks]
 | (none) | `tidy3d` ≥ 2.12, < 3; `numpy`, `pandas`, `pydantic`, `matplotlib`, `dynesty` |
 | `[plots]` | `getdist`, `corner` (posterior plots) |
 | `[notebooks]` | `jupyterlab`, `ipykernel`, `ipython` |
-| `[test]` | `pytest`, `pytest-cov`, plus `[plots]` |
+| `[layout]` | `gdstk` (GDS export of the guided design) |
+| `[test]` | `pytest`, `pytest-cov`, plus `[plots]` and `[layout]` |
 | `[multinest]` | `pymultinest` (needs the MultiNest library, below) |
 
 Then, once per machine:
@@ -189,6 +192,45 @@ each starts with a table of the functions it shows):
 
 ---
 
+## Guided design (one command)
+
+`python -m tarang.design` runs the whole pipeline as one session, for any wavelength the
+material data cover:
+
+```
+materials -> cross-section (H x W) -> ring (radius, Q, D_int) -> ring-bus gap -> grating coupler -> layout -> report
+   local           local                    local                  cloud            cloud           local     local
+```
+
+Each stage asks only what it needs (the default is shown; Enter accepts it), then prints
+its results and saves its figures and tables. Cloud stages first show the FlexCredit
+estimate and wait for your confirmation. Your answers are saved in `design.toml`, so the
+same design can be repeated, or continued after a stop, without questions:
+
+```bash
+python -m tarang.design                                     # asks everything
+python -m tarang.design --config design_runs/my_ring/design.toml --yes   # repeat, no questions
+python -m tarang.design --config design_runs/my_ring/design.toml --only grating --redo grating
+python -m tarang.design --list                              # the stages
+```
+
+| Stage | Asks for | Produces |
+|---|---|---|
+| Materials | wavelength, core, box, cladding (a key, or your own CSV of measured *n*, *k*) | fitted *n*(λ), *k*(λ) table and plot |
+| Cross-section | film thickness if fixed, map ranges, tolerances | design map, ranked candidates, tolerance and mesh check of your choice |
+| Ring | FSR target, losses | radius, *Q*<sub>int</sub>, bend loss, *D*(λ), *D*<sub>int</sub> |
+| Gap | gaps, over-coupling ratio | critical and over-coupled gap, loaded *Q* |
+| Grating coupler | etch (full or partial), fibre angle and MFD | period, fill factor and fibre position from a priced sweep; optional 3D check |
+| Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv` |
+| Report | | `report.md`, `design_summary.json`, `tables/check_values.csv` |
+
+`tables/check_values.csv` lists every number the design rests on with how it was computed,
+and `tables/materials_nk.csv` the fitted material data, so the design can be checked in any
+other solver. GDS export needs the `layout` extra (`pip install -e ".[layout]"`; included in
+`environment.yml`).
+
+---
+
 ## Cloud runs and cost control
 
 <p align="center">
@@ -227,7 +269,9 @@ is right.
 | `air` | n = 1 | any |
 
 Choose a dataset whose range covers your whole simulation band; outside it the fit is an
-extrapolation and TARANG warns. References, recommendations per wavelength and how to add a
+extrapolation and TARANG warns. Your own measured data (for example ellipsometry of your
+film) can be used directly by path: `get_medium("data/my_film.csv", wl_range=(1.3, 1.8))`,
+with columns `wl` (µm), `n` and optionally `k`. References, recommendations per wavelength and how to add a
 material: [SOURCES.md](tarang/media/data/SOURCES.md).
 
 ## Logging
@@ -257,6 +301,7 @@ tarang/                 the Python package
 ├── grating_coupler/    GratingCoupler, nested sampler
 ├── edge_coupler/       EdgeCoupler, taper sweep
 ├── utilities/          cloud runs (cache, cost guard), samplers, plotting
+├── design/             python -m tarang.design: the guided design tool
 └── migrate.py          updates scripts written for the old layout
 examples/               notebooks and nested_sampling_example.py
 tests/                  test suite (tests/README.md)

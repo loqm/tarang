@@ -149,7 +149,7 @@ def main():
     ap.add_argument("--deg-tol", dest="deg_tol", type=float, default=0.01)
     ap.add_argument("--alpha-scat", type=float, default=0.3, help="dB/cm")
     ap.add_argument("--alpha-abs", type=float, default=0.1, help="dB/cm")
-    ap.add_argument("--n2", type=float, default=2.4e-19, help="m^2/W, Si3N4")
+    ap.add_argument("--n2", type=float, default=2.4e-19, help="Kerr index of the core, m^2/W (default: Si3N4)")
     ap.add_argument("--out", default="results/finalist_report")
     ap.add_argument("--overwrite", action="store_true",
                     help="reuse --out instead of creating _v2, _v3, ...")
@@ -365,10 +365,12 @@ def main():
                  .get(r["all_neighbours_target"],
                       f"tolerance box touches {r['neighbour_classes']}"))
         L.append(f"- **{r['name']}**: " + "; ".join(v) + ".")
+    cores = ", ".join(sorted({str(straight[(round(H, 4), round(W, 4), None)].get("core", "si3n4"))
+                              for H, W in fins}))
     L += ["", f"Loss assumptions: α_scat = {a.alpha_scat} dB/cm, α_abs = {a.alpha_abs} dB/cm, "
           f"n2 = {a.n2:g} m²/W. P_th is a comparative estimate (±~2×).",
-          "Model limits: vertical sidewalls, Luke et al. film index, no avoided mode crossings "
-          "between ring mode families."]
+          "Model limits: vertical sidewalls, the tabulated index of the core material "
+          f"({cores}), no avoided mode crossings between ring mode families."]
     (out / "report.md").write_text("\n".join(L), encoding="utf-8")
     print("\n".join(L))
     print(f"\n-> {out.resolve()}")

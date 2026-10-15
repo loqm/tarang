@@ -72,9 +72,14 @@ def _media_database():
 
 
 def _material_path(medium_key):
-    """Resolve a material CSV from the lazy registry.
+    """Resolve a material CSV: a key in the registry, or a path to your own CSV file.
     Report unknown materials before attempting any file reads or fitting.
     """
+    if str(medium_key).lower().endswith(".csv"):
+        path = Path(medium_key).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"Material file {path} does not exist.")
+        return path
     database = _media_database()
     key = medium_key.lower()
     if key not in database:
@@ -126,6 +131,34 @@ def write_json_atomic(
 # ---- Main Helper Function ---- #
 
 
+# A fitted index may not stray from the tabulated data by more than this between the data
+# points. Smooth data interpolated linearly differ from the true curve by ~1e-5; a pole
+# fit to too few or noisy points can swing by 0.1-4 between them (e.g. si3n4 fitted over
+# 0.68-0.88 um, where the table has only 3 points).
+MAX_EXCURSION = 2e-3
+
+
+def fit_excursion(medium: td.Medium, wvl_um, n_data, wl_lo: float, wl_hi: float) -> float:
+    """Largest |n_fit - n_data| within [wl_lo, wl_hi], probed at the data points and at 7
+    points between each pair of neighbouring points (data there by linear interpolation)."""
+    wvl_um, n_data = np.asarray(wvl_um, float), np.asarray(n_data, float)
+    inside = (wvl_um >= wl_lo) & (wvl_um <= wl_hi)
+    idx = np.nonzero(inside)[0]
+    if idx.size == 0:
+        return 0.0
+    lo_i, hi_i = max(idx[0] - 1, 0), min(idx[-1] + 1, wvl_um.size - 1)
+    wl, n = wvl_um[lo_i:hi_i + 1], n_data[lo_i:hi_i + 1]
+    frac = np.arange(1, 8) / 8
+    between = (wl[:-1, None] + np.outer(np.diff(wl), frac)).ravel()
+    probe = np.concatenate([wl, between])
+    ref = np.concatenate([n, np.interp(between, wl, n)])
+    keep = (probe >= wl_lo) & (probe <= wl_hi)
+    if not keep.any():
+        return 0.0
+    n_fit = np.real(medium.nk_model(td.C_0 / probe[keep])[0])
+    return float(np.max(np.abs(n_fit - ref[keep])))
+
+
 def get_medium(
     medium_key: str,
     wl_range: tuple = None,
@@ -137,7 +170,14 @@ def get_medium(
 ) -> td.Medium:
     """Fit or load a material medium using the requested bounds and tolerances.
     Infer omitted wavelength bounds from the CSV; use_cache=False forces a new fit.
+
+    medium_key is a key in media.json ("si3n4", "sio2", ...) or the path of your own
+    CSV file ending in .csv, with columns wl (um, increasing), n and optionally k, for
+    example ellipsometry data of your film: get_medium("data/my_sin_film.csv", (1.3, 1.8)).
+    Fits of your own files are cached like the built-in ones, keyed on the file's
+    contents.
     """
+    medium_key = str(medium_key)
 
     # -- Case-Insensitive Air Override Gate -- #
     if medium_key.lower() == "air":
@@ -256,7 +296,8 @@ def get_medium(
         if entry["max_num_poles"] < max_num_poles:
             rejection_reasons.append("insufficient_max_poles")
             continue
-        if entry["rms_err"] > tolerance:
+        if entry["rms_err"] > tolerance and not (entry.get("smoothness_fallback")
+                                                 and entry["tolerance"] <= tolerance):
             rejection_reasons.append("insufficient_accuracy")
             continue
         if not (c_wl_min <= req_wl_min + eps and c_wl_max >= req_wl_max - eps):
@@ -267,23 +308,31 @@ def get_medium(
 
     # 5. Cache Hit Evaluation
     if use_cache and valid_entries:
-        best_match = sorted(
+        for best_match in sorted(
             valid_entries,
             key=lambda x: (x["wl_range"][1] - x["wl_range"][0], x["max_num_poles"]),
-        )[0]
-
-        target_fit_path = FITTED_DIR / best_match["fit_filename"]
-        if target_fit_path.exists():
+        ):
+            target_fit_path = FITTED_DIR / best_match["fit_filename"]
+            if not target_fit_path.exists():
+                logger.warning(
+                    f" Valid manifest entry points to missing file {target_fit_path.name}."
+                )
+                continue
+            cached = td.PoleResidue.from_file(str(target_fit_path))
+            swing = fit_excursion(cached, wvl_um, n_data, req_wl_min, req_wl_max)
+            if swing > max(MAX_EXCURSION, 5 * tolerance) and not best_match.get("smoothness_fallback"):
+                logger.warning(
+                    f" Cached fit {best_match['fit_filename']} strays {swing:.2g} from the "
+                    f"{medium_key} data inside {wl_range}; not reused."
+                )
+                continue
             logger.info(
                 f" Cache HIT for {medium_key}. Reusing {best_match['fit_filename']} "
                 f"(Fit range: {best_match['wl_range']}, RMS: {best_match['rms_err']:.2e}, "
                 f"Poles allowed: {best_match['max_num_poles']})."
             )
-            return td.PoleResidue.from_file(str(target_fit_path))
-        else:
-            logger.warning(
-                f" Valid manifest entry points to missing file {target_fit_path.name}. Refitting..."
-            )
+            return cached
+        logger.info(f" No usable cached fit for {medium_key}. Fitting data...")
 
     else:
         if not use_cache:
@@ -311,27 +360,58 @@ def get_medium(
             f"[{medium_key}] Error! Wavelengths do not increase monotonically!"
         )
 
-    # 7. Initialize Fitter
-    try:
-        fitter = Fitter(
-            wvl_um=wvl_um,
-            n_data=n_data,
-            k_data=k_data,
-            wvl_range=wl_range,
-        )
-    except ValidationError as e:
-        raise RuntimeError(
-            f"[{medium_key}] Dispersion fitter rejected the data in {csv_path.name}: {e}"
-        ) from e
+    # 7-8. Fit, then check that the fit follows the data between the data points. A fit
+    #      that strays (too few or noisy points for the pole count) is retried with fewer
+    #      poles, then over a wider stretch of the data; good fits are kept as they are.
+    def _fit(rng, poles):
+        try:
+            fitter = Fitter(wvl_um=wvl_um, n_data=n_data, k_data=k_data, wvl_range=tuple(rng))
+        except ValidationError as e:
+            raise RuntimeError(
+                f"[{medium_key}] Dispersion fitter rejected the data in {csv_path.name}: {e}"
+            ) from e
+        logger.info(f" Running local fitter for {medium_key} over {tuple(rng)} um "
+                    f"(up to {poles} poles)...")
+        med, err = fitter.fit(tolerance_rms=tolerance, max_num_poles=poles)
+        return med, float(err), fit_excursion(med, wvl_um, n_data, req_wl_min, req_wl_max)
 
-    # 8. Execute Local Fit
-    logger.info(
-        f" Running local fitter for {medium_key} (up to {max_num_poles} poles)..."
-    )
-    medium, rms_err = fitter.fit(
-        tolerance_rms=tolerance,
-        max_num_poles=max_num_poles,
-    )
+    limit = max(MAX_EXCURSION, 5 * tolerance)       # a loose tolerance allows a looser fit
+    fit_range = [float(wl_range[0]), float(wl_range[1])]
+    medium, rms_err, swing = _fit(fit_range, max_num_poles)
+    fallback = False
+    if swing > limit:
+        logger.warning(
+            f"[{medium_key}] The {max_num_poles}-pole fit strays {swing:.2g} from the data "
+            f"between the data points in {tuple(wl_range)} um (too few or noisy points); "
+            f"refitting with fewer poles / a wider stretch of the data."
+        )
+        fallback = True
+        attempts = [(fit_range, p) for p in (6, 4, 3, 2, 1) if p < max_num_poles]
+        wide = list(fit_range)
+        for _ in range(4):                          # widen by 50 % per step, within the data
+            span = wide[1] - wide[0]
+            wide = [max(data_wl_min, wide[0] - span / 4), min(data_wl_max, wide[1] + span / 4)]
+            attempts += [(list(wide), p) for p in (6, 4, 3, 2)]
+        best = (swing, medium, rms_err, fit_range, max_num_poles)
+        for rng, poles in attempts:
+            medium, rms_err, swing = _fit(rng, poles)
+            if swing < best[0]:
+                best = (swing, medium, rms_err, rng, poles)
+            if swing <= limit:
+                break
+        swing, medium, rms_err, fit_range, poles = best
+        if swing > 0.05:
+            raise RuntimeError(
+                f"[{medium_key}] No pole fit follows the data in {tuple(wl_range)} um (best "
+                f"strays {swing:.2g}). The data are too sparse or noisy there; use a wider "
+                "wl_range or another dataset."
+            )
+        logger.warning(
+            f"[{medium_key}] Using a {poles}-pole fit over "
+            f"{tuple(round(x, 4) for x in fit_range)} um: within {swing:.2g} of the data "
+            f"(RMS {rms_err:.2e})" + ("." if swing <= limit else
+                                     f"; above the {limit:g} target, check this material.")
+        )
 
     logger.info(f" {medium_key} fit complete! RMS Error: {rms_err:.2e}")
 
@@ -355,12 +435,14 @@ def get_medium(
         "timestamp": datetime.now().isoformat(),
         "fit_filename": fit_filename,
         "csv_hash": current_csv_hash,
-        "wl_range": wl_range,
+        "wl_range": [float(x) for x in fit_range] if fallback else wl_range,
         "max_num_poles": max_num_poles,
         "tolerance": tolerance,
         "rms_err": float(rms_err),
         "force_zero_k": force_zero_k,
     }
+    if fallback:
+        new_entry["smoothness_fallback"] = True
 
     manifest["fits"].append(new_entry)
     write_json_atomic(
@@ -392,6 +474,7 @@ def get_medium_dispersion(
     Fetches a Tidy3D Medium object and generates the chromatic dispersion
     graph for it.
     """
+    medium_key = str(medium_key)
     if isinstance(
         output_path,
         str,

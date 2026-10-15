@@ -51,8 +51,25 @@ DEFAULT_SUBSTRATE = "sio2"
 
 @lru_cache(maxsize=None)
 def medium(key: str, wl_min: float = 1.1, wl_max: float = 2.4):
-    """TARANG medium from media.json, cached per process."""
+    """TARANG medium (media.json key or CSV path) fitted over [wl_min, wl_max], cached per
+    process."""
     return get_medium(key, wl_range=(wl_min, wl_max))
+
+
+def fit_band(wl_lo: float, wl_hi: float) -> tuple[float, float]:
+    """Wavelength range to fit the materials over so that [wl_lo, wl_hi] is covered.
+
+    Telecom work keeps the long-standing 1.1-2.4 um fit (so earlier results are
+    reproduced exactly); any band outside it, e.g. around 780 nm, gets a fit over the
+    band plus 5 % on each side instead of an extrapolated one."""
+    if 1.1 <= wl_lo and wl_hi <= 2.4:
+        return 1.1, 2.4
+    return round(wl_lo * 0.95, 4), round(wl_hi * 1.05, 4)
+
+
+def medium_for(key: str, wl_lo: float, wl_hi: float):
+    """Medium fitted over a band that covers [wl_lo, wl_hi] (see fit_band)."""
+    return medium(key, *fit_band(wl_lo, wl_hi))
 
 
 def shifted(med, n_shift: float, wl_ref: float = 1.55):
@@ -80,11 +97,13 @@ def stack_label(core=DEFAULT_CORE, substrate=DEFAULT_SUBSTRATE, cladding=None, b
 
 def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
               substrate=DEFAULT_SUBSTRATE, cladding=None, cladding_height=2.0,
-              n_shift=0.0, si_handle=False, si_thick=2.0, margin_y=2.0):
-    """Tidy3D simulation of the cross-section (lengths in um)."""
-    core_m = shifted(medium(core), n_shift)
-    sub_m = medium(substrate)
-    top_m = None if is_air(cladding) else medium(cladding)
+              n_shift=0.0, si_handle=False, si_thick=2.0, margin_y=2.0, band=None):
+    """Tidy3D simulation of the cross-section (lengths in um). Materials are fitted over
+    a range covering ``band`` (default wl0 +/- 0.1 um)."""
+    lo, hi = band or (wl0 - 0.1, wl0 + 0.1)
+    core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
+    sub_m = medium_for(substrate, lo, hi)
+    top_m = None if is_air(cladding) else medium_for(cladding, lo, hi)
     wg = rw.get_passive_simulation(
         width=width, height=height, length=2.0, core_medium=core_m, box_medium=sub_m,
         wavelength_um=wl0, box_height=box, top_cladding_medium=top_m,
@@ -143,12 +162,14 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     bent = bend_radius is not None
     if bent or si_handle:
         pml = max(pml, 12)
+    lo, hi = wl0 - span / 2, wl0 + span / 2
     sim = build_sim(height, width, wl0=wl0, steps=steps, box=box, core=core,
                     substrate=substrate, cladding=cladding, cladding_height=cladding_height,
-                    n_shift=n_shift, si_handle=si_handle, margin_y=(3.0 if bent else 2.0))
-    wls = np.linspace(wl0 - span / 2, wl0 + span / 2, npts)
+                    n_shift=n_shift, si_handle=si_handle, margin_y=(3.0 if bent else 2.0),
+                    band=(lo, hi))
+    wls = np.linspace(lo, hi, npts)
     plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
-    core_m = shifted(medium(core), n_shift)
+    core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
     spec_kw = dict(num_modes=num_modes, target_neff=n_of(core_m, wl0))
     if pml:
         spec_kw["num_pml"] = (pml, pml)
@@ -186,8 +207,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     else:
         aeff, gamma_core = float("nan"), float("nan")
 
-    n_sub = n_of(medium(substrate), wl0)
-    n_top = 1.0 if is_air(cladding) else n_of(medium(cladding), wl0)
+    n_sub = n_of(medium_for(substrate, lo, hi), wl0)
+    n_top = 1.0 if is_air(cladding) else n_of(medium_for(cladding, lo, hi), wl0)
     n_cut = max(n_sub, n_top)
     modes = []
     for m in range(num_modes):

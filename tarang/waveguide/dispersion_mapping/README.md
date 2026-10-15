@@ -28,7 +28,7 @@ python -m tarang.waveguide.dispersion_mapping.sweep --points 0.80x0.80,0.70x1.00
 python -m tarang.waveguide.dispersion_mapping.report --straight results/air_sweep_70steps_finalists.jsonl --bends "results/air_sweep_70steps_R*um_finalists.jsonl" --finalists 0.80x0.80,0.70x1.00
 ```
 
-**Material options** (all tools): `--core si3n4`, `--substrate sio2`, `--cladding air`. Any key in `tarang/media/media.json` works, e.g. `--core si3n4_hong` or `--cladding sio2`.
+**Material options** (all tools): `--core si3n4`, `--substrate sio2`, `--cladding air`. Any key in `tarang/media/media.json` works, e.g. `--core si3n4_hong` or `--cladding sio2`, or the path of your own CSV (`--core data/my_film.csv`).
 
 **Sweep-only options:** `--n-shift ±0.02` (core-index uncertainty), `--si-handle` (a silicon layer below the BOX, constant n = 3.4757), `--bend-radius R`, `--wl 1.30`.
 
@@ -48,6 +48,7 @@ print(r["D_TE0"], r["guided_TE"], r["neff_TE"][0] - r["neff_TM"][0])
 - **Mesh.** At least 50 steps/λ in the core for maps and 70 for decisions. The TARANG default of 20 is about 25 % off in D.
 - **SiO₂ data.** `sio2` now points to the standard Malitson fused-silica data (n = 1.444 at 1550 nm). The previous dataset (Nyakuchena; n = 1.420, 1.10–1.65 µm only) remains available as `sio2_nyakuchena` for reproducing older results.
 - **Regime classes.** By default the maps use three classes: normal (D < 0, grey), target (D ≥ 0 with exactly one guided TE mode, green) and multimode (D ≥ 0 with two or more guided TE modes, red). The package applies no dispersion safety margin. To apply your own (for example, from a calibration against measured devices), pass `--dmargin X` to `maps` or `report`; geometries with 0 ≤ D < X then form a yellow class.
+- **Other wavelengths.** `--wl 0.78` (and `--wl-min/--wl-max` for `broadband`) work at any wavelength the material data cover: the materials are fitted over a range covering the solved band (1.1–2.4 µm for telecom bands, as before), and `broadband --pump` sets the pump for D_int (default 1.55 µm if in the band, else the band centre).
 - **Bends.** Guided-mode counts are not meaningful in bends (`guided_counts_valid: false`), because the solver returns cladding modes there. Take single-mode decisions from straight guides.
 
 ## Validation

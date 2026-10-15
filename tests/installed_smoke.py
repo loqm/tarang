@@ -125,6 +125,13 @@ def main():
     check("python -m tarang.migrate available", new.changes == 2
           and "from tarang.media import get_medium" in new.new_source)
 
+    # 6. the guided design tool is installed and starts
+    import subprocess
+    listing = subprocess.run([sys.executable, "-m", "tarang.design", "--list"],
+                             capture_output=True, text=True)
+    check("python -m tarang.design available", listing.returncode == 0
+          and "materials" in listing.stdout, listing.stderr[-300:])
+
     print("INSTALLED-PACKAGE SMOKE TEST PASSED")
 
 

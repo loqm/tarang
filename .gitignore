@@ -26,3 +26,9 @@ TESTING_*
 .coverage
 coverage.xml
 .tarang-cache/
+
+# Jupyter autosave copies
+.ipynb_checkpoints/
+
+# Runs of python -m tarang.design
+design_runs/

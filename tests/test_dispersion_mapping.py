@@ -31,3 +31,17 @@ def test_index_shift_raises_dispersion():
     base = solve_point(0.70, 1.00, steps=30)["D_TE0"]
     up = solve_point(0.70, 1.00, steps=30, n_shift=0.02)["D_TE0"]
     assert up > base
+
+
+def test_materials_are_fitted_over_the_band_that_is_solved():
+    """Before Phase 10 the tools always fitted materials over 1.1-2.4 um, so a 780 nm
+    sweep used extrapolated indices. Telecom bands keep that fit (results unchanged);
+    other bands get a fit that covers them, and D_int is computed at a pump in the band."""
+    from tarang.waveguide.dispersion_mapping.core import fit_band
+    from tarang.waveguide.dispersion_mapping.broadband import default_pump
+    assert fit_band(1.45, 1.65) == (1.1, 2.4)                 # 1550 nm: unchanged
+    assert fit_band(1.2, 2.0) == (1.1, 2.4)
+    lo, hi = fit_band(0.68, 0.88)                             # 780 nm
+    assert lo <= 0.68 and hi >= 0.88 and hi < 1.1
+    assert default_pump(1.2, 2.0) == 1.55
+    assert default_pump(0.6, 1.0) == 0.8

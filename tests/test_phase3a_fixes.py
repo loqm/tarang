@@ -217,3 +217,121 @@ def test_r1_notebooks_use_no_removed_config():
             code = "\n".join(l.split("#", 1)[0] for l in src.splitlines())
             assert not re.search(r"config\.logging_level\s*=", code), nb.name
             assert not re.search(r"config\.show_progress_bars\s*=", code), nb.name
+
+
+@pytest.mark.slow
+def test_get_medium_accepts_your_own_csv_file(tmp_path, monkeypatch):
+    """Measured data (e.g. ellipsometry of your film) can be used by path, without
+    editing media.json; it is fitted and cached like the built-in materials."""
+    import shutil
+    import tarang.media.medium_helper as mh
+    monkeypatch.setattr(mh, "FITTED_DIR", tmp_path / "fits")
+    own = tmp_path / "my_film.csv"
+    shutil.copy(mh._material_path("si3n4"), own)
+    m_own = mh.get_medium(str(own), wl_range=(1.45, 1.65))
+    m_key = mh.get_medium("si3n4", wl_range=(1.45, 1.65))
+    f = 2.99792458e14 / 1.55
+    assert abs(float(np.real(m_own.nk_model(f)[0])) - float(np.real(m_key.nk_model(f)[0]))) < 1e-9
+    assert (tmp_path / "fits" / "my_film_index.json").exists()
+    with pytest.raises(FileNotFoundError):
+        mh.get_medium(str(tmp_path / "missing.csv"), wl_range=(1.45, 1.65))
+
+
+@pytest.mark.slow
+def test_fit_follows_sparse_data_between_the_points(tmp_path, monkeypatch):
+    """The Si3N4 table has only three points between 0.68 and 0.88 um. A 10-pole fit there
+    can pass through them and still swing to n = 3.8 and 1.5 in between (found in Phase 10,
+    at 780 nm). Whatever route the fit takes, the result must follow the data between the
+    points; good fits, such as the 1550 nm one, are kept unchanged.
+
+    Whether the first 10-pole fit swings depends on floating-point details of the machine
+    (it did here, not on GitHub's Ubuntu / Python 3.12 runner), so this test checks the
+    result only; test_swinging_fit_is_refitted checks the refit itself."""
+    import json as _json
+    import pandas as pd
+    import tarang.media.medium_helper as mh
+    monkeypatch.setattr(mh, "FITTED_DIR", tmp_path / "fits")
+    data = pd.read_csv(mh._material_path("si3n4"))
+    wl, n = data["wl"].to_numpy(float), data["n"].to_numpy(float)
+
+    m780 = mh.get_medium("si3n4", wl_range=(0.679, 0.881))
+    probe = np.linspace(0.679, 0.881, 401)
+    n_fit = np.real(m780.nk_model(td.C_0 / probe)[0])
+    assert np.max(np.abs(n_fit - np.interp(probe, wl, n))) < 2e-3
+    assert mh.fit_excursion(m780, wl, n, 0.679, 0.881) <= mh.MAX_EXCURSION
+
+    mh.get_medium("si3n4", wl_range=(1.35, 1.75))
+    entries = _json.loads((tmp_path / "fits" / "Luke_Si3N4_index.json").read_text())["fits"]
+    assert len(entries) == 2                                       # 780 nm, then 1550 nm
+    assert "smoothness_fallback" not in entries[1]                 # 1550 nm: first fit kept
+    assert entries[1]["wl_range"] == [1.35, 1.75]
+
+
+def _excursion_after_first(monkeypatch, mh, first_value, later=None):
+    """Make fit_excursion report `first_value` for the first fit, then the real value (or
+    `later`), so the refit path runs the same way on every machine."""
+    real = mh.fit_excursion
+    calls = []
+
+    def fake(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return first_value
+        return real(*args, **kwargs) if later is None else later
+    monkeypatch.setattr(mh, "fit_excursion", fake)
+    return calls, real
+
+
+def test_swinging_fit_is_refitted(tmp_path, monkeypatch, caplog):
+    """A fit that strays between the data points is refitted with fewer poles, flagged in
+    the manifest, reported once, and reused from the cache afterwards."""
+    import json as _json
+    import pandas as pd
+    import tarang.media.medium_helper as mh
+    monkeypatch.setattr(mh, "FITTED_DIR", tmp_path / "fits")
+    calls, real = _excursion_after_first(monkeypatch, mh, first_value=0.1)
+
+    with caplog.at_level(logging.WARNING, logger="tarang"):
+        m = mh.get_medium("si3n4", wl_range=(1.45, 1.65))
+    assert any("strays" in r.getMessage() for r in caplog.records)
+    assert len(calls) == 2                           # the swinging fit, then one refit
+    data = pd.read_csv(mh._material_path("si3n4"))
+    wl, n = data["wl"].to_numpy(float), data["n"].to_numpy(float)
+    assert real(m, wl, n, 1.45, 1.65) <= mh.MAX_EXCURSION
+
+    entries = _json.loads((tmp_path / "fits" / "Luke_Si3N4_index.json").read_text())["fits"]
+    assert len(entries) == 1
+    assert entries[0]["smoothness_fallback"] is True
+    assert entries[0]["wl_range"] == [1.45, 1.65]   # fewer poles were enough
+
+    m_again = mh.get_medium("si3n4", wl_range=(1.45, 1.65))   # cache hit, no new fit
+    entries = _json.loads((tmp_path / "fits" / "Luke_Si3N4_index.json").read_text())["fits"]
+    assert len(entries) == 1
+    f = td.C_0 / 1.55
+    assert float(np.real(m_again.nk_model(f)[0])) == float(np.real(m.nk_model(f)[0]))
+
+
+def test_fit_that_never_follows_the_data_is_refused(tmp_path, monkeypatch):
+    """If no pole count or range brings the fit within 0.05 of the data, get_medium raises
+    instead of returning a wrong material, after trying fewer poles and wider ranges."""
+    import tarang.media.medium_helper as mh
+    monkeypatch.setattr(mh, "FITTED_DIR", tmp_path / "fits")
+    tried = []
+
+    class QuickFitter:                               # stands in for the real fitter
+        def __init__(self, wvl_range, **kwargs):
+            self.rng = tuple(wvl_range)
+
+        def fit(self, tolerance_rms, max_num_poles):
+            tried.append((self.rng, max_num_poles))
+            return td.PoleResidue(eps_inf=4.0, poles=()), 1e-6
+    monkeypatch.setattr(mh, "Fitter", QuickFitter)
+    monkeypatch.setattr(mh, "fit_excursion", lambda *a, **k: 0.1)
+
+    with pytest.raises(RuntimeError, match="No pole fit follows the data"):
+        mh.get_medium("si3n4", wl_range=(1.45, 1.65))
+    assert not (tmp_path / "fits" / "Luke_Si3N4_index.json").exists()   # nothing cached
+    assert tried[0] == ((1.45, 1.65), 10)
+    assert [p for _, p in tried[1:6]] == [6, 4, 3, 2, 1]                # fewer poles
+    widths = [r[1] - r[0] for r, _ in tried]
+    assert max(widths) > 0.2 + 1e-9                                       # then wider ranges

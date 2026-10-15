@@ -66,11 +66,11 @@ def _arc(active):
         box_medium=SIO2, top_cladding_medium=AIR, bend_angle_deg=45.0, **MESH)
 
 
-def _gc(is_3d=False, handle=False):
+def _gc(is_3d=False, handle=False, etch_depth=0.35):
     from tarang.grating_coupler.grating_coupler import GratingConfig, GratingCoupler
     cfg = GratingConfig(wavelength_um=WL, theta_deg=-12.0, mfd=10.4, source_x=3.84, source_gap=2.0,
                         core_height=0.7, top_cladding_height=2.0, box_height=4.0, handle_height=2.0,
-                        etch_depth=0.35, period=0.9, ff=0.5, n_teeth=12, w_grating=10.4,
+                        etch_depth=etch_depth, period=0.9, ff=0.5, n_teeth=12, w_grating=10.4,
                         pol_angle=np.pi / 2, buffer=3.0)
     return GratingCoupler.from_config(cfg, core_medium=SIN, box_medium=SIO2,
                                       handle_medium=SI if handle else None,
@@ -87,6 +87,8 @@ BUILDS = {
     "arc_passive": lambda: _arc(False), "arc_active": lambda: _arc(True),
     "grating_2d": lambda: _gc(), "grating_2d_si_handle": lambda: _gc(handle=True),
     "grating_3d": lambda: _gc(is_3d=True),
+    "grating_2d_full_etch": lambda: _gc(etch_depth=0.7),
+    "grating_3d_full_etch": lambda: _gc(is_3d=True, etch_depth=0.7),
 }
 
 
@@ -123,6 +125,16 @@ def test_grating_handle_layer_present_only_when_requested():
     def media(dev):
         return {s.medium for s in dev.sim.structures}
     assert SI in media(_gc(handle=True)) and SI not in media(_gc(handle=False))
+
+
+def test_full_etch_grating_has_no_floor_and_deeper_etch_is_refused():
+    """A full etch (etch_depth = core_height, one lithography and one etch) leaves no core
+    under the grooves; before Phase 10 the builder added a zero-thickness floor there."""
+    names = {s.name for s in _gc(etch_depth=0.7).sim.structures}
+    assert "Etched_Waveguide" not in names and "Slab_Waveguide" in names
+    assert "Etched_Waveguide" in {s.name for s in _gc(etch_depth=0.35).sim.structures}
+    with pytest.raises(ValueError, match="etch_depth"):
+        _gc(etch_depth=0.8)
 
 
 def test_ring_conversions_keep_geometry():
