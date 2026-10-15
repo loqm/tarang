@@ -69,7 +69,7 @@ def main():
     ap.add_argument("--cladding", default="air", help='top cladding medium key, or "air"')
     ap.add_argument("--cladding-height", type=float, default=2.0, help="top cladding thickness, um")
     ap.add_argument("--n-shift", type=float, default=0.0,
-                    help="shift of the core index at 1550 nm (uncertainty budget)")
+                    help="shift of the core index at the centre wavelength (uncertainty budget)")
     ap.add_argument("--points", default=None,
                     help='finalists "HxW,HxW" in um, e.g. "0.80x0.80,0.70x1.00" (overrides grid)')
     ap.add_argument("--tol", default=None,

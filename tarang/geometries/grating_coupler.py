@@ -59,6 +59,13 @@ def get_active_simulation(
 
     inf_eff = 1e3
 
+    if not 0 < config.etch_depth <= config.core_height:
+        raise ValueError(
+            f"etch_depth ({config.etch_depth} um) must be > 0 and <= core_height "
+            f"({config.core_height} um); etch_depth = core_height is a full etch."
+        )
+    full_etch = bool(np.isclose(config.etch_depth, config.core_height))
+
     # Default cladding to Air if not passed
     if top_cladding_medium is None:
         top_cladding_medium = td.Medium(permittivity=1.0)
@@ -149,7 +156,10 @@ def get_active_simulation(
         name="Cladding",
     )
 
-    structures = [cladding, etched_waveguide, slab_waveguide, box] + gratings
+    # A full etch leaves no core floor under the grooves (and Tidy3D warns about a
+    # zero-thickness structure), so the etched floor is left out entirely.
+    floor = [] if full_etch else [etched_waveguide]
+    structures = [cladding, *floor, slab_waveguide, box] + gratings
 
     l_grating = config.n_teeth * config.period
     z_min_2d = -config.box_height - (

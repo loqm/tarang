@@ -132,7 +132,7 @@ def plot_D(series, xkey, fixed_lbl, fname, a, plt):
             ax.plot(x, d, "v", color="purple", ms=10, zorder=4)
         ax.annotate(f"{r[a.sm_key]}", (x, d), textcoords="offset points", xytext=(0, 7),
                     ha="center", fontsize=7, color="0.25")
-    ax.set_xlabel(("Waveguide width" if xkey == "W" else "SiN thickness") + " (µm)")
+    ax.set_xlabel(("Waveguide width" if xkey == "W" else "Core thickness") + " (µm)")
     ax.set_ylabel(r"$D$ at %.0f nm [ps/(nm·km)]" % (series[0]["wl0"] * 1e3))
     ax.set_title(f"{_stack(series[0])} — {fixed_lbl}   "
                  f"(numbers = guided TE modes, {series[0]['steps']} steps/λ)", fontsize=10)
@@ -176,7 +176,7 @@ def plot_modes(series, xkey, fixed_lbl, fname, a, plt):
     h, l = ax.get_legend_handles_labels()
     l = ["hybrid (TE/TM mixed, 0.4<TE frac<0.6)" if x == "hyb" else x for x in l]
     ax.legend(h, l, fontsize=7, loc="upper left", bbox_to_anchor=(1.01, 1.0))
-    ax.set_xlabel(("Waveguide width" if xkey == "W" else "SiN thickness") + " (µm)")
+    ax.set_xlabel(("Waveguide width" if xkey == "W" else "Core thickness") + " (µm)")
     ax.set_ylabel(r"Effective index $n_\mathrm{eff}$")
     ax.set_title(f"Modal analysis, {_stack(series[0])} — {fixed_lbl}  "
                  f"(green = single guided TE mode; faded = below cutoff)", fontsize=10)
@@ -226,7 +226,7 @@ def plot_map(rows, outdir, a, plt):
                   bbox_to_anchor=(0.5, -0.13), ncol=3)
     for ax in axs:
         ax.set_xlabel("Width W (µm)")
-        ax.set_ylabel("SiN thickness H (µm)")
+        ax.set_ylabel("Core thickness H (µm)")
     fig.suptitle(f"{_stack(rows[0])} — design map at {rows[0]['wl0']*1e3:.0f} nm", fontsize=11)
     fig.tight_layout()
     fig.savefig(outdir / "design_map.png")
@@ -271,7 +271,7 @@ def _heat(ax, Ws, Hs, M, cmap, norm, cbar_label, fig, fmt=None, contours=(), ext
             for j, W in enumerate(Ws):
                 if np.isfinite(text_M[i, j]):
                     ax.text(W, H, fmt(text_M[i, j]), ha="center", va="center", fontsize=6)
-    ax.set_xlabel("Width W (µm)"); ax.set_ylabel("SiN thickness H (µm)")
+    ax.set_xlabel("Width W (µm)"); ax.set_ylabel("Core thickness H (µm)")
 
 
 def robust_class(rows, a):
@@ -382,7 +382,7 @@ def plot_extra_maps(rows, outdir, a, plt):
     ax.legend(handles=[Patch(color=c, label=lbl[o]) for o, c in zip(order, cols)], fontsize=7,
               loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=2)
     dWg = (Ws[1] - Ws[0]) * 1e3; dHg = (Hs[1] - Hs[0]) * 1e3
-    ax.set_xlabel("Width W (µm)"); ax.set_ylabel("SiN thickness H (µm)")
+    ax.set_xlabel("Width W (µm)"); ax.set_ylabel("Core thickness H (µm)")
     ax.set_title(f"6. Robust design window (neighbours ±{dWg:.0f} nm W, ±{dHg:.0f} nm H)",
                  fontsize=10)
     save(fig, "map6_robust_window.png")
@@ -407,7 +407,7 @@ def plot_extra_maps(rows, outdir, a, plt):
     Gm = _mat(Hs, Ws, idx, lambda r: r["Gamma_TE0"])
     if np.isfinite(Gm).any():
         fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
-        _heat(ax, Ws, Hs, Gm * 100, "YlGn", None, "Γ = power fraction in SiN core (%)", fig,
+        _heat(ax, Ws, Hs, Gm * 100, "YlGn", None, "Γ = power fraction in the core (%)", fig,
               fmt=lambda v: f"{v:.0f}")
         ax.set_title("9. Core confinement Γ (more field outside → more sidewall scattering)",
                      fontsize=10)
@@ -440,7 +440,7 @@ def main():
     ap.add_argument("--single-mode", dest="sm", choices=["strict", "margin"], default="strict",
                     help="strict: any TE mode above the cladding cutoff counts; margin: above cutoff+margin")
     ap.add_argument("--tm", action="store_true", help="also plot D of TM00")
-    ap.add_argument("--n2", type=float, default=2.4e-19, help="Si3N4 Kerr index, m^2/W")
+    ap.add_argument("--n2", type=float, default=2.4e-19, help="Kerr index of the core, m^2/W (default: Si3N4)")
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--overwrite", action="store_true",
                     help="reuse the existing plots folder instead of creating _v2, _v3, ...")

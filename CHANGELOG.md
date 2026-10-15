@@ -15,6 +15,19 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **Guided design** (`python -m tarang.design`): materials → cross-section → ring →
+  ring–bus gap → grating coupler → layout → report in one session, at any wavelength the
+  material data cover. Each stage asks only what it needs, shows its results, and prices
+  cloud stages before asking to run them; answers are saved to `design.toml` so a design
+  can be repeated or resumed with `--config ... --yes`. Exports GDS files of the
+  waveguide, ring + bus and ring + bus + grating couplers (`gdstk`, new `layout` extra),
+  the dimensions as JSON, MATLAB and CSV, and solver-neutral tables of materials and
+  key values for checking the design elsewhere.
+- `get_medium` accepts the path of your own CSV (`wl`, `n`, optional `k`), e.g. ellipsometry
+  of your film, without editing `media.json`; it is fitted and cached like the built-in
+  materials.
+- Dispersion mapping: `broadband --pump` (pump wavelength for *D*<sub>int</sub>), and
+  `--box` / `--cladding-height` for `broadband` and `convergence`, as `sweep` already had.
 - **Dispersion mapping** (`tarang.waveguide.dispersion_mapping`): command-line tools for robust
   height × width dispersion sweeps, maps, mesh-convergence studies, broadband *D*(λ) and
   integrated dispersion, and finalist reports against a baseline. Local mode solver
@@ -53,6 +66,8 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Changed
 
+- Dispersion-mapping figures and the finalist report name the core material in use instead
+  of assuming Si₃N₄ (Luke) data.
 - **One package.** All code moved into the `tarang` package (`tarang.media`,
   `tarang.geometries`, `tarang.waveguide`, `tarang.ring_resonator`,
   `tarang.grating_coupler`, `tarang.edge_coupler`, `tarang.utilities`), so installing
@@ -81,6 +96,20 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Fixed
 
+- **Material fits that swing between sparse data points.** A pole fit can pass through
+  every tabulated point and still oscillate between them: `si3n4` fitted over 0.68–0.88 µm
+  (three data points) gave n = 3.8 and 1.5 between the points instead of 2.03. Every fit,
+  new or cached, is now checked against the data between the points; one that strays more
+  than 0.002 (or 5 × the requested tolerance) is refitted with fewer poles and, if needed,
+  over a wider stretch of the data, with a warning. Fits that pass, including all the
+  1550 nm fits of `si3n4`, `sio2` and `si_franta`, are unchanged, and so are fingerprints.
+- **Dispersion mapping away from 1550 nm.** The tools always fitted the materials over
+  1.1–2.4 µm and computed *D*<sub>int</sub> around a 1550 nm pump, so a 780 nm map used
+  extrapolated indices. Materials are now fitted over a range that covers the solved band
+  and the pump lies in the band. Telecom results are unchanged (same fit, same fingerprints);
+  at 780 nm the change for `si3n4` was 0.03 ps/(nm·km), larger for narrower datasets.
+- **Full-etch grating couplers** (`etch_depth = core_height`) no longer contain a
+  zero-thickness floor structure; an etch deeper than the film is refused.
 - **Result cache missed results run in the session that fitted the materials.** A fresh
   fit returned the fitter's own object, whose index differed from the saved copy in the
   last digit. The mode solver's `target_neff` comes from that index, so a simulation built
