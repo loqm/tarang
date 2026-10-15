@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 360" width="1160" height="360" role="img" aria-labelledby="t d">
+<title id="t">Where to start with TARANG</title>
+<desc id="d">Four steps: install; the README quick start, local and free; the local notebooks on materials, waveguides and dispersion mapping, free; then the cloud notebooks, starting with cloud basics, then rings, grating couplers, edge couplers and nested sampling, all with a cost cap.</desc>
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1c3f6e"/></marker>
+</defs>
+<rect width="1160" height="360" rx="10" fill="#f7f9fc"/>
+<text x="40" y="58" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="600" fill="#1c3f6e">Learn everything locally and for free first; spend FlexCredits only once the geometry is right</text>
+
+<!-- 1 install -->
+<rect x="40" y="100" width="230" height="200" rx="8" fill="#ffffff" stroke="#6d7a89" stroke-width="1.6"/>
+<text x="60" y="130" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#1c3f6e">1  Install</text>
+<text x="60" y="150" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#6d7a89">about 5 minutes</text>
+<text x="60" y="184" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">conda env create</text>
+<text x="60" y="202" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">  -f environment.yml</text>
+<text x="60" y="226" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">tidy3d configure</text>
+<text x="60" y="250" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">pytest -m "not slow"</text>
+<text x="60" y="282" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#6d7a89">README: Installation</text>
+
+<!-- 2 quick start -->
+<rect x="310" y="100" width="230" height="200" rx="8" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
+<text x="330" y="130" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#1c3f6e">2  Quick start</text>
+<text x="330" y="150" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#3167a8">15 minutes, free</text>
+<text x="330" y="184" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#173252">fit materials</text>
+<text x="330" y="206" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#173252">build a waveguide</text>
+<text x="330" y="228" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#173252">modes, D, confinement</text>
+<text x="330" y="250" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#173252">sweep width × height</text>
+<text x="330" y="282" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#3167a8">README: Quick start</text>
+
+<!-- 3 local notebooks -->
+<rect x="580" y="100" width="250" height="200" rx="8" fill="#dce8f6" stroke="#3167a8" stroke-width="1.6"/>
+<text x="600" y="130" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#1c3f6e">3  Local notebooks</text>
+<text x="600" y="150" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#3167a8">free, examples/</text>
+<text x="600" y="184" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">media_examples</text>
+<text x="600" y="206" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">waveguide_example</text>
+<text x="600" y="228" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">dispersion_mapping_example</text>
+<text x="600" y="282" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#3167a8">choose H and W here</text>
+
+<!-- 4 cloud notebooks -->
+<rect x="870" y="100" width="250" height="200" rx="8" fill="#fbe7d2" stroke="#d98032" stroke-width="1.6"/>
+<text x="890" y="130" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#1c3f6e">4  Cloud notebooks</text>
+<text x="890" y="150" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#d98032">FlexCredits, capped</text>
+<text x="890" y="184" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">cloud_basics_example</text>
+<text x="890" y="206" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">ring_resonator_example</text>
+<text x="890" y="228" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">grating_coupler_example</text>
+<text x="890" y="250" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">edge_coupler_example</text>
+<text x="890" y="272" font-family="'SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#173252">nested_sampling_example.py</text>
+
+<line x1="274" y1="200" x2="304" y2="200" stroke="#1c3f6e" stroke-width="2" marker-end="url(#a)"/>
+<line x1="544" y1="200" x2="574" y2="200" stroke="#1c3f6e" stroke-width="2" marker-end="url(#a)"/>
+<line x1="834" y1="200" x2="864" y2="200" stroke="#1c3f6e" stroke-width="2" marker-end="url(#a)"/>
+
+<rect x="40" y="322" width="14" height="14" rx="3" fill="#dce8f6" stroke="#3167a8"/>
+<text x="62" y="334" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#6d7a89">local mode solver, no credits</text>
+<rect x="270" y="322" width="14" height="14" rx="3" fill="#fbe7d2" stroke="#d98032"/>
+<text x="292" y="334" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" fill="#6d7a89">cloud FDTD: priced first, stopped above your limit, never run twice</text>
+</svg>

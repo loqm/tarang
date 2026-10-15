@@ -195,3 +195,35 @@ def test_missing_key_warns_with_the_fix(no_key, caplog):
     with caplog.at_level(logging.WARNING, logger="tarang"):
         assert cr.ensure_api_key() is None
     assert "tidy3d configure" in caplog.text
+
+
+@pytest.mark.slow
+def test_fresh_fit_and_cached_fit_give_the_same_fingerprint(tmp_path, monkeypatch):
+    """A simulation built right after a material is fitted must have the same fingerprint
+    as the same simulation built in a later session, where the fit is read from the cache.
+    Before the fix the freshly fitted medium held numpy scalars and its index differed
+    from the saved copy in the last digit, which changed the mode solver's target_neff.
+    A cloud result run in the fitting session was then never found again and was paid
+    for twice."""
+    import tarang.media.medium_helper as mh
+    from tarang.geometries import ridge_waveguide
+    from tarang.geometries._modes import core_target_neff
+
+    monkeypatch.setattr(mh, "FITTED_DIR", tmp_path / "fits")
+    freqs = td.C_0 / np.linspace(1.35, 1.75, 41)
+
+    def build():
+        sin = mh.get_medium("si3n4", wl_range=(1.35, 1.75))
+        sio2 = mh.get_medium("sio2", wl_range=(1.35, 1.75))
+        sim = ridge_waveguide.get_active_simulation(
+            width=0.9, height=0.7, length=3.0, wavelength_um=1.55,
+            core_medium=sin, box_medium=sio2,
+            fine_steps_per_wvl=12, coarse_steps_per_wvl=8).sim
+        return sin, cr.sim_fingerprint(sim)
+
+    fresh, fp_fresh = build()                       # fits and saves both materials
+    assert len(list((tmp_path / "fits").glob("*_index.json"))) == 2
+    cached, fp_cached = build()                     # read back from the cache
+    assert [core_target_neff(fresh, f) for f in freqs] == \
+        [core_target_neff(cached, f) for f in freqs]
+    assert fp_fresh == fp_cached

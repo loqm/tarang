@@ -345,6 +345,11 @@ def get_medium(
         exist_ok=True,
     )
     medium.to_file(str(fit_path))
+    # Return the saved copy, not the fitter's object: the fitter's poles are numpy
+    # scalars and give indices that differ from the saved copy in the last digit. Every
+    # later session reads the saved copy, so returning it here keeps simulation
+    # fingerprints (and the result cache) the same in the fitting session and after.
+    medium = td.PoleResidue.from_file(str(fit_path))
 
     new_entry = {
         "timestamp": datetime.now().isoformat(),
