@@ -1,0 +1,296 @@
+"""``benchmark_pack/``: everything another solver needs to repeat this design.
+
+    benchmark_pack/
+      README.md          step by step: what was simulated, with every dimension, material,
+                         mesh, boundary, source and monitor, how each number was obtained,
+                         the result, and what to compare
+      assumptions.csv    assumed values with their sources
+      results.csv        every computed value with how it was computed
+      materials_nk.csv   the n, k actually used (fitted models, sampled over the band)
+      design.toml        the settings of the run
+      figures/  tables/  layout/   copies of the run's figures, tables and GDS
+      simulations/       the simulation files used (JSON) and a plain description of each
+
+A zip of the folder is written next to it. Nothing here is specific to another solver;
+the simulation JSON files are TARANG's own record of each run.
+"""
+from __future__ import annotations
+
+import csv
+import glob
+import shutil
+from pathlib import Path
+
+C_UM = 2.99792458e14
+
+
+def _copy(src, dst_dir: Path) -> Path | None:
+    if not src:
+        return None
+    src = Path(src)
+    if not src.exists():
+        return None
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / src.name
+    shutil.copy2(src, dst)
+    return dst
+
+
+def _fmt(v, nd=4):
+    if isinstance(v, float):
+        return f"{v:.{nd}g}"
+    if isinstance(v, (tuple, list)):
+        return "(" + ", ".join(_fmt(x, nd) for x in v) + ")"
+    return str(v)
+
+
+def describe_sim(sim, wavelength_um: float) -> list[str]:
+    """A plain-language description of a Tidy3D simulation (lengths in µm)."""
+    import tidy3d as td
+    out = []
+    lo = [c - s / 2 for c, s in zip(sim.center, sim.size)]
+    hi = [c + s / 2 for c, s in zip(sim.center, sim.size)]
+    out.append(f"- Domain: x {lo[0]:.3f} to {hi[0]:.3f}, y {lo[1]:.3f} to {hi[1]:.3f}, "
+               f"z {lo[2]:.3f} to {hi[2]:.3f} µm" + (" (2D: no y extent)" if sim.size[1] == 0 else ""))
+    for ax in "xyz":
+        b = getattr(sim.boundary_spec, ax)
+        desc = []
+        for side in ("minus", "plus"):
+            bb = getattr(b, side)
+            n = getattr(bb, "num_layers", None)
+            desc.append(type(bb).__name__ + (f" ({n} layers)" if n else ""))
+        out.append(f"- Boundary {ax}: " + (desc[0] if desc[0] == desc[1] else " / ".join(desc)))
+    gs = sim.grid_spec
+    steps = getattr(gs.grid_x, "min_steps_per_wvl", None)
+    out.append(f"- Mesh: automatic non-uniform, at least {steps} cells per wavelength in each "
+               f"material (λ = {gs.wavelength or wavelength_um} µm)")
+    for o in gs.override_structures or []:
+        dl = getattr(o, "dl", None)
+        if dl:
+            b = o.geometry.bounds
+            out.append(f"  - finer mesh {_fmt(tuple(dl))} µm in x {b[0][0]:.2f}-{b[1][0]:.2f}, "
+                       f"y {b[0][1]:.2f}-{b[1][1]:.2f}, z {b[0][2]:.2f}-{b[1][2]:.2f}")
+    out.append(f"- Run time {sim.run_time * 1e12:.3g} ps; stops early when the fields decay "
+               f"below {sim.shutoff:g} of their peak")
+    out.append("- Structures (later ones override earlier ones where they overlap):")
+    f0 = C_UM / wavelength_um
+    for s in sim.structures:
+        try:
+            n = complex(s.medium.nk_model(f0)[0] + 1j * s.medium.nk_model(f0)[1])
+            nk = f"n = {n.real:.5f}, k = {n.imag:.2e}"
+        except Exception:
+            nk = type(s.medium).__name__
+        try:
+            b = s.geometry.bounds
+            bounds = (f"x {_fmt(b[0][0])} to {_fmt(b[1][0])}, y {_fmt(b[0][1])} to "
+                      f"{_fmt(b[1][1])}, z {_fmt(b[0][2])} to {_fmt(b[1][2])}")
+        except Exception:
+            bounds = type(s.geometry).__name__
+        out.append(f"  - {s.name or '-'}: {type(s.geometry).__name__}, {bounds}; {nk} at "
+                   f"{wavelength_um} µm")
+    out.append("- Sources:")
+    for src in sim.sources:
+        st = src.source_time
+        line = (f"  - {src.name}: {type(src).__name__} at {_fmt(tuple(src.center))}, size "
+                f"{_fmt(tuple(src.size))}, direction {getattr(src, 'direction', '-')}, "
+                f"pulse centre {C_UM / st.freq0:.4f} µm, bandwidth {st.fwidth / st.freq0 * 100:.1f} %")
+        if isinstance(src, td.GaussianBeam):
+            import numpy as np
+            d = np.round(src._dir_vector, 4)
+            line += (f"; waist radius {src.waist_radius} µm at the source plane; angle_theta "
+                     f"{np.degrees(src.angle_theta):.2f}° (propagation direction {tuple(d)}); "
+                     f"pol_angle {np.degrees(src.pol_angle):.0f}° (90° = E along y, TE)")
+        if isinstance(src, td.ModeSource):
+            line += f"; mode index {src.mode_index}, target n_eff {src.mode_spec.target_neff}"
+        out.append(line)
+    out.append("- Monitors:")
+    for m in sim.monitors:
+        freqs = list(getattr(m, "freqs", []) or [])
+        band = ""
+        if freqs:
+            wls = sorted(C_UM / f for f in freqs)
+            band = (f", {len(freqs)} wavelengths {wls[0]:.4f}-{wls[-1]:.4f} µm" if len(freqs) > 1
+                    else f", at {wls[0]:.4f} µm")
+        out.append(f"  - {m.name}: {type(m).__name__} at {_fmt(tuple(m.center))}, size "
+                   f"{_fmt(tuple(m.size))}{band}")
+    return out
+
+
+def _load_sim(path):
+    import tidy3d as td
+    return td.Simulation.from_file(str(path))
+
+
+def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
+    from tarang.design import assumptions
+    cfg = ctx.cfg
+    wl = cfg.run.wavelength_um
+    pack = ctx.out / "benchmark_pack"
+    if pack.exists():
+        shutil.rmtree(pack)                       # rebuilt from the run every time
+    pack.mkdir(parents=True)
+    xs, ring = st.get("cross_section", {}), st.get("ring", {})
+    gap, gc, mat = st.get("gap", {}), st.get("grating", {}), st.get("materials", {})
+
+    rows = assumptions.table(cfg)
+    with open(pack / "assumptions.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["quantity", "value", "unit", "source", "note"],
+                           lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
+    with open(pack / "results.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["quantity", "value", "unit", "how TARANG computed it"],
+                           lineterminator="\n")
+        w.writeheader()
+        w.writerows(checks)
+    if mat.get("table"):
+        _copy(mat["table"], pack)
+    _copy(ctx.out / "design.toml", pack)
+    for f in sorted((ctx.out / "figures").glob("*.png")):
+        _copy(f, pack / "figures")
+    extra_figs = [xs.get("map_figure"), ring.get("profile_figure")]
+    extra_figs += glob.glob(str(ctx.out / "results" / "mesh_convergence_plots" / "*.png"))
+    extra_figs += glob.glob(str(ctx.out / "results" / "finalist_report" / "*.png"))
+    extra_figs += glob.glob(str(ctx.out / "cloud" / "gap_sweep" / "*.png"))
+    extra_figs += glob.glob(str(ctx.out / "cloud" / "gap_sweep" / "field_maps" / "*.png"))
+    for f in extra_figs:
+        _copy(f, pack / "figures" / "details")
+    for f in sorted((ctx.out / "tables").glob("*.csv")):
+        _copy(f, pack / "tables")
+    for f in (ctx.out / "results" / "finalist_report" / "finalists.csv",
+              ctx.out / "results" / "mesh_convergence_plots" / "convergence_table.csv",
+              ctx.out / "results" / "dispersion_profile_plots" / "profiles_summary.csv"):
+        _copy(f, pack / "tables")
+    for f in sorted((ctx.out / "layout").glob("*")):
+        _copy(f, pack / "layout")
+
+    sims_dir = pack / "simulations"
+    sims_dir.mkdir()
+    sim_sections: list[str] = []
+    if gap and not gap.get("skipped"):
+        for p in sorted(glob.glob(str(ctx.out / "cloud" / "gap_sweep" / "**" / "simulation.json"),
+                                  recursive=True)):
+            name = Path(p).parent.name.split("_1.550um")[0].split(f"_{wl:.3f}um")[0]
+            dst = sims_dir / f"gap_{name}.json"
+            shutil.copy2(p, dst)
+        mid = sorted(gap.get("gaps_um") or [])[len(gap.get("gaps_um") or [0]) // 2] if gap.get(
+            "gaps_um") else None
+        cand = [p for p in sims_dir.glob("gap_*.json") if mid is not None and
+                f"gap{mid * 1e3:.0f}nm" in p.name and "BusOnly" not in p.name]
+        if cand:
+            sim_sections += [f"### Ring–bus gap simulation (gap {mid} µm shown; the others "
+                             "differ only in the gap)", ""] + describe_sim(_load_sim(cand[0]), wl) + [""]
+    if gc and not gc.get("skipped") and gc.get("final_sim"):
+        src = Path(gc["final_sim"])
+        if src.exists():
+            shutil.copy2(src, sims_dir / "grating_final.json")
+            sim_sections += ["### Final grating-coupler simulation (2D)", ""] + describe_sim(
+                _load_sim(src), wl) + [""]
+    readme = _readme(ctx, st, rows, checks, sim_sections, pth)
+    (pack / "README.md").write_text("\n".join(readme), encoding="utf-8")
+    zip_path = shutil.make_archive(str(ctx.out / "benchmark_pack"), "zip", root_dir=pack)
+    return dict(folder=str(pack), zip=str(zip_path))
+
+
+def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
+    cfg = ctx.cfg
+    wl = cfg.run.wavelength_um
+    xs, ring = st.get("cross_section", {}), st.get("ring", {})
+    gap, gc, mat = st.get("gap", {}), st.get("grating", {}), st.get("materials", {})
+    s = cfg.stack
+    L = [f"# Benchmark pack: {cfg.run.name}", "",
+         "What was designed, how, and with which assumptions, so that every number can be "
+         "recomputed in another mode solver or FDTD tool. Lengths in µm unless stated. The "
+         "design report (`../report.md`) shows the same results with all figures.", "",
+         "## 0. Stack and materials", "",
+         f"- Wavelength: {wl} µm (pump / design wavelength)",
+         f"- Core: `{cfg.materials.core}`; BOX: `{cfg.materials.box}` {s.box_height_um} µm thick; "
+         f"top: `{cfg.materials.cladding}`; handle (grating simulations only): "
+         f"`{cfg.materials.handle}`",
+         "- Material data: `materials_nk.csv` gives n and k of each layer exactly as used"
+         + (f", sampled over {mat['band'][0]}-{mat['band'][1]} µm" if mat.get("band") else "")
+         + ". Import these tables rather than a solver's built-in materials, so both solvers "
+         "see the same indices.",
+         "- Sidewalls: vertical (90°) everywhere.", ""]
+    L += ["## Assumed values", "", "| quantity | value | unit | source |", "|---|---|---|---|"]
+    L += [f"| {r['quantity']} | {r['value']} | {r['unit']} | {r['source']} |" for r in rows]
+    L.append("")
+    if xs:
+        L += ["## 1. Waveguide cross-section (mode solver)", "",
+              f"- Core {xs['height_um']} µm tall × {xs['width_um']} µm wide, rectangular, on the "
+              f"BOX; {cfg.materials.cladding} above.",
+              f"- Solve the TE00 mode (E mainly along the width) at 9 wavelengths over "
+              f"{wl - 0.1:.2f}-{wl + 0.1:.2f} µm; fit n_eff(λ) with a 4th-order polynomial; "
+              "n_g = n_eff − λ dn_eff/dλ; D = −(λ/c) d²n_eff/dλ².",
+              f"- TARANG: {xs['steps']} mesh cells per wavelength" +
+              ("; D against mesh: " + ", ".join(f"{c['D']:.1f} at {c['steps']}"
+                                                for c in xs["convergence"]) if xs.get("convergence")
+               else "") + ".",
+              f"- Results to compare: n_eff = {xs['n_eff']:.5f}, n_g = {xs['n_group']:.4f}, "
+              f"D = {xs['D']:.1f} ps/(nm·km) (±5 %), A_eff = {xs.get('aeff_um2')} µm², "
+              f"{xs['guided_TE']} guided TE and {xs['guided_TM']} guided TM mode(s) (guided = "
+              f"n_eff above {xs.get('n_cut')}).", ""]
+    if ring:
+        L += ["## 2. Ring", "",
+              f"- Radius {ring['radius_um']} µm (to the waveguide centre), same cross-section.",
+              f"- Bent-mode solve at R (absorbing layers at the plane edges): TE00 bend loss "
+              f"{ring['bend_loss_db_cm']:.2g} dB/cm.",
+              f"- FSR = c / (2π R n_g) = {ring['fsr_ghz']:.1f} GHz; Q_i = 2π n_g / (λ α) with α "
+              f"= {ring['loss_db_cm']:.3g} dB/cm (assumed scattering + absorption + bend) = "
+              f"{ring['q_intrinsic']:.3g}.",
+              f"- D2/2π = {ring.get('D2_2pi_MHz')} MHz, D3/2π = {ring.get('D3_2pi_kHz')} kHz from a "
+              "broadband solve of the straight waveguide (see `tables/profiles_summary.csv`)."]
+        if pth[0]:
+            L.append(f"- Threshold estimate (comparative): {pth[0]:.0f} mW at critical coupling"
+                     + (f", {pth[1]:.0f} mW over-coupled" if pth[1] else "") + ".")
+        L.append("")
+    if gap and not gap.get("skipped"):
+        L += ["## 3. Ring–bus gap (3D FDTD)", "",
+              f"- A {gap.get('span_angle_deg', 45):g}° arc of the ring (radius {ring.get('radius_um')} "
+              "µm) above a straight bus; both have the core cross-section above. The gap is the "
+              "edge-to-edge distance between bus and ring at the closest point.",
+              f"- Gaps simulated: {', '.join(str(g) for g in gap.get('gaps_um') or [])} µm.",
+              "- Excitation: fundamental TE mode launched in the bus. Coupled power per pass: "
+              f"{gap.get('reference')} (see `tables/gap_sweep.csv`: coupled_power).",
+              "- Fit θ = asin(√coupled) = θ0 exp(−γ g). Critical coupling: sin²θ = 1 − a², with "
+              f"a² = round-trip power survival from Q_i (target coupled power "
+              f"{gap.get('target_cross_power', float('nan')):.4g}).",
+              f"- Results: critical gap {gap['critical_gap_um'] * 1e3:.0f} nm; over-coupled "
+              f"(K = {gap['over_coupling']:g}) {(gap.get('over_coupled_gap_um') or 0) * 1e3:.0f} nm.",
+              "- To compare: the coupled power at each gap (a full ring in the other solver is "
+              "fine: compare the per-pass coupling), then the gaps.",
+              "- Geometry detail to copy (or expect a small difference): inside the ring, the "
+              "air region of TARANG's partial-ring builder reaches 0.1 µm into the BOX (z from "
+              "−0.1 µm); the bus side of the ring and the gap are unaffected.",
+              "- Known numerical feature: 1 − T relative to the source shows a gap-independent "
+              "excess of about 0.2 % (bus losses in the simulation, not coupling); the power "
+              "entering the ring arc agrees with 1 − T/T(widest gap) within about 1 %.", ""]
+    if gc and not gc.get("skipped"):
+        L += ["## 4. Grating coupler (2D FDTD)", "",
+              f"- Uniform grating, {gc['etch']} etch ({gc['etch_depth_um']} µm), period "
+              f"{gc['period_um']} µm, fill factor {gc['fill_factor']} (tooth = fill factor × "
+              f"period), {gc['n_teeth']} teeth; the core slab continues to the left (−x) as the "
+              "waveguide; the first tooth starts at x = 0.",
+              f"- Fibre: Gaussian beam, MFD {gc['mfd_um']} µm, waist at the source plane 2 µm above "
+              f"the top of the cladding, {gc['fiber_angle_deg']:g}° from vertical, travelling "
+              f"{gc.get('fiber_tilt', 'away')} the waveguide; TE polarisation (E along the "
+              f"grating lines); beam centre on the grating surface at x = {gc['source_x_um']} µm.",
+              f"- BOX {s.box_height_um} µm on a Si handle (3 µm in the simulation).",
+              "- Efficiency: power in the waveguide's fundamental mode (travelling −x) divided by "
+              "the beam power, against wavelength.",
+              f"- Results: {gc['efficiency_2d'] * 100:.1f} % at {wl} µm" +
+              (f"; peak {gc['peak_efficiency_2d'] * 100:.1f} % at {gc['peak_wavelength_um'] * 1e3:.1f} "
+               f"nm; 1 dB band {gc['bandwidth_1db_nm']:.0f} nm" if gc.get("peak_efficiency_2d")
+               else "") + ". Spectrum: `tables/grating_spectrum_final.csv`; all designs: "
+              "`tables/grating_sweep.csv`.", ""]
+    L += ["## 5. Layout", "",
+          "`layout/` has the GDS files and `parameters.json` (every dimension). Each grating "
+          f"starts where its {cfg.grating.taper_length_um:g} µm linear taper (from the grating "
+          "width to the waveguide width) ends, as in the simulation; the taper itself is not "
+          "simulated yet.", ""]
+    if sim_sections:
+        L += ["## Simulation details", "",
+              "The files in `simulations/` are the exact simulations TARANG ran; below is what "
+              "they contain.", ""] + sim_sections
+    L += ["## Every number", "", "`results.csv` (quantity, value, unit, how computed).", ""]
+    return L

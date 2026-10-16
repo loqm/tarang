@@ -30,18 +30,20 @@ name carries the fingerprint so runs are distinguishable in the web UI (audit R4
 
 Exposes: sim_fingerprint(), cache_paths(), find_cached(), run_cached(),
 run_batch_cached(), store_result(), estimate_batch_cost(), resolve_max_cost(),
-monitor_data(), api_key_source(), ensure_api_key(), CloudCachedDevice,
-CostLimitExceededError, MonitorDataError, CachedRun.
+monitor_data(), api_key_source(), ensure_api_key(), progress_listener(),
+account_status(), CloudCachedDevice, CostLimitExceededError, MonitorDataError, CachedRun.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import Callable, Iterable, Optional, Union
 
 import tidy3d as td
 from tidy3d import web
@@ -280,6 +282,59 @@ def find_cached(
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Progress and account
+# --------------------------------------------------------------------------- #
+_LISTENERS: list[Callable[[str, dict], None]] = []
+
+
+@contextlib.contextmanager
+def progress_listener(callback: Callable[[str, dict], None]):
+    """Call ``callback(event, info)`` for every ``run_cached`` inside the block.
+
+    Events: "cached" (loaded from disk), "estimated" (uploaded and priced; info has
+    ``cost``), "running" (started on the cloud), "done" (downloaded; info has
+    ``seconds`` and ``cost``). ``info`` always has ``name`` (the readable name) and
+    ``fingerprint``. A failing callback never stops a run.
+    """
+    _LISTENERS.append(callback)
+    try:
+        yield callback
+    finally:
+        _LISTENERS.remove(callback)
+
+
+def _emit(event: str, **info) -> None:
+    for cb in list(_LISTENERS):
+        try:
+            cb(event, info)
+        except Exception as exc:                      # progress display must never fail a run
+            logger.debug(f"progress listener failed: {exc}")
+
+
+def account_status() -> Optional[dict]:
+    """FlexCredit balance and expiry of the configured Tidy3D account, or None when it
+    cannot be read (no network, older Tidy3D). Keys: ``credit`` (float or None),
+    ``expires`` (datetime or None), ``expired`` (bool)."""
+    import datetime as _dt
+    try:
+        try:
+            acc = web.account(verbose=False)
+        except TypeError:                             # Tidy3D without the verbose option
+            acc = web.account()
+    except Exception as exc:
+        logger.debug(f"account information unavailable: {exc}")
+        return None
+    credit = getattr(acc, "credit", None)
+    expires = getattr(acc, "credit_expiration", None)
+    expired = False
+    if isinstance(expires, _dt.datetime):
+        now = _dt.datetime.now(expires.tzinfo or _dt.timezone.utc)
+        expired = expires < now
+    return {"credit": None if credit is None else float(credit), "expires": expires,
+            "expired": bool(expired)}
+
+
 def _task_name(prefix: str, readable_name: str, fp: str) -> str:
     tail = f"_{fp[:FINGERPRINT_LEN]}"
     head = f"{prefix}_{readable_name}" if prefix else readable_name
@@ -325,6 +380,7 @@ def run_cached(
         hit = find_cached(sim, output_dir, readable_name, legacy_names)
         if hit is not None:
             logger.info(f"Cache hit (fingerprint {fp[:FINGERPRINT_LEN]}). Loading {hit} ...")
+            _emit("cached", name=readable_name, fingerprint=fp[:FINGERPRINT_LEN])
             return CachedRun(td.SimulationData.from_file(str(hit)), hit, True, 0.0, fp)
 
     ensure_api_key()
@@ -338,6 +394,7 @@ def run_cached(
                          verbose=tidy3d_verbose(verbose))
     cost = float(web.estimate_cost(task_id, verbose=tidy3d_verbose(verbose)))
     logger.info(f"Estimated cost for '{task_name}': {cost:.4f} FlexCredits.")
+    _emit("estimated", name=readable_name, fingerprint=fp[:FINGERPRINT_LEN], cost=cost)
 
     if max_cost is not None and cost > max_cost:
         try:
@@ -346,7 +403,9 @@ def run_cached(
             pass
         raise CostLimitExceededError(cost, max_cost, task_name)
 
+    started = time.monotonic()
     web.start(task_id)
+    _emit("running", name=readable_name, fingerprint=fp[:FINGERPRINT_LEN], cost=cost)
     web.monitor(task_id, verbose=tidy3d_verbose(verbose))
 
     # Download to a temporary name and rename only when complete, so an
@@ -356,6 +415,8 @@ def run_cached(
     data = web.load(task_id, path=str(partial), verbose=tidy3d_verbose(verbose))
     os.replace(partial, target)
     logger.info(f"Run complete. Saved {target}")
+    _emit("done", name=readable_name, fingerprint=fp[:FINGERPRINT_LEN], cost=cost,
+          seconds=time.monotonic() - started)
     return CachedRun(data, target, False, cost, fp)
 
 
@@ -427,12 +488,16 @@ def run_batch_cached(
             pass
         raise CostLimitExceededError(cost, max_cost, f"batch of {len(pending)}")
 
+    started = time.monotonic()
     batch.start()
+    _emit("running", name=f"batch of {len(pending)}", fingerprint="", cost=cost)
     batch.monitor()
     results = batch.load(path_dir=str(Path(output_dir) / "batch_downloads"))
     for task, sim_data in results.items():
         key, readable = names[task]
         out[key] = store_result(pending[task], sim_data, output_dir, readable)
+    _emit("done", name=f"batch of {len(pending)}", fingerprint="", cost=cost,
+          seconds=time.monotonic() - started)
     return out
 
 

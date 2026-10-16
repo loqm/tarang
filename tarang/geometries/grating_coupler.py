@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import tidy3d as td
 
-from tarang.grating_coupler.grating_coupler import GratingConfig
+from tarang.grating_coupler.grating_coupler import GratingConfig, tilt_sign
 from tarang.geometries._modes import core_target_neff
 
 if TYPE_CHECKING:
@@ -27,6 +27,18 @@ if TYPE_CHECKING:
 
 
 logger = get_logger(__name__)
+_NEGATIVE_THETA_NOTED = False
+
+
+def _note_negative_theta() -> None:
+    """theta_deg was signed before v0.1.0 (always made negative); say once that the sign
+    is now ignored and fiber_tilt sets the direction."""
+    global _NEGATIVE_THETA_NOTED
+    if not _NEGATIVE_THETA_NOTED:
+        logger.info("[Simulation Builder] theta_deg is the fibre angle from vertical; its sign "
+                    "is ignored. The direction is set by GratingConfig.fiber_tilt "
+                    "('towards' or 'away' from the waveguide).")
+        _NEGATIVE_THETA_NOTED = True
 
 
 @renamed_params(substrate_medium="handle_medium", cladding_medium="top_cladding_medium")
@@ -50,9 +62,12 @@ def get_active_simulation(
     a wrapped GratingCoupler object.
     """
     freq0 = td.C_0 / config.wavelength_um
+    half_band = float(config.bandwidth_um)
+    if not 0 < half_band < 0.5 * config.wavelength_um:
+        raise ValueError(f"bandwidth_um ({half_band}) must be > 0 and < half the wavelength")
     freqs = np.linspace(
-        td.C_0 / (config.wavelength_um + 0.01),
-        td.C_0 / (config.wavelength_um - 0.01),
+        td.C_0 / (config.wavelength_um + half_band),
+        td.C_0 / (config.wavelength_um - half_band),
         101,
     )
     fwidth = 0.5 * (np.max(freqs) - np.min(freqs))
@@ -91,14 +106,13 @@ def get_active_simulation(
         sim_y_size = 0
         source_y_size = td.inf
 
-    # -- Theta Check -- #
-    if config.theta_deg > 0:
-        logger.warning(
-            "[Simulation Builder]: Warning! Your theta is positive! I am correcting it automatically for you here.\n"
-        )
-        theta_deg = -abs(config.theta_deg)
-    else:
-        theta_deg = config.theta_deg
+    # -- Fibre angle and orientation -- #
+    # theta_deg is the angle from vertical; fiber_tilt sets the direction (see
+    # GratingConfig). For a beam injected downwards, Tidy3D's angle_theta > 0 tilts the
+    # propagation towards -x, i.e. towards the waveguide.
+    if config.theta_deg < 0:
+        _note_negative_theta()
+    theta_deg = tilt_sign(config.fiber_tilt) * abs(config.theta_deg)
 
     # ---- Geometries ---- #
     # 1. The Buried Oxide (BOX) Layer
@@ -182,9 +196,14 @@ def get_active_simulation(
         )
 
     # ---- Source ---- #
+    # source_x is where the beam centre reaches the top of the core; the source plane
+    # sits higher, so its centre is shifted back along the beam by (height) * tan(theta).
+    source_z = config.top_cladding_height + config.source_gap
+    source_x_plane = config.source_x + (source_z - config.core_height) * np.tan(
+        np.deg2rad(theta_deg))
     source = td.GaussianBeam(
         size=(2 * config.mfd, source_y_size, 0),
-        center=[config.source_x, 0, config.top_cladding_height + config.source_gap],
+        center=[source_x_plane, 0, source_z],
         source_time=td.GaussianPulse(
             freq0=freq0,
             fwidth=fwidth,

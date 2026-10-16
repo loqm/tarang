@@ -15,6 +15,33 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **Design runs show and record everything.** Before each stage the tool draws what it is
+  about to simulate (stack and TE00 mode, partial ring and bus, grating with the fibre
+  beam), before any cost question; every cloud run prints a progress line; each stage saves
+  its figures (gap coupling against gap; grating period × fill-factor map, fill-factor /
+  period / fibre-position sensitivity, spectrum, field; layout views). The run starts with
+  the table of assumed values (losses, *n*<sub>2</sub>, fibre MFD, tolerances) and their
+  published sources (`ring.loss_preset`: `typical_ebl`, `annealed_low_loss`,
+  `state_of_the_art`); your own values replace them. The report shows every figure and a
+  threshold estimate, and `benchmark_pack/` (plus a zip) holds a step-by-step README for
+  repeating the design in another solver, `assumptions.csv`, `results.csv`, the n, k data
+  used, figures, tables, simulation files and the GDS.
+- Grating couplers: `GratingConfig.fiber_tilt` (`"towards"` or `"away"` the waveguide) and
+  `bandwidth_um` (half-width of the recorded spectrum, default 0.1 µm);
+  `GratingCoupler.get_spectrum()` / `get_spectrum_summary()` (peak, value at the design
+  wavelength, 1 dB / 3 dB bandwidths); `phase_matched_period()` and `spectrum_summary()`.
+- Design tool grating stage in three steps: a period × fill-factor map around each fill
+  factor's phase-matched period (all runs submitted together), the period moved so the
+  efficiency peak lands on the design wavelength with fill factor and period varied around
+  it, then the fibre position. Designs below `grating.min_feature_um` are not simulated;
+  a best design at the edge of a swept range is reported.
+- `ring_gap_sweep(reference=...)`: `"ring_port"` reads the power entering the ring arc,
+  `"bus_only"` divides the through power by that of the bus alone (one extra run);
+  `bus_only_device()`.
+- `tarang.utilities.cloud_run.progress_listener()` (events for every cloud run) and
+  `account_status()` (FlexCredit balance and expiry); the design tool stops before a cloud
+  stage when the credits have expired or are short.
+
 - **Guided design** (`python -m tarang.design`): materials → cross-section → ring →
   ring–bus gap → grating coupler → layout → report in one session, at any wavelength the
   material data cover. Each stage asks only what it needs, shows its results, and prices
@@ -66,6 +93,22 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Changed
 
+- **Grating couplers are fed "towards" the waveguide by default.** Before, any `theta_deg`
+  was made negative, which always gave a beam travelling away from the waveguide
+  (period λ / (n_eff + sin θ)); the usual two-fibre setup (fibres on two holders forming a
+  V over mirrored couplers) needs λ / (n_eff − sin θ). `theta_deg` is now the angle from
+  vertical (its sign is ignored) and `fiber_tilt="away"` gives the old orientation.
+  `source_x` is now the beam centre on the grating surface (it was the centre at the
+  source plane, 3 µm higher), and the mode monitor records ±100 nm instead of ±10 nm.
+  Grating simulations therefore change, and earlier cached grating results are not reused.
+  The example notebooks and `nested_sampling_example.py` use the "towards" equivalent of
+  their earlier design (period 1.052 µm instead of 0.820 µm).
+- Design tool: the ring–bus gap stage measures the coupled power where light enters the
+  ring (`gap.reference = "ring_port"`), grating defaults are 30 teeth, fill factors
+  0.5–0.9 (full etch) and five fibre positions, and cross-section candidates with the same
+  robustness are ordered by the TE00/TM00 index split instead of a second-mode margin that
+  measured a radiation mode.
+
 - Dispersion-mapping figures and the finalist report name the core material in use instead
   of assuming Si₃N₄ (Luke) data.
 - **One package.** All code moved into the `tarang` package (`tarang.media`,
@@ -95,6 +138,16 @@ working until v0.2.0; old imports are updated with one command (see
   defaults, and therefore FDTD costs, are unchanged.
 
 ### Fixed
+
+- **Ring–bus critical gap too wide.** The gap sweep took the coupled power as 1 − T with T
+  relative to the source, and the simulated bus loses about 0.2 % of the power whatever
+  the gap (normalisation and boundaries), which near critical coupling is a third of the
+  coupled power. For the 1550 nm design (R = 107.5 µm, 0.4 dB/cm) this gave 532 nm instead
+  of 470 nm (over-coupled 464 nm instead of 431 nm), and the fit used only four gaps. The
+  power entering the ring and the bus-only reference agree to about 1 %.
+- Design tool: settings files that start with a byte-order mark (Windows PowerShell 5)
+  are read; the grating stage no longer prints a phase-matched period for the wrong
+  orientation.
 
 - **Material fits that swing between sparse data points.** A pole fit can pass through
   every tabulated point and still oscillate between them: `si3n4` fitted over 0.68–0.88 µm

@@ -40,6 +40,9 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
         raise ValueError(f"unknown stage(s) {sorted(unknown)}; stages are {STAGE_NAMES}")
     ui.say(f"TARANG design run '{cfg.run.name}' in {ctx.out.resolve()}")
     ui.say("Press Enter to accept a default; type q to stop (everything done so far is kept).")
+    ui.say("Figures are saved in figures/ (and opened with --show); the report and a "
+           "benchmark_pack/ folder are written at the end.")
+    _show_assumptions(cfg, ui)
     stale = False
     try:
         for i, (name, title, kind, func) in enumerate(STAGES, 1):
@@ -63,3 +66,22 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
     finally:
         ctx.save_state()
     return ctx
+
+
+def _show_assumptions(cfg, ui) -> None:
+    """The values this design assumes (not computes), with their sources."""
+    from tarang.design import assumptions
+    try:
+        rows = assumptions.table(cfg)
+    except ValueError as err:                    # e.g. an unknown loss preset in the file
+        ui.say(f"  ({err})")
+        return
+    ui.say("\nAssumed values (edit them in design.toml, or answer the questions as they "
+           "come; your own values replace the published ones):")
+    ui.table([dict(quantity=r["quantity"], value=r["value"], unit=r["unit"],
+                   source=_short(r["source"])) for r in rows])
+
+
+def _short(text: str, n: int = 60) -> str:
+    text = str(text)
+    return text if len(text) <= n else text[: n - 3] + "..."

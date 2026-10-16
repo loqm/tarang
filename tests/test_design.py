@@ -135,9 +135,15 @@ def test_candidates_are_ranked_by_robustness():
 def _fake_gap_fit(gaps, out, R, qi, volume, **kw):
     theta0, gamma, cross = 1.2, 3.0, 0.01
     theta_t = math.asin(math.sqrt(cross))
+    theta = [theta0 * math.exp(-gamma * g) for g in gaps]
+    coupled = [math.sin(t) ** 2 for t in theta]
     return {"critical_gap_um": (math.log(theta0) - math.log(theta_t)) / gamma,
             "critical_gap_extrapolated": False, "target_cross_power": cross,
-            "fit_params": {"theta_0": theta0, "gamma": gamma}}
+            "fit_params": {"theta_0": theta0, "gamma": gamma},
+            "sorted_gaps_um": sorted(gaps), "theta_raw_rad": [theta[gaps.index(g)] for g in sorted(gaps)],
+            "fit_mask": [True] * len(gaps), "through_power": [1 - c for c in coupled],
+            "through_power_source": [1 - c - 0.002 for c in coupled],
+            "reference_through_power": None, "fit_gap_range_um": [min(gaps), max(gaps)]}
 
 
 def test_gap_stage_prices_every_gap_then_runs(tmp_path, fake_web, monkeypatch):
@@ -162,17 +168,65 @@ def test_gap_stage_over_budget_is_skipped_without_running(tmp_path, fake_web, mo
     assert "start" not in fake_web.names() and ctx.spent == 0
 
 
-def test_grating_stage_runs_grid_then_fibre_position(tmp_path, fake_web):
+def _fake_spectra(monkeypatch):
+    """Grating spectra without a cloud: a Gaussian peak whose wavelength follows the
+    first-order phase matching of each design (period, fill factor), and whose height
+    is best at fill factor 0.7 and fibre position 5.2 um."""
+    from tarang.grating_coupler.grating_coupler import GratingCoupler
+    calls = []
+
+    def spectrum(self, output_dir, verbose=False):
+        self._run_sim(output_dir)                     # through the (fake) cloud cache
+        c = self.config
+        calls.append((c.period, c.ff, c.source_x))
+        n_avg = c.ff * 1.85 + (1 - c.ff) * 1.0
+        peak_wl = c.period * (n_avg - math.sin(math.radians(abs(c.theta_deg))))
+        height = 0.4 * math.exp(-((c.ff - 0.7) / 0.15) ** 2) * math.exp(-((c.source_x - 5.2) / 3) ** 2)
+        wl = np.linspace(c.wavelength_um - c.bandwidth_um, c.wavelength_um + c.bandwidth_um, 101)
+        return wl, height * np.exp(-((wl - peak_wl) / 0.03) ** 2)
+    monkeypatch.setattr(GratingCoupler, "get_spectrum", spectrum)
+    return calls
+
+
+def test_grating_stage_maps_retunes_then_places_the_fibre(tmp_path, fake_web, monkeypatch):
     from tarang.design import stages
     fake_web.cost = 0.01
-    ctx = _ctx(tmp_path, grating__periods_um=[1.2, 1.25], grating__fill_factors=[0.5],
-               grating__source_x_um=[4.0, 6.0], run__max_total_cost=1.0)
+    _fake_spectra(monkeypatch)
+    ctx = _ctx(tmp_path, grating__fill_factors=[0.5, 0.7, 0.9], grating__fiber_angle_deg=12.0,
+               run__max_total_cost=5.0)
     res = stages.stage_grating(ctx)
     assert res["etch"] == "full" and res["etch_depth_um"] == 0.7      # full etch = film
-    assert 1.0 < res["period_estimate_um"] < 1.5                      # Bragg estimate
-    assert fake_web.names().count("start") == 3                       # 2 grid + 1 position
+    assert res["fiber_tilt"] == "towards"
+    assert abs(res["peak_wavelength_um"] - 1.55) < 0.004              # peak moved onto 1550 nm
+    assert abs(res["fill_factor"] - 0.7) < 1e-9 and res["source_x_um"] == 5.2
+    assert res["efficiency_2d"] > 0.35
+    starts = fake_web.names().count("batch_start")
+    assert starts == 3                                                 # steps A, B and C
     rows = (ctx.out / "tables" / "grating_sweep.csv").read_text().splitlines()
-    assert len(rows) == 1 + 3
+    assert len(rows) == 1 + res["runs"]
+    for name in ("5a_grating_geometry", "5b_grating_map", "5c_grating_sensitivity",
+                 "5d_grating_spectrum"):
+        assert (ctx.out / "figures" / f"{name}.png").exists(), name
+
+
+def test_grating_stage_flags_a_best_design_at_the_edge(tmp_path, fake_web, monkeypatch):
+    from tarang.design import stages
+    fake_web.cost = 0.01
+    _fake_spectra(monkeypatch)
+    ctx = _ctx(tmp_path, grating__fill_factors=[0.4, 0.5], grating__retune=False,
+               run__max_total_cost=5.0)
+    res = stages.stage_grating(ctx)
+    assert any("edge" in n for n in res["notes"])
+
+
+def test_grating_stage_skips_features_below_the_lithography_limit(tmp_path, fake_web, monkeypatch):
+    from tarang.design import stages
+    fake_web.cost = 0.01
+    calls = _fake_spectra(monkeypatch)
+    ctx = _ctx(tmp_path, grating__fill_factors=[0.5, 0.95], grating__min_feature_um=0.1,
+               grating__retune=False, run__max_total_cost=5.0)
+    stages.stage_grating(ctx)
+    assert all(min(ff, 1 - ff) * p >= 0.1 - 1e-9 for p, ff, _ in calls)
 
 
 # ---- layout and report ------------------------------------------------------------------ #
@@ -182,9 +236,11 @@ def _with_cloud_results(ctx):
                                                   q_loaded_critical=4.9e5, q_loaded_over=3.9e5,
                                                   folder="gap")}
     ctx.state["stages"]["grating"] = {"results": dict(
-        etch="full", etch_depth_um=0.7, fiber_angle_deg=10.0, mfd_um=10.4, n_teeth=20,
-        width_um=12.0, period_um=1.24, fill_factor=0.5, source_x_um=5.2, efficiency_2d=0.31,
-        loss_db_2d=5.1, efficiency_3d=None, period_estimate_um=1.24, n_slab=1.85, table="t.csv")}
+        etch="full", etch_depth_um=0.7, fiber_angle_deg=10.0, fiber_tilt="towards", mfd_um=10.4,
+        n_teeth=20, width_um=12.0, period_um=1.24, fill_factor=0.5, source_x_um=5.2,
+        efficiency_2d=0.31, loss_db_2d=5.1, peak_efficiency_2d=0.33, peak_wavelength_um=1.553,
+        bandwidth_1db_nm=38.0, bandwidth_3db_nm=70.0, efficiency_3d=None,
+        period_estimate_um=1.24, n_slab=1.85, table="t.csv")}
     return ctx
 
 

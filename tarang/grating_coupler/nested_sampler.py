@@ -147,6 +147,13 @@ class GratingCouplerBayesianOptimizer:
             )
             self.param_bounds.update(param_bounds)
 
+    def _orientation(self) -> dict:
+        """fiber_tilt (default "towards") and, if given, bandwidth_um from fixed_params."""
+        extra = {"fiber_tilt": self.fixed_params.get("fiber_tilt", "towards")}
+        if "bandwidth_um" in self.fixed_params:
+            extra["bandwidth_um"] = self.fixed_params["bandwidth_um"]
+        return extra
+
     def plot_corner(
         self,
         *,
@@ -325,6 +332,7 @@ class GratingCouplerBayesianOptimizer:
                     "pol_angle",
                     np.pi / 2.0,
                 ),
+                **self._orientation(),
             )
 
             sim_wrapper = GratingCoupler.from_config(
@@ -645,6 +653,7 @@ class GratingCouplerBayesianOptimizer:
                         "pol_angle",
                         np.pi / 2.0,
                     ),
+                    **self._orientation(),
                 )
 
                 verification_wrapper = GratingCoupler.from_config(
