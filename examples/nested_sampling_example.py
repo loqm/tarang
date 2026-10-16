@@ -13,7 +13,9 @@ native library are installed (Linux/macOS) and dynesty otherwise (installed
 with TARANG; the only option on Windows). Pass ``backend="dynesty"`` or ``"multinest"`` to
 choose explicitly. Do not switch backends within one output directory.
 
-The geometry, priors, and sampler settings retain the original example values.
+The fibre feeds the grating "towards" the waveguide (the default since v0.1.0), so
+the period prior is centred on 1.052 µm instead of the 0.820 µm of the earlier
+"away" example; the other priors and sampler settings keep their original values.
 Library-fitted Si3N4 and SiO2 replace the constant-index approximations, so
 efficiencies can change. Cached FDTD results are reused only when the stored
 simulation (geometry, materials, mesh) matches exactly; see
@@ -69,7 +71,8 @@ def main(
     # These map directly to the GratingConfig dataclass inside the sampler
     fixed_params = {
         "wavelength_um": 1.550,  # Central excitation wavelength (μm)
-        "theta_deg": -12.0,  # Fiber angle off-vertical (degrees)
+        "theta_deg": 12.0,  # Fibre angle from vertical (degrees)
+        "fiber_tilt": "towards",  # Beam travels towards the waveguide (fibres form a V)
         "mfd": 10.4,  # Mode Field Diameter of fiber source (μm)
         "source_gap": 2.0,  # Gap above cladding for source plane (μm)
 
@@ -97,12 +100,16 @@ def main(
 
     # Define Tight Prior Search Envelopes Around Design Point
     # Narrow priors focus the search but do not guarantee high efficiency.
+    # Before v0.1.0 this example used the "away" orientation, optimised at
+    # Lambda = 0.8201 um = lambda / (n_eff + sin 12°), i.e. n_eff = 1.682. The same
+    # grating fed "towards" the waveguide needs lambda / (n_eff - sin 12°) = 1.052 um.
+    # source_x is now the beam centre on the grating surface.
     tight_param_bounds = {
-        "period": [0.800, 0.840],  # Centered near Lambda = 0.8201 μm
-        "fill_factor": [0.480, 0.550],  # Centered near Duty Cycle = 0.5136
-        "etch_depth": [0.480, 0.550],  # Centered near Etch Depth = 0.5136 μm
-        "num_periods": [18.0, 26.0],  # Centered near N = 22 teeth
-        "source_x": [3.500, 4.200],  # Centered near Fiber X = 3.8419 μm
+        "period": [1.030, 1.075],  # Centred near Lambda = 1.052 μm
+        "fill_factor": [0.480, 0.550],  # Centred near Duty Cycle = 0.5136
+        "etch_depth": [0.480, 0.550],  # Centred near Etch Depth = 0.5136 μm
+        "num_periods": [18.0, 26.0],  # Centred near N = 22 teeth
+        "source_x": [3.500, 5.500],  # Fibre position on the grating surface (μm)
     }
 
     # Output directory for chains, budget ledger, and leaderboard

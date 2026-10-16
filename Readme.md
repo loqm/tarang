@@ -59,7 +59,7 @@ Settle a geometry in the blue stages before running orange ones.
 | Rings | Full, half and partial rings; FSR, group index, mode fluxes | `tarang.ring_resonator.RingResonator`, `HalfRingResonator`, `PartialRingResonator` |
 | Ring radius | Bend loss over arc angles, *Q*<sub>int</sub>, FSR | `tarang.ring_resonator.ring_radius_sweep.radius_sweep` |
 | Ring–bus gap | Coupling against gap, critical-coupling gap | `tarang.ring_resonator.ring_gap_sweep.ring_gap_sweep`, `radius_gap_sweep` |
-| Grating coupler | 2D/3D coupling efficiency; nested-sampling design search | `tarang.grating_coupler.GratingCoupler`, `tarang.grating_coupler.nested_sampler` |
+| Grating coupler | 2D/3D coupling efficiency and spectrum, fibre towards or away from the waveguide; nested-sampling design search | `tarang.grating_coupler.GratingCoupler`, `tarang.grating_coupler.nested_sampler` |
 | Edge coupler | Inverse-taper efficiency; tip × taper sweep | `tarang.edge_coupler.EdgeCoupler`, `tarang.edge_coupler.parametric_optimization_sweep` |
 | Plots | Geometry views, corner plots | `tarang.utilities.sim_plotter`, `tarang.utilities.plot_corner` |
 | Guided design | All stages in one session: cross-section, ring, gap, grating coupler, GDS, report | `python -m tarang.design` |
@@ -218,16 +218,38 @@ python -m tarang.design --list                              # the stages
 |---|---|---|
 | Materials | wavelength, core, box, cladding (a key, or your own CSV of measured *n*, *k*) | fitted *n*(λ), *k*(λ) table and plot |
 | Cross-section | film thickness if fixed, map ranges, tolerances | design map, ranked candidates, tolerance and mesh check of your choice |
-| Ring | FSR target, losses | radius, *Q*<sub>int</sub>, bend loss, *D*(λ), *D*<sub>int</sub> |
-| Gap | gaps, over-coupling ratio | critical and over-coupled gap, loaded *Q* |
-| Grating coupler | etch (full or partial), fibre angle and MFD | period, fill factor and fibre position from a priced sweep; optional 3D check |
-| Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv` |
-| Report | | `report.md`, `design_summary.json`, `tables/check_values.csv` |
+| Ring | FSR target, losses (a published preset, or your own values) | radius, *Q*<sub>int</sub>, bend loss, *D*(λ), *D*<sub>int</sub>, threshold estimate |
+| Gap | gaps, over-coupling ratio | coupled power per gap (read where light enters the ring), critical and over-coupled gap, loaded *Q* |
+| Grating coupler | etch, fibre angle, orientation and MFD, smallest feature | spectra of a period × fill-factor map, the period tuned onto your wavelength, fill-factor / period / fibre-position sensitivity, 1 dB and 3 dB bandwidths; optional 3D check |
+| Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv`, layout figure |
+| Report | | `report.md` with every figure, `benchmark_pack/` (and its zip), `design_summary.json` |
 
-`tables/check_values.csv` lists every number the design rests on with how it was computed,
-and `tables/materials_nk.csv` the fitted material data, so the design can be checked in any
-other solver. GDS export needs the `layout` extra (`pip install -e ".[layout]"`; included in
+While it runs, the tool shows what it is about to simulate (a picture of each geometry,
+before any cost question), a line for every cloud run, and the figures of each stage
+(`--show` opens them). It checks that your FlexCredits are valid before a cloud stage. At the
+start it lists the values it assumes (losses, *n*<sub>2</sub>, fibre MFD, tolerances) with
+their published sources; your own values replace them.
+
+`benchmark_pack/` holds everything another solver needs: a step-by-step README (geometry,
+materials, mesh, sources, monitors, how each number was obtained), `assumptions.csv`,
+`results.csv`, the exact *n*, *k* data used, all figures, tables, simulation files and the GDS.
+GDS export needs the `layout` extra (`pip install -e ".[layout]"`; included in
 `environment.yml`).
+
+**Fibre orientation.** The fibre beam can travel *towards* the waveguide (the default:
+the fibre's upper end leans away from it, and two fibres feeding the two mirrored couplers
+form a V) or *away* from it:
+
+```
+   towards (default)                  away
+                  / fibre             fibre \
+                 /                           \
+   waveguide ===|||||||       waveguide ===|||||||
+   period  λ / (n_eff − sin θ)          λ / (n_eff + sin θ)
+```
+
+`GratingConfig(..., theta_deg=12, fiber_tilt="towards")`; `theta_deg` is the angle from
+vertical (its sign is ignored) and `source_x` the beam centre on the grating surface.
 
 ---
 
@@ -333,6 +355,11 @@ python -m tarang.migrate path/to/your/scripts --write    # apply
   used).
 * The resonator-arc builder triggers Tidy3D's warning `Override structures should be 'Box'`.
   Results are unaffected; it is kept so that cached arc results remain valid.
+* The partial-ring builder's air region inside the ring reaches 0.1 µm into the BOX (the
+  ring's inner side only; the gap is unaffected). It is kept so cached gap results stay
+  valid, and noted in the design report and benchmark pack.
+* Grating couplers: the taper between grating and waveguide is drawn in the GDS but not
+  simulated yet.
 
 ## Troubleshooting
 

@@ -118,6 +118,46 @@ class Context:
         """Context manager: cap every cloud run at run.max_cost_per_run."""
         return _EnvVar("TARANG_MAX_COST", str(self.cfg.run.max_cost_per_run))
 
+    def cloud_progress(self, label: str, total: int):
+        """Context manager printing one line per cloud run of this stage:
+        '[3/8] gap 0.6 um: running on the cloud (estimate 0.49 FC) ... done in 2 min 05 s'."""
+        from tarang.utilities.cloud_run import progress_listener
+        from tarang.design.visuals import fmt_minutes
+        count = {"n": 0}
+        ui = self.ui
+
+        def show(event: str, info: dict) -> None:
+            name = info.get("name", "")
+            if event == "cached":
+                count["n"] += 1
+                ui.say(f"  [{count['n']}/{total}] {label}: {name} - already computed, loaded")
+            elif event == "running":
+                ui.say(f"  [{count['n'] + 1}/{total}] {label}: {name} - running on the cloud "
+                       f"(estimate {info.get('cost', 0):.3f} FC) ...")
+            elif event == "done":
+                count["n"] += 1
+                ui.say(f"      done in {fmt_minutes(info.get('seconds', 0))}")
+        return progress_listener(show)
+
+    def account_ok(self, cost: Optional[float]) -> bool:
+        """False (with the reason) if the Tidy3D account cannot pay for ``cost``:
+        FlexCredits expired, or fewer left than the estimate. True if fine or unknown."""
+        from tarang.utilities.cloud_run import account_status
+        acc = account_status()
+        if acc is None:
+            return True
+        if acc["expired"]:
+            when = acc["expires"].strftime("%Y-%m-%d") if acc["expires"] else "?"
+            self.ui.say(f"  Your FlexCredits expired on {when}, so Tidy3D will refuse to start "
+                        "runs. Renew them (or switch account with `tidy3d configure`) and run "
+                        "this command again; nothing was run.")
+            return False
+        if cost is not None and acc["credit"] is not None and acc["credit"] < cost:
+            self.ui.say(f"  The account has {acc['credit']:.2f} FlexCredits, less than the "
+                        f"estimate ({cost:.2f}); nothing was run.")
+            return False
+        return True
+
 
 class _EnvVar:
     def __init__(self, name, value):
@@ -168,6 +208,16 @@ def _read_jsonl(path: Path) -> list[dict]:
         return []
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     return [r for r in rows if "error" not in r]
+
+
+def _losses(cfg) -> tuple[float, float]:
+    """Scattering and absorption loss (dB/cm): your values, else the loss preset's."""
+    from tarang.design.assumptions import preset
+    pre = preset(cfg.ring.loss_preset)
+    scat = cfg.ring.scattering_loss_db_cm
+    absl = cfg.ring.absorption_loss_db_cm
+    return (pre["scattering_db_cm"] if scat is None else float(scat),
+            pre["absorption_db_cm"] if absl is None else float(absl))
 
 
 def _material_ok(key: str) -> str:
@@ -300,8 +350,11 @@ def stage_cross_section(ctx: Context) -> dict:
         raise RuntimeError("no target geometry found")
     ui.say("\nCandidates (anomalous D, one guided TE mode), most robust first:")
     ui.table(ranked[:8], ["H_um", "W_um", "D_TE0", "ng_TE0", "guided_TE", "guided_TM",
-                          "TE1_margin", "target_neighbours"],
-             {"D_TE0": ".1f", "ng_TE0": ".4f", "TE1_margin": "+.4f"})
+                          "TE_TM_split", "target_neighbours"],
+             {"D_TE0": ".1f", "ng_TE0": ".4f", "TE_TM_split": ".4f"})
+    ui.say("  Ranked by how many of the 8 neighbouring map points are also targets, then by "
+           "TE_TM_split = |n_eff(TE00) - n_eff(TM00)|: a larger split keeps the TE and TM "
+           "mode families further from crossing (fewer avoided crossings in the comb).")
     best = ranked[0]
     H = ui.value(cfg, "cross_section", "height_um", default=best["H_um"])
     W = ui.value(cfg, "cross_section", "width_um", default=best["W_um"])
@@ -314,9 +367,9 @@ def stage_cross_section(ctx: Context) -> dict:
              "--steps", dsteps, "--workers", cfg.run.workers,
              "--out", fin_file.relative_to(ctx.out), *ctx.stack_args())
     ctx.tool("report", "--straight", fin_file.relative_to(ctx.out), "--finalists", f"{H}x{W}",
-             "--tol", f"{dW},{dH}", "--alpha-scat", cfg.ring.scattering_loss_db_cm,
-             "--alpha-abs", cfg.ring.absorption_loss_db_cm, "--out", "results/finalist_report",
-             "--overwrite")
+             "--tol", f"{dW},{dH}", "--alpha-scat", _losses(cfg)[0],
+             "--alpha-abs", _losses(cfg)[1], "--n2", cfg.assumptions.n2_m2_w,
+             "--out", "results/finalist_report", "--overwrite")
     centre = next(r for r in _read_jsonl(fin_file)
                   if abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6 and r["steps"] == dsteps
                   and r.get("bend_radius") is None)
@@ -345,7 +398,14 @@ def stage_cross_section(ctx: Context) -> dict:
                + f"; last change {change * 100:.1f} %")
     else:
         change = None
+    from tarang.design import visuals
+    fig_xs = visuals.safe(ctx, "cross-section", visuals.cross_section, ctx, H, W,
+                          ctx.path("figures", "2_cross_section.png"))
     return dict(height_um=H, width_um=W, steps=dsteps, D=centre["D_TE0"], n_group=centre["ng_TE0"],
+                figure=str(fig_xs) if fig_xs else None, convergence=[
+                    dict(steps=r["steps"], D=r["D_TE0"]) for r in conv],
+                te_tm_split=abs(centre["neff_TE"][0] - centre["neff_TM"][0])
+                if centre.get("neff_TM") else None,
                 n_eff=centre["neff_TE"][0], n_cut=centre["n_cut"], guided_TE=centre["guided_TE"],
                 guided_TM=centre["guided_TM"], aeff_um2=centre.get("Aeff_TE0_um2"),
                 D_min_tol=float(rep["D_min_tol"]), D_max_tol=float(rep["D_max_tol"]),
@@ -357,7 +417,7 @@ def stage_cross_section(ctx: Context) -> dict:
 def _rank_targets(rows, heights, widths) -> list[dict]:
     """TARGET points (D >= 0, one guided TE) ranked by how many of their 8 neighbours are
     also TARGET (a neighbour outside the map counts as unknown, not as TARGET), then by
-    the margin of the second TE mode below cut-off."""
+    the TE00/TM00 effective-index split (larger = further from a TE/TM crossing)."""
     def is_target(r):
         return r is not None and r["D_TE0"] >= 0 and r["guided_TE"] == 1
     by = {(round(r["H"], 4), round(r["W"], 4)): r for r in rows}
@@ -369,12 +429,12 @@ def _rank_targets(rows, heights, widths) -> list[dict]:
         i, j = hs.index(h), ws.index(w)
         nb = [by.get((hs[a], ws[b])) for a in (i - 1, i, i + 1) for b in (j - 1, j, j + 1)
               if (a, b) != (i, j) and 0 <= a < len(hs) and 0 <= b < len(ws)]
-        te1 = r["neff_TE"][1] if len(r["neff_TE"]) > 1 else r["n_cut"] - 1
+        split = abs(r["neff_TE"][0] - r["neff_TM"][0]) if r.get("neff_TM") else 0.0
         out.append(dict(H_um=h, W_um=w, D_TE0=r["D_TE0"], ng_TE0=r["ng_TE0"],
                         guided_TE=r["guided_TE"], guided_TM=r["guided_TM"],
-                        TE1_margin=r["n_cut"] - te1,
+                        TE_TM_split=split,
                         target_neighbours=f"{sum(map(is_target, nb))}/8",
-                        _score=(sum(map(is_target, nb)), r["n_cut"] - te1)))
+                        _score=(sum(map(is_target, nb)), split)))
     out.sort(key=lambda r: r["_score"], reverse=True)
     for r in out:
         r.pop("_score")
@@ -390,8 +450,21 @@ def stage_ring(ctx: Context) -> dict:
     ui.say(f"n_g = {ng:.4f} -> R = {physics.radius_for_fsr(fsr, ng):.2f} um for {fsr:g} GHz "
            f"(rounded to {R0} um)")
     R = ui.value(cfg, "ring", "radius_um", default=R0)
-    scat = ui.value(cfg, "ring", "scattering_loss_db_cm")
-    absl = ui.value(cfg, "ring", "absorption_loss_db_cm")
+    from tarang.design import assumptions
+    if "ring.loss_preset" not in cfg.given:
+        ui.say("Loss presets (values from publications; your own measured values can replace "
+               "them in the next two questions):")
+        ui.table([dict(preset=k, scattering_dB_cm=v["scattering_db_cm"],
+                       absorption_dB_cm=v["absorption_db_cm"], source=v["source"])
+                  for k, v in assumptions.LOSS_PRESETS.items()])
+    name = ui.value(cfg, "ring", "loss_preset",
+                    check=lambda v: "" if str(v).lower() in assumptions.LOSS_PRESETS else
+                    "choose one of " + ", ".join(assumptions.LOSS_PRESETS))
+    pre = assumptions.preset(name)
+    scat = ui.value(cfg, "ring", "scattering_loss_db_cm", default=pre["scattering_db_cm"])
+    absl = ui.value(cfg, "ring", "absorption_loss_db_cm", default=pre["absorption_db_cm"])
+    ui.say(f"  scattering {scat} dB/cm ({assumptions.loss_source(cfg, 'scattering')})")
+    ui.say(f"  absorption {absl} dB/cm ({assumptions.loss_source(cfg, 'absorption')})")
     bend_loss = 0.0
     if ui.value(cfg, "ring", "bend_check"):
         bend_file = ctx.path("results", "bend.jsonl")
@@ -456,12 +529,19 @@ def stage_gap(ctx: Context) -> dict:
     gaps = ui.value(cfg, "gap", "gaps_um", default=gdef, cast=parse_list)
     span = ui.value(cfg, "gap", "span_angle_deg")
     K = ui.value(cfg, "gap", "over_coupling")
+    reference = ui.value(cfg, "gap", "reference", check=lambda v: "" if v in
+                         ("ring_port", "bus_only", "source")
+                         else "answer ring_port, bus_only or source")
     fine = ui.value(cfg, "gap", "fine_steps")
     coarse = ui.value(cfg, "gap", "coarse_steps")
     ui.value(cfg, "run", "max_cost_per_run")
     ui.value(cfg, "run", "max_total_cost")
 
     from tarang.geometries.partial_ring_resonator import get_active_simulation as partial
+    from tarang.ring_resonator.ring_gap_sweep import (BUS_ONLY_FOLDER, bus_only_device,
+                                                      ring_gap_sweep)
+    from tarang.utilities.sweep_helpers import cache_dir as sweep_cache_dir
+    from tarang.design import visuals
     clad_is_air = str(cfg.materials.cladding).lower() == "air"
     geo = dict(wavelength_um=wl, span_angle_rad=math.radians(span), wg_width=W, wg_height=H,
                core_medium=ctx.medium(cfg.materials.core), box_medium=ctx.medium(cfg.materials.box),
@@ -469,146 +549,348 @@ def stage_gap(ctx: Context) -> dict:
                top_cladding_medium=None if clad_is_air else ctx.medium(cfg.materials.cladding),
                top_cladding_height=0.0 if clad_is_air else cfg.stack.cladding_height_um,
                fine_steps_per_wvl=fine, coarse_steps_per_wvl=coarse)
+    folder = ctx.out / "cloud" / "gap_sweep"
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        sims = {f"gap_{g:g}": partial(radius=R, gap=g, **geo).sim for g in gaps}
+        devices = {g: partial(radius=R, gap=g, **geo) for g in gaps}
     for msg in sorted({str(w.message) for w in caught}):
         ui.say(f"  Note from the builder: {msg}")
-    cost = _estimate(ctx, sims)
-    if cost is None or not ui.proceed(f"ring-bus gap sweep, {len(gaps)} cloud FDTD runs "
-                                      f"(R = {R} um, {span:g}° partial ring)", cost,
-                                      ctx.budget_left):
+    jobs = {f"gap_{g:g}": (d, sweep_cache_dir(folder, d)) for g, d in devices.items()}
+    if reference == "bus_only":
+        ref = bus_only_device(devices[max(gaps)])
+        jobs["bus_only"] = (ref, folder / BUS_ONLY_FOLDER)
+    todo = {k: d.sim for k, (d, cache) in jobs.items() if not d.is_cached(cache)}
+
+    mid = devices[sorted(gaps)[len(gaps) // 2]]
+    zc = H / 2
+    bus = next((st.geometry.bounds for st in mid.sim.structures if st.name == "Bus_Waveguide"),
+               ((0, -W / 2, 0), (0, W / 2, 0)))
+    yb = 0.5 * (bus[0][1] + bus[1][1])                 # bus centre line (y)
+    visuals.safe(ctx, "gap geometry", visuals.sim_views, mid.sim,
+                 ctx.path("figures", "4a_gap_geometry.png"),
+                 [dict(z=zc, title=f"top view at z = {zc:.2f} µm (gap {mid.gap} µm)"),
+                  dict(z=zc, xlim=(-8, 8), ylim=(yb - 2 * W - 1, yb + 2 * W + mid.gap + 2),
+                       title="coupling region"),
+                  dict(x=0, ylim=(-2.0, H + 2.0), xlim=(yb - 3 * W, yb + 3 * W + mid.gap),
+                       title="cross-section through the coupling point (x = 0)")],
+                 f"Partial ring ({span:g}°, R = {R} µm) next to the bus: one of {len(gaps)} gaps",
+                 notes=("The ring arcs end inside the simulation box (no absorbers at their ends). "
+                        + {"ring_port": "Coupled power: read where light enters the ring arc.",
+                           "bus_only": "A bus-only copy (ring removed) is run once as the reference.",
+                           "source": "Coupled power: 1 - through power relative to the source."}
+                        [reference]))
+    ui.say(f"{len(jobs)} simulations ({len(gaps)} gaps" + (" + the bus alone" if reference ==
+           "bus_only" else "") + f"), {len(todo)} not computed yet.")
+    cost = _estimate(ctx, todo) if todo else 0.0
+    if cost is None or (todo and not ctx.account_ok(cost)):
+        return dict(skipped=True)
+    if not ui.proceed(f"ring-bus gap sweep, {len(todo)} cloud FDTD runs (R = {R} um, "
+                      f"{span:g}° partial ring)", cost, ctx.budget_left):
         return dict(skipped=True)
 
-    from tarang.ring_resonator.ring_gap_sweep import ring_gap_sweep
     volume = 2 * math.pi * R * W * H
-    with ctx.cloud_limit(), warnings.catch_warnings():
+    with ctx.cloud_limit(), ctx.cloud_progress("gap sweep", len(jobs)), \
+            warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)        # already shown above
-        crit = ring_gap_sweep(gaps, ctx.out / "cloud" / "gap_sweep", R, ring["q_intrinsic"], volume,
-                              n_group=ring["n_group"], **{k: v for k, v in geo.items()
-                                                          if k != "span_angle_rad"},
+        crit = ring_gap_sweep(gaps, folder, R, ring["q_intrinsic"], volume,
+                              n_group=ring["n_group"], reference=reference,
+                              **{k: v for k, v in geo.items() if k != "span_angle_rad"},
                               span_angle_rad=math.radians(span))
     ctx.add_spent(cost)
     g_crit = crit["critical_gap_um"]
     g_over = physics.gap_for_over_coupling(crit, K) if K and K != 1 else None
+
+    # per-gap table and figure (crit lists follow the order of `gaps`)
+    pos = {float(g): i for i, g in enumerate(gaps)}
+    g_sorted = np.asarray(crit["sorted_gaps_um"], float)
+    idx = [pos[float(g)] for g in g_sorted]
+    coupled = 1 - np.asarray(crit["through_power"], float)[idx]
+    raw = 1 - np.asarray(crit["through_power_source"], float)[idx]
+    ref_power = crit.get("reference_through_power")
+    per_gap = [dict(gap_um=float(g), coupled_power=float(c), one_minus_T_source=float(r),
+                    theta_rad=float(th), used_in_fit=bool(m))
+               for g, c, r, th, m in zip(g_sorted, coupled, raw,
+                                         np.asarray(crit["theta_raw_rad"]),
+                                         np.asarray(crit["fit_mask"]))]
+    ui.table(per_gap, formats={"coupled_power": ".3e", "one_minus_T_source": ".3e",
+                               "theta_rad": ".4f"})
+    if reference != "source":
+        floor = float(np.median(raw[-2:] - coupled[-2:])) if len(raw) >= 2 else 0.0
+        ui.say(f"  coupled_power is the light entering the ring ({reference}); 1 - T relative "
+               f"to the source carries a gap-independent excess of about {floor:.1e} "
+               "(numerical loss on the bus), which is not coupling.")
+    target = crit["target_cross_power"]
+    targets = {"critical": target}
+    if g_over is not None:
+        targets[f"over-coupled K = {K:g}"] = min(K * target, 0.999)
+    fig = visuals.safe(ctx, "gap coupling", visuals.gap_coupling, g_sorted,
+                       raw if reference != "source" else None, coupled, crit.get("fit_params"),
+                       targets, ctx.path("figures", "4b_gap_coupling.png"),
+                       {"critical": g_crit, f"K = {K:g}": g_over})
     rows = [dict(regime="critical (K = 1)", gap_um=g_crit, Q_loaded=physics.loaded_q(ring["q_intrinsic"], 1))]
     if g_over is not None:
         rows.append(dict(regime=f"over-coupled (K = {K:g})", gap_um=g_over,
                          Q_loaded=physics.loaded_q(ring["q_intrinsic"], K)))
     ui.table(rows, formats={"gap_um": ".3f", "Q_loaded": ".3g"})
     if crit.get("critical_gap_extrapolated"):
-        ui.say("  Note: the critical gap lies outside the simulated gaps (extrapolated); add "
+        ui.say("  Note: the critical gap lies outside the fitted gaps (extrapolated); add "
                "gaps around it and rerun this stage.")
+    table = ctx.path("tables", "gap_sweep.csv")
+    with open(table, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(per_gap[0]), lineterminator="\n")
+        w.writeheader()
+        w.writerows(per_gap)
     return dict(critical_gap_um=g_crit, over_coupling=K, over_coupled_gap_um=g_over,
                 extrapolated=bool(crit.get("critical_gap_extrapolated")),
                 q_loaded_critical=physics.loaded_q(ring["q_intrinsic"], 1),
                 q_loaded_over=physics.loaded_q(ring["q_intrinsic"], K) if g_over else None,
-                fit=crit.get("fit_params"), estimated_cost=cost,
-                folder=str(ctx.out / "cloud" / "gap_sweep"))
+                fit=crit.get("fit_params"), fit_r2=crit.get("fit_r_squared_log_theta"),
+                fit_gap_range_um=crit.get("fit_gap_range_um"), reference=reference,
+                reference_through_power=ref_power, target_cross_power=target,
+                span_angle_deg=span, gaps_um=list(gaps), per_gap=per_gap, table=str(table),
+                figure=str(fig) if fig else None, estimated_cost=cost, folder=str(folder),
+                mesh_steps=[fine, coarse])
 
 
 def stage_grating(ctx: Context) -> dict:
+    """Grating coupler in three small steps, all 2D FDTD with a broadband spectrum:
+
+    A. a coarse map: for each fill factor, periods around its phase-matched period;
+    B. retune: shift the period so the peak of the best design lands on the design
+       wavelength, and vary the fill factor and the period around it;
+    C. fibre position along the grating for the best design.
+    Every run records the efficiency spectrum (peak, value at the design wavelength,
+    1 dB / 3 dB bandwidths), so a design is judged where it will be used.
+    """
     cfg, ui = ctx.cfg, ctx.ui
     xs = ctx.results("cross_section")
     H, wl = xs["height_um"], cfg.run.wavelength_um
+    g = cfg.grating
     etch = ui.value(cfg, "grating", "etch", check=lambda v: "" if v in ("full", "partial")
                     else "answer full or partial")
     depth = H if etch == "full" else ui.value(cfg, "grating", "etch_depth_um", default=round(H / 2, 3),
                                               check=lambda v: "" if 0 < v < H else f"0 < depth < {H}")
     angle = ui.value(cfg, "grating", "fiber_angle_deg")
+    tilt = ui.value(cfg, "grating", "fiber_tilt", check=lambda v: "" if v in ("towards", "away")
+                    else "answer towards or away")
     mfd = ui.value(cfg, "grating", "mfd_um")
     teeth = ui.value(cfg, "grating", "n_teeth")
     width = ui.value(cfg, "grating", "width_um")
-    ffs = ui.value(cfg, "grating", "fill_factors", cast=parse_list)
+    min_feat = ui.value(cfg, "grating", "min_feature_um")
+    band = ui.value(cfg, "grating", "bandwidth_um")
+    ffdef = [0.5, 0.6, 0.7, 0.8, 0.9] if etch == "full" else [0.4, 0.5, 0.6, 0.7, 0.8]
+    ffs = ui.value(cfg, "grating", "fill_factors", default=ffdef, cast=parse_list)
+    detune = ui.value(cfg, "grating", "detuning", cast=parse_list)
+    fixed_periods = g.periods_um if "grating.periods_um" in cfg.given else []
+    retune = ui.value(cfg, "grating", "retune")
 
+    from tarang.grating_coupler.grating_coupler import (GratingConfig, GratingCoupler,
+                                                        phase_matched_period, spectrum_summary)
+    from tarang.utilities.cloud_run import run_batch_cached
+    from tarang.design import visuals
     m = cfg.materials
     n_core, n_box = ctx.n(m.core), ctx.n(m.box)
     n_top = 1.0 if str(m.cladding).lower() == "air" else ctx.n(m.cladding)
     n_slab = physics.slab_te_index(n_core, n_box, n_top, H, wl)
     n_groove = n_top if etch == "full" else physics.slab_te_index(n_core, n_box, n_top, H - depth, wl)
-    p0 = physics.grating_period(n_slab, n_groove, 0.5, n_top, angle, wl)
-    ui.say(f"Slab TE index {n_slab:.4f}, groove {n_groove:.4f}: first-order period ≈ {p0:.3f} um "
-           f"at fill factor 0.5")
-    pdef = [physics.round_to(p0 * f, 0.005) for f in (0.94, 0.97, 1.0, 1.03, 1.06)]
-    periods = ui.value(cfg, "grating", "periods_um", default=pdef, cast=parse_list)
-    xdef = [round(mfd * f, 2) for f in (0.3, 0.5, 0.7)]
-    xs_list = ui.value(cfg, "grating", "source_x_um", default=xdef, cast=parse_list)
+
+    def p_match(ff: float) -> float:
+        return phase_matched_period(ff * n_slab + (1 - ff) * n_groove, wl, angle, tilt, n_top)
+    sign = "-" if tilt == "towards" else "+"
+    ui.say(f"Slab TE index {n_slab:.4f}, groove {n_groove:.4f}. Fibre {angle:g}° from vertical, "
+           f"beam travelling {tilt} the waveguide: first-order period "
+           f"λ / (n_avg {sign} n_top sin θ) = " +
+           ", ".join(f"{p_match(f):.3f} µm (FF {f:g})" for f in ffs))
+    sx_mid = round(0.5 * mfd, 2)
+    sxdef = [round(mfd * f, 2) for f in (0.25, 0.375, 0.5, 0.75, 1.0)]
+    sx_list = ui.value(cfg, "grating", "source_x_um", default=sxdef, cast=parse_list)
     ui.value(cfg, "run", "max_cost_per_run")
     ui.value(cfg, "run", "max_total_cost")
 
-    from tarang.grating_coupler.grating_coupler import GratingConfig, GratingCoupler
     handle = None if str(m.handle).lower() == "none" else ctx.medium(m.handle)
     clad = None if str(m.cladding).lower() == "air" else ctx.medium(m.cladding)
+    folder = ctx.out / "cloud" / "grating"
 
     def device(period, ff, sx, is_3d=False):
-        gcfg = GratingConfig(wavelength_um=wl, theta_deg=-abs(angle), mfd=mfd, source_x=sx,
+        gcfg = GratingConfig(wavelength_um=wl, theta_deg=abs(angle), mfd=mfd, source_x=sx,
                              source_gap=2.0, core_height=H,
                              top_cladding_height=cfg.stack.cladding_height_um,
                              box_height=cfg.stack.box_height_um, handle_height=3.0,
-                             etch_depth=depth, period=period, ff=ff, n_teeth=teeth,
-                             w_grating=width, pol_angle=math.pi / 2, buffer=3.0)
+                             etch_depth=depth, period=round(period, 4), ff=round(ff, 4),
+                             n_teeth=teeth, w_grating=width, pol_angle=math.pi / 2, buffer=3.0,
+                             fiber_tilt=tilt, bandwidth_um=band)
         return GratingCoupler.from_config(gcfg, core_medium=ctx.medium(m.core),
                                           box_medium=ctx.medium(m.box), handle_medium=handle,
                                           top_cladding_medium=clad, is_3d=is_3d)
 
-    folder = ctx.out / "cloud" / "grating"
-    sx_mid = xs_list[len(xs_list) // 2]
-    grid = [(p, f, sx_mid) for p in periods for f in ffs]
-    results = []
+    def feasible(period, ff) -> bool:
+        return min(ff, 1 - ff) * period >= min_feat - 1e-9
 
-    def run_batch(points, label, is_3d=False):
+    results: list[dict] = []
+
+    def run_set(points, label, step, is_3d=False) -> Optional[list[dict]]:
+        points = [pt for pt in dict.fromkeys(points) if feasible(pt[0], pt[1])]
+        if not points:
+            return []
         devs = {pt: device(*pt, is_3d=is_3d) for pt in points}
         todo = {f"gc_{i}": d.sim for i, (pt, d) in enumerate(devs.items())
                 if not d.is_cached(folder)}
         cost = _estimate(ctx, todo) if todo else 0.0
-        if cost is None or not ui.proceed(f"{label}: {len(points)} {'3D' if is_3d else '2D'} "
-                                          f"grating simulations ({len(todo)} not cached)",
-                                          cost, ctx.budget_left):
+        if cost is None or (todo and not ctx.account_ok(cost)):
             return None
+        if not ui.proceed(f"{label}: {len(points)} {'3D' if is_3d else '2D'} grating "
+                          f"simulations ({len(todo)} not computed yet)", cost, ctx.budget_left):
+            return None
+        if todo:
+            jobs = {pt: (d.sim, d._readable_name()) for pt, d in devs.items()
+                    if not d.is_cached(folder)}
+            ui.say(f"  submitting {len(jobs)} runs together (they run in parallel) ...")
+            cap = float(cfg.run.max_cost_per_run) * len(jobs)
+            with ctx.cloud_progress(label, 1):
+                run_batch_cached({f"{pt}": job for pt, job in jobs.items()}, folder, max_cost=cap)
         out = []
-        with ctx.cloud_limit():
-            for pt, d in devs.items():
-                eff = float(d.get_efficiency(folder))
-                out.append(dict(period_um=pt[0], fill_factor=pt[1], source_x_um=pt[2],
-                                efficiency=eff, loss_db=-10 * math.log10(max(eff, 1e-12)),
-                                dim="3D" if is_3d else "2D"))
+        for pt, d in devs.items():
+            wls, eta = d.get_spectrum(folder)
+            summ = spectrum_summary(wls, eta, wl)
+            out.append(dict(step=step, period_um=pt[0], fill_factor=pt[1], source_x_um=pt[2],
+                            dim="3D" if is_3d else "2D", **summ))
         ctx.add_spent(cost)
+        results.extend(out)
+        ui.table(sorted(out, key=lambda r: -r["efficiency_at_target"])[:8],
+                 ["period_um", "fill_factor", "source_x_um", "peak_wavelength_um",
+                  "peak_efficiency", "efficiency_at_target", "bandwidth_1db_nm"],
+                 {"peak_wavelength_um": ".4f", "peak_efficiency": ".3f",
+                  "efficiency_at_target": ".3f", "bandwidth_1db_nm": ".0f"})
         return out
 
-    stage_a = run_batch(grid, "grating period x fill factor")
+    # ---- preview of the middle design, before any cost question
+    f_mid = ffs[len(ffs) // 2]
+    preview = device(p_match(f_mid), f_mid, sx_mid)
+    visuals.safe(ctx, "grating geometry", visuals.grating_geometry, preview,
+                 ctx.path("figures", "5a_grating_geometry.png"),
+                 "Grating coupler, 2D FDTD (one of the designs in step A)")
+
+    # ---- A: coarse map
+    if fixed_periods:
+        pts = [(round(p, 4), f, sx_mid) for f in ffs for p in fixed_periods]
+    else:
+        pts = [(round(p_match(f) * d, 4), f, sx_mid) for f in ffs for d in detune]
+    stage_a = run_set(pts, "A. period x fill factor map", "A")
     if stage_a is None:
         return dict(skipped=True)
-    results += stage_a
-    best = max(stage_a, key=lambda r: r["efficiency"])
-    others = [x for x in xs_list if x != best["source_x_um"]]
-    if others:
-        stage_b = run_batch([(best["period_um"], best["fill_factor"], x) for x in others],
-                            "fibre position for the best grating")
+    best = _best_grating(stage_a)
+    visuals.safe(ctx, "grating map", visuals.grating_landscape, stage_a, best,
+                 ctx.path("figures", "5b_grating_map.png"), wl)
+    edge = _edge_notes(best, ffs, sorted({r["period_um"] for r in stage_a
+                                          if r["fill_factor"] == best["fill_factor"]}))
+
+    ff_rows, period_rows, align_rows = [], [], []
+    final = best
+    if retune:
+        # ---- B: retune the period onto the design wavelength, vary FF and period
+        scale = wl / best["peak_wavelength_um"]
+        P_star = best["period_um"] * scale
+        if not best["peak_inside"]:
+            ui.say(f"  The best design's peak lies outside the simulated band "
+                   f"({wl - band:.3f}-{wl + band:.3f} µm); moving the period towards it.")
+        f0 = best["fill_factor"]
+        ffs_b = [round(f0 + df, 3) for df in (-0.1, -0.05, 0.0, 0.05, 0.1) if 0.05 < f0 + df < 0.95]
+        sx0 = best["source_x_um"]
+        pts_ff = [(round(P_star * p_match(f) / p_match(f0), 4), f, sx0) for f in ffs_b]
+        pts_p = [(round(P_star * k, 4), f0, sx0) for k in (0.98, 0.99, 1.0, 1.01, 1.02)]
+        stage_b = run_set(pts_ff + pts_p, "B. period tuned onto the wavelength; fill factor "
+                                          "and period around it", "B")
         if stage_b:
-            results += stage_b
-            best = max(results, key=lambda r: r["efficiency"])
-    ui.say("\nBest 2D designs:")
-    ui.table(sorted(results, key=lambda r: -r["efficiency"])[:6],
-             ["period_um", "fill_factor", "source_x_um", "efficiency", "loss_db"],
-             {"efficiency": ".3f", "loss_db": ".2f"})
+            final = max(stage_b, key=lambda r: r["efficiency_at_target"])
+            key = lambda r: (round(r["period_um"], 4), r["fill_factor"], r["source_x_um"])  # noqa: E731
+            ff_rows = [r for r in stage_b if key(r) in set(pts_ff)]
+            period_rows = [r for r in stage_b if key(r) in set(pts_p)]
+            # ---- C: fibre position for the best design
+            stage_c = run_set([(final["period_um"], final["fill_factor"], x) for x in sx_list],
+                              "C. fibre position along the grating", "C")
+            if stage_c:
+                align_rows = stage_c + ([final] if final["source_x_um"] not in sx_list else [])
+                final = max(align_rows, key=lambda r: r["efficiency_at_target"])
+            edge += _edge_notes(final, ffs_b, [p for p, _, _ in pts_p],
+                                sx_list if stage_c else None)
     best3d = None
     if ui.value(cfg, "grating", "check_3d"):
-        r3 = run_batch([(best["period_um"], best["fill_factor"], best["source_x_um"])],
-                       "3D check of the best grating", is_3d=True)
+        r3 = run_set([(final["period_um"], final["fill_factor"], final["source_x_um"])],
+                     "3D check of the final design", "3D", is_3d=True)
         if r3:
             best3d = r3[0]
-            results += r3
-            ui.say(f"3D efficiency: {best3d['efficiency']:.3f} ({best3d['loss_db']:.2f} dB)")
+
+    # ---- figures and table of the final design
+    fdev = device(final["period_um"], final["fill_factor"], final["source_x_um"])
+    wls, eta = fdev.get_spectrum(folder)
+    summ = spectrum_summary(wls, eta, wl)
+    summ["target_um"] = wl
+    visuals.safe(ctx, "grating spectrum", visuals.grating_spectrum, wls, eta, summ,
+                 ctx.path("figures", "5d_grating_spectrum.png"),
+                 f"Final grating: P = {final['period_um']:.4f} µm, FF = {final['fill_factor']:.2f}, "
+                 f"fibre at {final['source_x_um']} µm")
+    if ff_rows or period_rows or align_rows:
+        visuals.safe(ctx, "grating sensitivity", visuals.grating_sensitivity, ff_rows,
+                     period_rows, align_rows, final, ctx.path("figures", "5c_grating_sensitivity.png"),
+                     wl)
+    sim_data = fdev._run_sim(folder)
+    visuals.safe(ctx, "grating field", visuals.grating_field, sim_data,
+                 ctx.path("figures", "5e_grating_field.png"), wl,
+                 f"|E| of the final grating at {wl} µm (fibre {tilt} the waveguide)")
+    visuals.safe(ctx, "final grating geometry", visuals.grating_geometry, fdev,
+                 ctx.path("figures", "5f_grating_final_geometry.png"), "Final grating coupler")
+    spec = ctx.path("tables", "grating_spectrum_final.csv")
+    with open(spec, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, lineterminator="\n")
+        w.writerow(["wavelength_um", "efficiency", "efficiency_db"])
+        for x, e in zip(wls, eta):
+            w.writerow([round(float(x), 6), float(e), round(10 * math.log10(max(float(e), 1e-12)), 4)])
     table = ctx.path("tables", "grating_sweep.csv")
     with open(table, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(results[0]), lineterminator="\n")
         w.writeheader()
         w.writerows(results)
-    return dict(etch=etch, etch_depth_um=depth, fiber_angle_deg=angle, mfd_um=mfd, n_teeth=teeth,
-                width_um=width, period_um=best["period_um"], fill_factor=best["fill_factor"],
-                source_x_um=best["source_x_um"], efficiency_2d=best["efficiency"],
-                loss_db_2d=best["loss_db"], efficiency_3d=best3d and best3d["efficiency"],
-                period_estimate_um=p0, n_slab=n_slab, table=str(table))
+    ui.say(f"\nFinal grating: period {final['period_um']:.4f} µm, fill factor "
+           f"{final['fill_factor']:.2f}, fibre at {final['source_x_um']} µm on the grating: "
+           f"{summ['efficiency_at_target'] * 100:.1f} % ({-summ['loss_db_at_target']:.2f} dB) "
+           f"at {wl} µm; peak {summ['peak_efficiency'] * 100:.1f} % at "
+           f"{summ['peak_wavelength_um'] * 1e3:.1f} nm; 1 dB bandwidth "
+           f"{summ['bandwidth_1db_nm']:.0f} nm.")
+    for note in dict.fromkeys(edge):
+        ui.say("  Note: " + note)
+    return dict(etch=etch, etch_depth_um=depth, fiber_angle_deg=angle, fiber_tilt=tilt,
+                mfd_um=mfd, n_teeth=teeth, width_um=width, period_um=final["period_um"],
+                fill_factor=final["fill_factor"], source_x_um=final["source_x_um"],
+                efficiency_2d=summ["efficiency_at_target"], loss_db_2d=summ["loss_db_at_target"],
+                peak_efficiency_2d=summ["peak_efficiency"],
+                peak_wavelength_um=summ["peak_wavelength_um"],
+                bandwidth_1db_nm=summ["bandwidth_1db_nm"], bandwidth_3db_nm=summ["bandwidth_3db_nm"],
+                efficiency_3d=best3d and best3d["efficiency_at_target"],
+                period_estimate_um=p_match(final["fill_factor"]), n_slab=n_slab, n_groove=n_groove,
+                bandwidth_um=band, min_feature_um=min_feat, runs=len(results), table=str(table),
+                spectrum_table=str(spec), notes=list(dict.fromkeys(edge)),
+                final_sim=str(folder / fdev.get_dir_name() / "simulation.json"))
+
+
+def _best_grating(rows: list[dict]) -> dict:
+    """Highest peak efficiency, preferring designs whose peak lies inside the band."""
+    inside = [r for r in rows if r["peak_inside"]] or rows
+    return max(inside, key=lambda r: r["peak_efficiency"])
+
+
+def _edge_notes(best: dict, ffs, periods=None, positions=None) -> list[str]:
+    """Warnings when the best design sits at the edge of a swept range."""
+    notes = []
+    if len(ffs) > 1 and best["fill_factor"] in (min(ffs), max(ffs)):
+        notes.append(f"the best fill factor ({best['fill_factor']}) is at the edge of the range "
+                     f"tried ({min(ffs)}-{max(ffs)}); the optimum may lie beyond it.")
+    if periods and len(periods) > 1 and best["period_um"] in (min(periods), max(periods)):
+        notes.append(f"the best period ({best['period_um']} µm) is at the edge of the periods "
+                     "tried for its fill factor.")
+    if positions and len(positions) > 1 and best["source_x_um"] in (min(positions), max(positions)):
+        notes.append(f"the best fibre position ({best['source_x_um']} µm) is at the edge of the "
+                     "positions tried.")
+    return notes
 
 
 def stage_layout(ctx: Context) -> dict:
@@ -644,6 +926,11 @@ DEPENDS = {
 }
 
 
+# Settings that only label where a value came from (the values themselves are hashed):
+# changing them must not repeat a stage.
+KEY_IGNORE = {"ring": {"loss_preset"}}
+
+
 def settings_key(cfg: DesignConfig, stage: str) -> str:
     """Hash of every setting this stage and the stages before it depend on."""
     parts = {}
@@ -651,6 +938,7 @@ def settings_key(cfg: DesignConfig, stage: str) -> str:
         for dep in DEPENDS[name]:
             sec, _, key = dep.partition(".")
             val = getattr(cfg, sec)
-            parts[dep] = getattr(val, key) if key else val.__dict__
+            parts[dep] = getattr(val, key) if key else {
+                k: v for k, v in val.__dict__.items() if k not in KEY_IGNORE.get(sec, ())}
     blob = json.dumps(parts, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]

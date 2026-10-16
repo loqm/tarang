@@ -5,7 +5,7 @@ Original critical-coupling equations: Esraaj Sarkar Gupta, 2026.
 The first monotonic coupling branch is selected using the legacy peak/filter
 rule; intensity alone does not uniquely unwrap arbitrary coupling branches.
 
-Exposes: ring_gap_sweep(), radius_gap_sweep().
+Exposes: ring_gap_sweep(), radius_gap_sweep(), bus_only_device().
 """
 
 from __future__ import annotations
@@ -138,6 +138,44 @@ def _fit_coupling(
     }
 
 
+RING_STRUCTURES = ("Ring_Outer", "Ring_Inner_Hole")
+
+
+BUS_ONLY_FOLDER = "bus_only_reference"
+
+
+def bus_only_device(obj):
+    """Copy of a ring wrapper whose simulation has the ring removed (bus, monitors,
+    source, mesh and domain unchanged): the reference for ``reference="bus_only"``.
+    Its results are cached in ``<output_dir>/bus_only_reference``."""
+    import copy
+
+    ref = copy.copy(obj)
+    kept = [s for s in obj.sim.structures if s.name not in RING_STRUCTURES]
+    if len(kept) == len(obj.sim.structures):
+        raise ValueError(f"No ring structures {RING_STRUCTURES} found to remove for the "
+                         "bus-only reference; use reference='source' with this builder.")
+    ref.sim = obj.sim.updated_copy(structures=kept)
+    ref._cache_label = f"{getattr(obj, '_cache_label', 'ring')}BusOnly"
+    return ref
+
+
+def _bus_only_power(obj, output_dir, through_monitor, through_direction, verbose,
+                    force_rerun, report) -> float:
+    """Through power of ``obj``'s simulation with the ring structures removed."""
+    ref = bus_only_device(obj)
+    cache = Path(output_dir) / BUS_ONLY_FOLDER
+    fluxes = ref.get_mode_fluxes(output_dir=cache, verbose=verbose, force_rerun=force_rerun)
+    key = "flux_forward" if through_direction == "+" else "flux_backward"
+    power = float(fluxes[through_monitor][key])
+    if not np.isfinite(power) or power <= 0:
+        raise ValueError("Bus-only reference through power must be positive.")
+    report["bus_only_reference"] = {"gap_um_of_copied_simulation": obj.gap,
+                                    "through_port_power_absolute": power,
+                                    "mode_fluxes": fluxes, "cache_dir": str(cache)}
+    return power
+
+
 @renamed_params(substrate_medium="box_medium", substrate_height="box_height")
 def ring_gap_sweep(
     gaps_sweep_list : list[float],  # Distinct nonnegative ring-to-bus gaps to simulate (um; at least two).
@@ -190,7 +228,10 @@ def ring_gap_sweep(
 
     clip_through_power : bool = True,  # Clip normalized through power to [0, 1]; otherwise reject values above one.
 
-    theta_fit_bounds_rad : tuple = (0.05, 1.5),  # Accepted coupling-angle interval for the exponential fit (radians).
+    theta_fit_bounds_rad : tuple | None = None,  # Accepted coupling-angle interval for the fit (radians); default (0.05, 1.5) with reference="source", else (0.005, 1.5).
+
+    reference : str = "source",  # How the coupled power is measured: "source" (1 - through power / source power), "ring_port" (power entering the ring arc, read at ring_monitor; no extra run) or "bus_only" (1 - through power / through power of the bus alone; one extra run).
+    ring_monitor : str = "Ring_Out_Right",  # Mode monitor at the ring arc end that receives the coupled light (reference="ring_port").
 
     fit_after_peak : bool = True,  # Fit only points at or beyond the peak coupling angle in increasing gap order.
     min_fit_points : int = 2,      # Minimum number of accepted points needed for the coupling fit (at least two).
@@ -206,8 +247,25 @@ def ring_gap_sweep(
 ):
     """Fit gap-dependent coupling and critical coupling for one ring radius.
     Return metrics and save raw fluxes; volume_um3 must be supplied explicitly.
+
+    The coupled power per pass is what the fit needs. ``reference="source"`` (the
+    original method) takes it as 1 - T, with T the through-port power relative to the
+    source; any gap-independent numerical loss on the bus (mode-source normalisation,
+    truncated mode planes, absorber reflections) then adds a constant to it. Near
+    critical coupling that floor can be a large part of the coupled power (about 0.2 %
+    against 0.6 % for a 0.4 dB/cm, R = 107.5 um ring) and pushes the critical gap too
+    wide. ``reference="ring_port"`` reads the power that enters the ring arc directly
+    (forward flux at ``ring_monitor``), and ``reference="bus_only"`` divides T by the
+    through power of the same simulation with the ring removed (one extra run); both
+    remove the floor and agree with each other to about 1 % of the coupled power.
+    Without the floor the fit can also use weakly coupled gaps (default lower angle
+    bound 0.005 rad instead of 0.05).
     """
     gaps = _values("gaps_sweep_list", gaps_sweep_list, 2, True)
+    if reference not in ("source", "ring_port", "bus_only"):
+        raise ValueError('reference must be "source", "ring_port" or "bus_only".')
+    if theta_fit_bounds_rad is None:
+        theta_fit_bounds_rad = (0.05, 1.5) if reference == "source" else (0.005, 1.5)
     
     radius = _positive("radius_um", radius_um)
     qi = _positive("q_intrinsic", q_intrinsic)
@@ -281,7 +339,13 @@ def ring_gap_sweep(
             "group_index_kwargs": dict(group_index_kwargs or {}),
             "through_monitor": through_monitor,
             "through_direction": through_direction,
-            "normalization": "through modal power referenced to the normalized simulation source",
+            "normalization": {
+                "source": "through modal power referenced to the normalized simulation source",
+                "ring_port": f"coupled power read at the ring-arc monitor {ring_monitor!r}",
+                "bus_only": "through modal power divided by that of the bus alone (ring removed)",
+            }[reference],
+            "reference": reference,
+            "ring_monitor": ring_monitor,
             "force_rerun": force_rerun,
             "verbose": verbose,
             "save_plots": save_plots,
@@ -338,6 +402,8 @@ def ring_gap_sweep(
             )
             if through_monitor not in {m.name for m in obj.sim.monitors}:
                 raise ValueError(f"Missing through monitor {through_monitor!r}.")
+            if reference == "ring_port" and ring_monitor not in {m.name for m in obj.sim.monitors}:
+                raise ValueError(f"Missing ring monitor {ring_monitor!r} for reference='ring_port'.")
             wrappers.append(obj)
         if n_group is None:
             n_group = _positive(
@@ -345,6 +411,11 @@ def ring_gap_sweep(
                 wrappers[0].get_group_index(**dict(group_index_kwargs or {})),
             )
         report["parameters"]["n_group_used"] = n_group
+        reference_power = None
+        if reference == "bus_only":
+            reference_power = _bus_only_power(wrappers[-1], output_dir, through_monitor,
+                                              through_direction, verbose, force_rerun, report)
+            _save(path, report)
         powers = []
         for obj in wrappers:
             cache = _cache_dir(
@@ -365,7 +436,16 @@ def ring_gap_sweep(
             # Use the specified propagation direction, not the method's dominant-flux shortcut.
             key = "flux_forward" if through_direction == "+" else "flux_backward"
             absolute_power = float(fluxes[through_monitor][key])
-            power = absolute_power
+            if reference == "ring_port":
+                coupled = float(fluxes[ring_monitor]["flux_forward"])
+                if not np.isfinite(coupled) or coupled < 0:
+                    raise ValueError("Ring-port power must be finite and nonnegative.")
+                record_coupled = coupled
+                power = 1.0 - coupled             # through-equivalent: T = 1 - coupled power
+            else:
+                power = (absolute_power if reference_power is None
+                         else absolute_power / reference_power)
+                record_coupled = 1.0 - power
             if not np.isfinite(power) or power < 0:
                 raise ValueError("Through power must be finite and nonnegative.")
             if not clip_through_power and power > 1:
@@ -384,6 +464,7 @@ def ring_gap_sweep(
                 else power
             )
             record.update(
+                coupled_power=record_coupled,
                 through_port_power_absolute=absolute_power,
                 through_port_power=clipped,
                 through_port_power_unclipped=power,
@@ -442,6 +523,11 @@ def ring_gap_sweep(
         metrics.update(
             span_angle_rad=span,
             span_angle_deg=float(np.rad2deg(span)),
+            reference=reference,
+            reference_through_power=reference_power,
+            through_power=[float(x) for x in powers],
+            through_power_source=[float(report["raw_sweep"][str(o.gap)]
+                                        ["through_port_power_absolute"]) for o in wrappers],
         )
         if metrics["critical_gap_extrapolated"]:
             report["warnings"].append(

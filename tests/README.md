@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `246 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `262 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -309,7 +309,7 @@ needs no other edits.
 | `test_notebook_code_cells_are_migrated_and_magics_kept` | In a notebook only code cells change; `%matplotlib` and `!pip` lines and Markdown cells are kept |
 | `test_command_line_dry_run_then_write_keeps_line_endings` | Without `--write` nothing is changed and the files that would change are listed; with `--write` Windows (CRLF) line endings are kept; a file that is not valid Python is reported and left untouched; a mistyped path is reported |
 
-## `test_design.py`: the guided design tool (15 tests, Phase 10)
+## `test_design.py`: the guided design tool (17 tests, Phases 10 and 11)
 
 The local stages call the dispersion-mapping tools, tested above; these tests check the
 tool around them on a design whose earlier results are filled in by hand, with the fake
@@ -325,10 +325,30 @@ cloud for the cloud stages.
 | `test_physics_helpers` | R from FSR and back; slab TE index of 220 nm Si (2.848); Q_int from loss; loaded Q |
 | `test_over_coupled_gap_is_narrower_and_k1_is_critical` | The over-coupled gap from the coupling fit is narrower, and K = 1 gives the critical gap |
 | `test_candidates_are_ranked_by_robustness` | Map points that are anomalous and single-mode are ranked by how many neighbours are too |
-| `test_gap_stage_prices_every_gap_then_runs` | Every gap is priced (uploaded and deleted) before the sweep runs; the cost is added to the budget |
+| `test_gap_stage_prices_every_gap_then_runs` | Every gap is priced (uploaded and deleted) before the sweep runs; the cost is added to the budget; per-gap table and coupling figure written |
 | `test_gap_stage_over_budget_is_skipped_without_running` | Above the budget nothing starts and the stage is marked skipped |
-| `test_grating_stage_runs_grid_then_fibre_position` | Full etch uses the film thickness; the Bragg estimate is sensible; grid then fibre-position runs; table written |
+| `test_grating_stage_maps_retunes_then_places_the_fibre` | With made-up spectra: full etch uses the film thickness; the map, the retune and the fibre-position steps each run as one batch; the final peak lands on 1550 nm; table and figures written |
+| `test_grating_stage_flags_a_best_design_at_the_edge` | A best fill factor at the end of the range is reported |
+| `test_grating_stage_skips_features_below_the_lithography_limit` | No tooth or groove narrower than `min_feature_um` is simulated |
 | `test_layout_reproduces_the_design_dimensions` | GDS files exist; ring outer radius R + W/2 and the gap above the bus are exact; both couplers have all teeth; parameters in JSON and MATLAB |
 | `test_trench_tone_draws_the_etched_regions` | Trench tone draws a trench of the requested width around the core |
 | `test_report_lists_values_to_check_elsewhere` | The report has every section; `check_values.csv` and `design_summary.json` are written, with no solver-specific content |
 | `test_command_line_lists_the_stages` | `python -m tarang.design --list` works |
+
+## `test_phase11.py`: fibre orientation, spectra, coupling measures, benchmark pack (14 tests, Phase 11)
+
+| Test | Checks |
+|---|---|
+| `test_fiber_tilt_sets_the_beam_direction_and_where_it_lands[towards/away]` (2) | The beam travels towards -x (the waveguide) for "towards" and +x for "away", 12° from vertical, TE polarised, and its centre meets the core at `source_x` |
+| `test_towards_is_the_default_and_the_sign_of_theta_is_ignored` | "towards" is the default; -12° and 12° give the same simulation; an unknown orientation is refused |
+| `test_the_mode_monitor_records_a_band_around_the_wavelength` | The spectrum covers 1.45-1.65 µm by default; a zero band is refused |
+| `test_phase_matching_formula_for_both_orientations` | λ/(n − sin θ) and λ/(n + sin θ); the old 0.820 µm "away" example is the 1.052 µm "towards" grating |
+| `test_spectrum_summary_peak_value_and_bandwidths` | On a Gaussian: peak, value at 1550 nm and 1 dB / 3 dB widths match the formulas; a peak outside the band is flagged |
+| `test_ring_port_and_bus_only_remove_the_floor_that_biases_the_gap` | With a 0.2 % gap-independent bus loss, "ring_port" and "bus_only" find the true critical gap (within 2 nm) and "source" puts it at least 30 nm too wide |
+| `test_progress_listener_sees_runs_and_cache_hits` | A run gives "estimated", "running", "done"; the same simulation again gives "cached" |
+| `test_expired_credits_stop_a_cloud_stage_before_anything_is_uploaded` | Expired credits or too few credits stop a cloud stage with the reason |
+| `test_settings_file_with_a_byte_order_mark_loads` | A `design.toml` saved by Windows PowerShell 5 (byte-order mark) is read |
+| `test_loss_presets_come_with_sources_and_your_values_are_marked` | Every loss preset has a source; your own value is labelled as yours |
+| `test_candidates_tie_break_on_the_te_tm_split` | Equally robust candidates are ordered by the TE00/TM00 index split |
+| `test_nested_sampler_passes_the_fibre_orientation` | The nested sampler builds "towards" couplers unless told otherwise |
+| `test_report_writes_a_complete_benchmark_pack` | `benchmark_pack/` has its README (every section), assumptions, results with the threshold, settings and a zip; nothing solver-specific |

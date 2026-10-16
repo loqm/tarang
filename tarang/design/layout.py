@@ -11,7 +11,8 @@ Writes, in <run>/layout/:
 Coordinates are in um. The bus runs along x, centred at y = 0; the ring sits above it.
 A grating starts where its taper ends: tooth i occupies [i P, i P + ff P] along the
 propagation direction, as in the simulation, so the layout reproduces the simulated
-grating. gdstk is an optional dependency: pip install "tarang-photonics[layout]".
+grating. The fibre orientation (``fiber_tilt``) and the fibre position on the grating
+(from the start of the first tooth) are in parameters.json. gdstk is an optional dependency: pip install "tarang-photonics[layout]".
 """
 from __future__ import annotations
 
@@ -47,6 +48,7 @@ def device_parameters(ctx) -> dict:
         "grating_etch": gc.get("etch"),
         "grating_etch_depth_um": gc.get("etch_depth_um"),
         "fiber_angle_deg": gc.get("fiber_angle_deg"),
+        "fiber_tilt": gc.get("fiber_tilt", "away" if gc.get("period_um") else None),
         "fiber_position_um": gc.get("source_x_um"),
         "taper_length_um": cfg.grating.taper_length_um,
         "tone": lay.tone,
@@ -82,7 +84,19 @@ def export(ctx) -> dict:
     ui.say("Layout files:")
     for f in files:
         ui.say(f"  {f}")
-    return dict(parameters=p, files=[str(f) for f in files])
+    fig = None
+    gc_file = next((f for f in files if Path(f).name in ("ring_waveguide_gc.gds", "waveguide_gc.gds")),
+                   None)
+    if gc_file:
+        from tarang.design import visuals
+        fig = visuals.safe(ctx, "layout", visuals.layout_views, gc_file, p,
+                           ctx.path("figures", "6_layout.png"))
+    if p.get("grating_period_um") and p.get("fiber_tilt"):
+        ui.say(f"  Fibres: {p['fiber_angle_deg']}° from vertical, beam travelling "
+               f"{p['fiber_tilt']} the waveguide at both couplers"
+               + (" (upper ends of the two fibres lean outward: a V)." if p["fiber_tilt"] == "towards"
+                  else " (upper ends of the two fibres lean inward, over the chip)."))
+    return dict(parameters=p, files=[str(f) for f in files], figure=str(fig) if fig else None)
 
 
 def _write_parameters(p: dict, out: Path) -> list[Path]:

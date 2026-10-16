@@ -68,9 +68,14 @@ class Ring:
     fsr_ghz: float = _f(200.0, "Target free spectral range", "GHz")
     radius_um: Optional[float] = _f(None, "Ring radius (default: from the FSR target and the group "
                                           "index)", "um")
-    scattering_loss_db_cm: float = _f(0.3, "Straight-waveguide scattering loss of your process "
-                                           "(measured or cited)", "dB/cm")
-    absorption_loss_db_cm: float = _f(0.1, "Material absorption loss", "dB/cm")
+    loss_preset: str = _f("typical_ebl", "Loss values to start from, each from a publication: "
+                                         "typical_ebl, annealed_low_loss, state_of_the_art "
+                                         "(see the assumptions table); your own values below "
+                                         "replace them")
+    scattering_loss_db_cm: Optional[float] = _f(None, "Straight-waveguide scattering loss "
+                                                      "(default: from loss_preset)", "dB/cm")
+    absorption_loss_db_cm: Optional[float] = _f(None, "Material absorption loss (default: from "
+                                                      "loss_preset)", "dB/cm")
     bend_check: bool = _f(True, "Solve the bent waveguide locally to include bend loss (free)")
 
 
@@ -80,6 +85,11 @@ class Gap:
     span_angle_deg: float = _f(45.0, "Span of the partial ring simulated next to the bus", "deg")
     over_coupling: float = _f(1.5, "Also report the gap for this over-coupling ratio "
                                    "K = Q_int / Q_coupling (1 = critical)")
+    reference: str = _f("ring_port", "How the coupled power is measured: 'ring_port' (power "
+                                     "entering the ring arc; no extra run), 'bus_only' (through "
+                                     "power relative to a run of the bus alone; one extra run) "
+                                     "or 'source' (through power relative to the source; biased "
+                                     "by numerical losses on the bus)")
     fine_steps: int = _f(15, "FDTD mesh steps per wavelength in the waveguide")
     coarse_steps: int = _f(10, "FDTD mesh steps per wavelength elsewhere")
 
@@ -90,15 +100,33 @@ class Grating:
                            "step) or 'partial'")
     etch_depth_um: Optional[float] = _f(None, "Etch depth for a partial etch", "um")
     fiber_angle_deg: float = _f(10.0, "Fibre angle from vertical", "deg")
+    fiber_tilt: str = _f("towards", "Which way the fibre beam travels along the grating: "
+                                    "'towards' the waveguide (fibres on two holders form a V) or "
+                                    "'away' from it")
     mfd_um: float = _f(10.4, "Fibre mode-field diameter", "um")
-    n_teeth: int = _f(20, "Number of grating periods")
+    n_teeth: int = _f(30, "Number of grating periods")
     width_um: float = _f(12.0, "Grating width (transverse)", "um")
-    periods_um: list = _f([], "Periods to try (default: Bragg estimate x 0.94-1.06)", "um")
-    fill_factors: list = _f([0.4, 0.5, 0.6, 0.7], "Fill factors (tooth / period) to try")
-    source_x_um: list = _f([], "Fibre positions along the grating to try (default: 0.3-0.7 x "
-                               "MFD)", "um")
+    fill_factors: list = _f([], "Fill factors (tooth / period) to try (default: 0.5-0.9 for a "
+                                "full etch, 0.4-0.8 for a partial etch)")
+    detuning: list = _f([0.95, 1.0, 1.05], "Periods to try for each fill factor, as multiples of "
+                                           "its phase-matched period")
+    periods_um: list = _f([], "Fixed periods to try for every fill factor instead (default: "
+                              "use detuning)", "um")
+    source_x_um: list = _f([], "Fibre positions on the grating surface to try (default: five "
+                               "positions across the grating)", "um")
+    min_feature_um: float = _f(0.1, "Smallest tooth or groove your lithography can make", "um")
+    bandwidth_um: float = _f(0.1, "Half-width of the simulated spectrum around the wavelength",
+                             "um")
+    retune: bool = _f(True, "Shift the period so the efficiency peak lands on the design "
+                            "wavelength, then refine fill factor and fibre position")
     check_3d: bool = _f(False, "Also simulate the best design in 3D (several times the 2D cost)")
     taper_length_um: float = _f(300.0, "Linear taper from the grating width to the waveguide", "um")
+
+
+@dataclass
+class Assumptions:
+    n2_m2_w: float = _f(2.4e-19, "Kerr index of the core for the threshold estimate (Si3N4: "
+                                 "Ikeda et al., Opt. Express 16, 12987 (2008))", "m^2/W")
 
 
 @dataclass
@@ -114,7 +142,8 @@ class Layout:
 
 
 SECTIONS = {"run": Run, "materials": Materials, "stack": Stack, "cross_section": CrossSection,
-            "ring": Ring, "gap": Gap, "grating": Grating, "layout": Layout}
+            "ring": Ring, "gap": Gap, "grating": Grating, "layout": Layout,
+            "assumptions": Assumptions}
 
 
 @dataclass
@@ -127,12 +156,15 @@ class DesignConfig:
     gap: Gap = field(default_factory=Gap)
     grating: Grating = field(default_factory=Grating)
     layout: Layout = field(default_factory=Layout)
+    assumptions: Assumptions = field(default_factory=Assumptions)
     given: set = field(default_factory=set, repr=False, compare=False)   # "section.key" read from a file
 
     # ---- file I/O ------------------------------------------------------------------- #
     @classmethod
     def load(cls, path: Path | str) -> "DesignConfig":
-        data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+        # utf-8-sig: Windows PowerShell 5 and some editors start UTF-8 files with a
+        # byte-order mark, which the TOML reader would reject.
+        data = tomllib.loads(Path(path).read_text(encoding="utf-8-sig"))
         cfg = cls()
         for sec_name, sec_cls in SECTIONS.items():
             values = data.pop(sec_name, {})

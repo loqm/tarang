@@ -8,7 +8,9 @@ Date: 2026
 
 Exposes: GratingConfig, GratingCoupler, GratingCoupler.from_config(),
 GratingCoupler.get_dir_name(), GratingCoupler.is_cached(),
-GratingCoupler.get_efficiency(), GratingCoupler.get_fields().
+GratingCoupler.get_efficiency(), GratingCoupler.get_spectrum(),
+GratingCoupler.get_spectrum_summary(), GratingCoupler.get_fields(),
+phase_matched_period(), spectrum_summary(), tilt_sign().
 Set ``GratingCoupler.max_cost`` (FlexCredits) to cap cloud runs.
 """
 
@@ -36,6 +38,23 @@ class GratingConfig(RenamedAttributes):
     Layer stack, top to bottom: top cladding (top_cladding_height) / SiN core
     (core_height) / buried oxide (box_height) / optional Si handle
     (handle_height, used only when a handle_medium is given).
+
+    Fibre orientation. The waveguide leaves the grating towards -x. ``theta_deg`` is the
+    fibre angle from vertical (its sign is ignored) and ``fiber_tilt`` says which way the
+    beam travels along the grating:
+
+    * ``"towards"`` (default): the beam travels towards the waveguide; the fibre's upper
+      end leans away from it. First-order phase matching:
+      Lambda = lambda / (n_eff - n_cover sin(theta)). Two fibres feeding mirrored
+      couplers form a V, as on a usual two-holder setup.
+    * ``"away"``: the beam travels away from the waveguide;
+      Lambda = lambda / (n_eff + n_cover sin(theta)). This was the only orientation
+      before v0.1.0 (any theta was made negative).
+
+    ``source_x`` is the beam centre where it reaches the top of the core (x = 0 is the
+    start of the grating), so it stays the fibre position on the grating whatever the
+    angle and source height. ``bandwidth_um`` is the half-width of the band recorded by
+    the mode monitor (efficiency spectrum).
     """
 
     wavelength_um: float
@@ -63,6 +82,9 @@ class GratingConfig(RenamedAttributes):
 
     buffer: float
 
+    fiber_tilt: str = "towards"
+    bandwidth_um: float = 0.1
+
     _renamed_attrs = {"cladding_height": "top_cladding_height",
                       "substrate_height": "handle_height"}
 
@@ -70,6 +92,63 @@ class GratingConfig(RenamedAttributes):
 GratingConfig.__init__ = renamed_params(
     cladding_height="top_cladding_height", substrate_height="handle_height"
 )(GratingConfig.__init__)
+
+FIBER_TILTS = ("towards", "away")
+
+
+def tilt_sign(fiber_tilt: str) -> int:
+    """+1 for "towards", -1 for "away" (sign of Tidy3D's ``angle_theta`` for a beam
+    injected downwards; checked against the source's direction vector in the tests)."""
+    tilt = str(fiber_tilt).strip().lower()
+    if tilt not in FIBER_TILTS:
+        raise ValueError(f"fiber_tilt must be one of {FIBER_TILTS}, not {fiber_tilt!r}")
+    return 1 if tilt == "towards" else -1
+
+
+def phase_matched_period(n_eff: float, wavelength_um: float, theta_deg: float,
+                         fiber_tilt: str = "towards", n_cover: float = 1.0) -> float:
+    """First-order grating period that couples a fibre at ``theta_deg`` (from vertical)
+    into a mode of effective index ``n_eff``: lambda / (n_eff -+ n_cover sin(theta))."""
+    s = n_cover * np.sin(np.deg2rad(abs(theta_deg)))
+    return float(wavelength_um / (n_eff - tilt_sign(fiber_tilt) * s))
+
+
+def spectrum_summary(wavelength_um, efficiency, target_um: float) -> dict:
+    """Peak, value at the target and 1 dB / 3 dB bandwidths of an efficiency spectrum.
+
+    Bandwidths are the width of the contiguous region around the peak within 1 dB / 3 dB
+    of it; ``*_closed`` is False when that region reaches the end of the recorded band
+    (the true bandwidth is then larger). ``peak_inside`` is False when the peak is at the
+    edge of the band (the true peak lies outside it).
+    """
+    wl = np.asarray(wavelength_um, float)
+    eta = np.asarray(efficiency, float)
+    order = np.argsort(wl)
+    wl, eta = wl[order], eta[order]
+    i = int(np.argmax(eta))
+    peak = float(eta[i])
+    out = dict(peak_wavelength_um=float(wl[i]), peak_efficiency=peak,
+               peak_loss_db=float(-10 * np.log10(max(peak, 1e-12))),
+               efficiency_at_target=float(np.interp(target_um, wl, eta)),
+               peak_inside=bool(0 < i < len(wl) - 1))
+    out["loss_db_at_target"] = float(-10 * np.log10(max(out["efficiency_at_target"], 1e-12)))
+    for db in (1, 3):
+        level = peak * 10 ** (-db / 10)
+        lo = i
+        while lo > 0 and eta[lo - 1] >= level:
+            lo -= 1
+        hi = i
+        while hi < len(eta) - 1 and eta[hi + 1] >= level:
+            hi += 1
+        def edge(below: int, above: int) -> float:   # level crossing between two samples
+            e0, e1 = eta[below], eta[above]
+            t = 0.0 if e1 == e0 else (level - e0) / (e1 - e0)
+            return float(wl[below] + t * (wl[above] - wl[below]))
+        left = edge(lo - 1, lo) if lo > 0 else float(wl[0])
+        right = edge(hi + 1, hi) if hi < len(eta) - 1 else float(wl[-1])
+        out[f"bandwidth_{db}db_nm"] = (right - left) * 1e3
+        out[f"bandwidth_{db}db_closed"] = bool(lo > 0 and hi < len(eta) - 1)
+    return out
 
 
 class GratingCoupler(CloudCachedDevice, RenamedAttributes):
@@ -217,6 +296,21 @@ class GratingCoupler(CloudCachedDevice, RenamedAttributes):
         except Exception as e:
             logger.error(f"[Analytics Error] Failed to parse mode data cleanly: {e}")
             return 0.0
+
+    def get_spectrum(self, output_dir: Path, verbose: bool = False):
+        """Run (or load from the cache) and return (wavelength_um, efficiency) of the
+        fundamental mode coupled into the waveguide over the recorded band."""
+        sim_data = self._run_sim(output_dir, verbose=verbose)
+        amps = sim_data["mode monitor"].amps.sel(direction="-", mode_index=0)
+        wl = td.C_0 / np.asarray(amps.f.values, float)
+        eta = np.abs(np.asarray(amps.values)) ** 2
+        order = np.argsort(wl)
+        return wl[order], eta[order]
+
+    def get_spectrum_summary(self, output_dir: Path, verbose: bool = False) -> dict:
+        """``spectrum_summary`` of this coupler at its design wavelength."""
+        wl, eta = self.get_spectrum(output_dir, verbose=verbose)
+        return spectrum_summary(wl, eta, self.config.wavelength_um)
 
     def get_fields(
         self,
