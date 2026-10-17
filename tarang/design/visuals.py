@@ -272,7 +272,13 @@ def grating_spectrum(wl, eta, summary: dict, path: Path, title: str) -> Path:
     peak_db = 10 * np.log10(max(summary["peak_efficiency"], 1e-6))
     ax.axhline(peak_db - 1, ls=":", color="0.5")
     ax.axhline(peak_db - 3, ls=":", color="0.7")
-    ax.axvline(summary.get("target_um", 1.55) * 1e3, ls="--", color="red", lw=1)
+    ax.axvline(summary.get("target_um", 1.55) * 1e3, ls="--", color="red", lw=1,
+               label="design wavelength")
+    if "band_1db_lo_um" in summary:
+        ax.axvspan(summary["band_1db_lo_um"] * 1e3, summary["band_1db_hi_um"] * 1e3,
+                   color="C0", alpha=0.12, label="1 dB band")
+    ax.axvline(summary["peak_wavelength_um"] * 1e3, ls=":", color="C0", lw=1.5, label="peak")
+    ax.legend(fontsize=8, loc="lower center")
     ax.set_xlabel("Wavelength (nm)")
     ax.set_ylabel("Coupling efficiency (dB)")
     ax.set_ylim(peak_db - 12, peak_db + 1)
@@ -297,35 +303,64 @@ def grating_field(sim_data, path: Path, wavelength_um: float, title: str) -> Pat
 
 # =============================================================== layout
 def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
-    """The ring + bus + couplers cell from the GDS: whole device, coupling region and
-    one grating."""
+    """The ring + bus + couplers cell from the GDS: the whole device (every shape outlined,
+    so the 1 µm bus stays visible at this scale) and three zooms: coupling region,
+    waveguide-to-taper joint and grating."""
     import gdstk
     plt = _plt()
     lib = gdstk.read_gds(str(gds_path))
     cell = next((c for c in lib.cells if "_gc" in c.name), lib.top_level()[0])
-    polys = cell.get_polygons()
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.8),
-                             gridspec_kw=dict(width_ratios=[1.6, 1, 1]))
-    for ax in axes:
-        for poly in polys:
-            pts = np.asarray(poly.points)
-            ax.fill(pts[:, 0], pts[:, 1], color="#3182bd", lw=0)
+    polys = [np.asarray(q.points) for q in cell.get_polygons()]
+    colour = "#3182bd"
+    fig = plt.figure(figsize=(15, 8.5))
+    grid = fig.add_gridspec(2, 3, height_ratios=[1.15, 1])
+    top = fig.add_subplot(grid[0, :])
+    zooms = [fig.add_subplot(grid[1, i]) for i in range(3)]
+    for ax in [top] + zooms:
+        for pts in polys:
+            # an outline as well as the fill: thin shapes are drawn at least one line wide
+            ax.fill(pts[:, 0], pts[:, 1], facecolor=colour, edgecolor=colour,
+                    lw=1.2 if ax is top else 0)
         ax.set_aspect("equal")
         ax.set_xlabel("x (µm)")
+        ax.set_ylabel("y (µm)")
     L, W = p["bus_length_um"], p["waveguide_width_um"]
-    axes[0].set_title(cell.name)
-    axes[0].autoscale()
+    R = p.get("ring_radius_um") or 0.0
     gap = p.get("gap_critical_um") or 0.5
-    axes[1].set_xlim(-6 * W - 3, 6 * W + 3)
-    axes[1].set_ylim(-3 * W, 2 * W + gap + 4)
-    axes[1].set_title(f"coupling region (gap {gap * 1e3:.0f} nm)")
-    x0 = L / 2 + p["taper_length_um"]
-    if p.get("grating_period_um"):
-        n = int(p["grating_teeth"]) * p["grating_period_um"]
-        axes[2].set_xlim(x0 - 15, x0 + n + 5)
-        axes[2].set_ylim(-p["grating_width_um"], p["grating_width_um"])
-        axes[2].set_title(f"grating: {p['grating_teeth']} × {p['grating_period_um']:.4f} µm, "
-                          f"FF {p['grating_fill_factor']:.2f}")
+    taper = p.get("taper_length_um") or 0.0
+    x0 = L / 2 + taper                            # start of the grating
+    n = int(p.get("grating_teeth") or 0) * (p.get("grating_period_um") or 0.0)
+    top.autoscale()
+    ymin, ymax = top.get_ylim()
+    top.set_ylim(ymin - 0.12 * (ymax - ymin), ymax + 0.05 * (ymax - ymin))
+    top.set_title(f"{cell.name}: whole device (outlines widened so the {W:g} µm "
+                  "waveguide is visible)")
+    label = dict(fontsize=9, ha="center", va="top", color="0.25")
+    dy = 0.06 * (ymax - ymin)
+    top.text(0, -dy, f"bus waveguide, W = {W:g} µm, {L:g} µm long", **label)
+    if R:
+        top.text(0, W / 2 + gap + R, f"ring R = {R:g} µm", fontsize=9, ha="center",
+                 va="center", color="0.25")
+    if taper:
+        for sgn in (-1, 1):
+            top.text(sgn * (L / 2 + taper / 2), -dy, f"taper {taper:g} µm", **label)
+    if n:
+        for sgn in (-1, 1):
+            top.text(sgn * (x0 + n / 2), -2.2 * dy, "grating", **label)
+    zooms[0].set_xlim(-6 * W - 3, 6 * W + 3)
+    zooms[0].set_ylim(-3 * W, 2 * W + gap + 4)
+    zooms[0].set_title(f"coupling region (gap {gap * 1e3:.0f} nm)")
+    gw = p.get("grating_width_um") or 4 * W
+    zooms[1].set_xlim(L / 2 - 10, L / 2 + min(taper, 30) + 2)
+    zooms[1].set_ylim(-max(3 * W, gw / 4), max(3 * W, gw / 4))
+    zooms[1].axvline(L / 2, color="0.5", ls=":", lw=1)
+    zooms[1].set_aspect("auto")                    # y stretched: the taper widens slowly
+    zooms[1].set_title(f"waveguide ({W:g} µm) into the taper\n(y axis stretched)")
+    if n:
+        zooms[2].set_xlim(x0 - 15, x0 + n + 5)
+        zooms[2].set_ylim(-gw, gw)
+        zooms[2].set_title(f"grating: {p['grating_teeth']} × {p['grating_period_um']:.4f} µm, "
+                           f"FF {p['grating_fill_factor']:.2f}")
     return _save(fig, path)
 
 

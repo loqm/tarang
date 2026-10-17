@@ -97,7 +97,6 @@ def describe_sim(sim, wavelength_um: float) -> list[str]:
                 f"{_fmt(tuple(src.size))}, direction {getattr(src, 'direction', '-')}, "
                 f"pulse centre {C_UM / st.freq0:.4f} µm, bandwidth {st.fwidth / st.freq0 * 100:.1f} %")
         if isinstance(src, td.GaussianBeam):
-            import numpy as np
             d = np.round(src._dir_vector, 4)
             line += (f"; waist radius {src.waist_radius} µm at the source plane; angle_theta "
                      f"{np.degrees(src.angle_theta):.2f}° (propagation direction {tuple(d)}); "
@@ -123,6 +122,18 @@ def describe_sim(sim, wavelength_um: float) -> list[str]:
 def _load_sim(path):
     import tidy3d as td
     return td.Simulation.from_file(str(path))
+
+
+def _describe_file(path, wl: float, ui=None) -> list[str]:
+    """describe_sim of a saved simulation; a failure is written into the README (and
+    shown) instead of stopping the report, since the file itself is in the pack."""
+    try:
+        return describe_sim(_load_sim(path), wl)
+    except Exception as exc:                              # noqa: BLE001
+        msg = f"(could not describe {Path(path).name}: {type(exc).__name__}: {exc})"
+        if ui is not None:
+            ui.say("  Note: " + msg)
+        return [f"- {msg} The simulation file itself is in `simulations/`."]
 
 
 def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
@@ -183,13 +194,13 @@ def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
                 f"gap{mid * 1e3:.0f}nm" in p.name and "BusOnly" not in p.name]
         if cand:
             sim_sections += [f"### Ring–bus gap simulation (gap {mid} µm shown; the others "
-                             "differ only in the gap)", ""] + describe_sim(_load_sim(cand[0]), wl) + [""]
+                             "differ only in the gap)", ""] + _describe_file(cand[0], wl, ctx.ui) + [""]
     if gc and not gc.get("skipped") and gc.get("final_sim"):
         src = Path(gc["final_sim"])
         if src.exists():
             shutil.copy2(src, sims_dir / "grating_final.json")
-            sim_sections += ["### Final grating-coupler simulation (2D)", ""] + describe_sim(
-                _load_sim(src), wl) + [""]
+            sim_sections += ["### Final grating-coupler simulation (2D)", ""] + _describe_file(
+                src, wl, ctx.ui) + [""]
     readme = _readme(ctx, st, rows, checks, sim_sections, pth)
     (pack / "README.md").write_text("\n".join(readme), encoding="utf-8")
     zip_path = shutil.make_archive(str(ctx.out / "benchmark_pack"), "zip", root_dir=pack)

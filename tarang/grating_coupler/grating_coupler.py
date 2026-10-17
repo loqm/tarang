@@ -119,7 +119,8 @@ def spectrum_summary(wavelength_um, efficiency, target_um: float) -> dict:
     Bandwidths are the width of the contiguous region around the peak within 1 dB / 3 dB
     of it; ``*_closed`` is False when that region reaches the end of the recorded band
     (the true bandwidth is then larger). ``peak_inside`` is False when the peak is at the
-    edge of the band (the true peak lies outside it).
+    edge of the band (the true peak lies outside it). The peak wavelength is refined
+    between samples with a parabola; ``band_1db_lo_um`` / ``band_1db_hi_um`` (and 3 dB) are the band edges.
     """
     wl = np.asarray(wavelength_um, float)
     eta = np.asarray(efficiency, float)
@@ -127,7 +128,16 @@ def spectrum_summary(wavelength_um, efficiency, target_um: float) -> dict:
     wl, eta = wl[order], eta[order]
     i = int(np.argmax(eta))
     peak = float(eta[i])
-    out = dict(peak_wavelength_um=float(wl[i]), peak_efficiency=peak,
+    peak_wl = float(wl[i])
+    if 0 < i < len(wl) - 1:
+        # parabola through the highest sample and its neighbours: the peak wavelength to a
+        # fraction of the sample spacing (the spectrum is sampled every ~2 nm)
+        y0, y1, y2 = eta[i - 1], eta[i], eta[i + 1]
+        den = y0 - 2 * y1 + y2
+        if den < 0:
+            shift = 0.5 * (y0 - y2) / den
+            peak_wl = float(wl[i] + shift * 0.5 * (wl[i + 1] - wl[i - 1]))
+    out = dict(peak_wavelength_um=peak_wl, peak_efficiency=peak,
                peak_loss_db=float(-10 * np.log10(max(peak, 1e-12))),
                efficiency_at_target=float(np.interp(target_um, wl, eta)),
                peak_inside=bool(0 < i < len(wl) - 1))
@@ -148,6 +158,7 @@ def spectrum_summary(wavelength_um, efficiency, target_um: float) -> dict:
         right = edge(hi + 1, hi) if hi < len(eta) - 1 else float(wl[-1])
         out[f"bandwidth_{db}db_nm"] = (right - left) * 1e3
         out[f"bandwidth_{db}db_closed"] = bool(lo > 0 and hi < len(eta) - 1)
+        out[f"band_{db}db_lo_um"], out[f"band_{db}db_hi_um"] = left, right
     return out
 
 

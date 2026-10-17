@@ -691,6 +691,7 @@ def stage_grating(ctx: Context) -> dict:
     detune = ui.value(cfg, "grating", "detuning", cast=parse_list)
     fixed_periods = g.periods_um if "grating.periods_um" in cfg.given else []
     retune = ui.value(cfg, "grating", "retune")
+    centre = bool(retune and ui.value(cfg, "grating", "centre_peak"))
 
     from tarang.grating_coupler.grating_coupler import (GratingConfig, GratingCoupler,
                                                         phase_matched_period, spectrum_summary)
@@ -825,6 +826,14 @@ def stage_grating(ctx: Context) -> dict:
                     period_rows = stage_b2 + [final]
                     periods_tried = [p for p, _, _ in pts_p2] + [p1]
                     final = max(period_rows, key=lambda r: r["efficiency_at_target"])
+            if centre:
+                # ---- D: period that puts the peak at the design wavelength
+                final = _centre_peak(final, results, run_set, wl, ui)
+                if {r["fill_factor"] for r in period_rows} == {final["fill_factor"]}:
+                    period_rows = [r for r in results if r["dim"] == "2D"
+                                   and r["fill_factor"] == final["fill_factor"]
+                                   and r["source_x_um"] == final["source_x_um"]]
+                    period_rows = list({r["period_um"]: r for r in period_rows}.values())
             # ---- C: fibre position for the best design
             stage_c = run_set([(final["period_um"], final["fill_factor"], x) for x in sx_list],
                               "C. fibre position along the grating", "C")
@@ -879,7 +888,8 @@ def stage_grating(ctx: Context) -> dict:
            f"{summ['efficiency_at_target'] * 100:.1f} % ({-summ['loss_db_at_target']:.2f} dB) "
            f"at {wl} µm; peak {summ['peak_efficiency'] * 100:.1f} % at "
            f"{summ['peak_wavelength_um'] * 1e3:.1f} nm; 1 dB bandwidth "
-           f"{summ['bandwidth_1db_nm']:.0f} nm.")
+           f"{summ['bandwidth_1db_nm']:.0f} nm ({summ['band_1db_lo_um'] * 1e3:.0f}-"
+           f"{summ['band_1db_hi_um'] * 1e3:.0f} nm).")
     for note in dict.fromkeys(edge):
         ui.say("  Note: " + note)
     return dict(etch=etch, etch_depth_um=depth, fiber_angle_deg=angle, fiber_tilt=tilt,
@@ -889,11 +899,66 @@ def stage_grating(ctx: Context) -> dict:
                 peak_efficiency_2d=summ["peak_efficiency"],
                 peak_wavelength_um=summ["peak_wavelength_um"],
                 bandwidth_1db_nm=summ["bandwidth_1db_nm"], bandwidth_3db_nm=summ["bandwidth_3db_nm"],
+                band_1db_um=[summ["band_1db_lo_um"], summ["band_1db_hi_um"]],
+                centre_peak=centre,
                 efficiency_3d=best3d and best3d["efficiency_at_target"],
                 period_estimate_um=p_match(final["fill_factor"]), n_slab=n_slab, n_groove=n_groove,
                 bandwidth_um=band, min_feature_um=min_feat, runs=len(results), table=str(table),
                 spectrum_table=str(spec), notes=list(dict.fromkeys(edge)),
                 final_sim=str(folder / fdev.get_dir_name() / "simulation.json"))
+
+
+def _centre_peak(design: dict, results: list[dict], run_set, wl: float, ui,
+                 tol_um: float = 0.001, max_runs: int = 3) -> dict:
+    """Step D: move the period, at the design's fill factor and fibre position, until the
+    efficiency peak sits within ``tol_um`` of ``wl``.
+
+    The peak wavelength follows the period almost linearly (first-order Bragg condition
+    λ_peak ≈ Λ (n_avg − sin θ)), so the next period is interpolated between the two runs
+    whose peaks lie closest to ``wl`` on either side (secant step). Returns the run whose
+    peak is closest to ``wl``.
+    """
+    def same(r):                                # peaks at the band edge are not reliable
+        return (r["dim"] == "2D" and r.get("peak_inside", True)
+                and r["fill_factor"] == design["fill_factor"]
+                and r["source_x_um"] == design["source_x_um"])
+
+    def closest():
+        return min((r for r in results if same(r)),
+                   key=lambda r: abs(r["peak_wavelength_um"] - wl))
+
+    for _ in range(max_runs):
+        best = closest()
+        if abs(best["peak_wavelength_um"] - wl) <= tol_um:
+            break
+        rows = sorted({r["period_um"]: r for r in results if same(r)}.values(),
+                      key=lambda r: r["period_um"])
+        below = [r for r in rows if r["peak_wavelength_um"] < wl]
+        above = [r for r in rows if r["peak_wavelength_um"] > wl]
+        if below and above:
+            a = max(below, key=lambda r: r["peak_wavelength_um"])
+            b = min(above, key=lambda r: r["peak_wavelength_um"])
+        elif len(rows) >= 2:
+            a, b = sorted(rows, key=lambda r: abs(r["peak_wavelength_um"] - wl))[:2]
+        else:                                    # one run only: λ_peak proportional to Λ
+            a = b = rows[0]
+        if a is b or a["peak_wavelength_um"] == b["peak_wavelength_um"]:
+            period = a["period_um"] * wl / a["peak_wavelength_um"]
+        else:
+            slope = (b["period_um"] - a["period_um"]) / (b["peak_wavelength_um"]
+                                                         - a["peak_wavelength_um"])
+            period = a["period_um"] + slope * (wl - a["peak_wavelength_um"])
+        period = round(period, 4)
+        if any(abs(r["period_um"] - period) < 5e-5 for r in rows):
+            break                                # the 0.1 nm period grid is reached
+        got = run_set([(period, design["fill_factor"], design["source_x_um"])],
+                      f"D. period {period:.4f} µm to put the peak at {wl * 1e3:.0f} nm", "D")
+        if not got:
+            break
+    best = closest()
+    ui.say(f"  Peak at {best['peak_wavelength_um'] * 1e3:.1f} nm with period "
+           f"{best['period_um']:.4f} µm (fill factor {best['fill_factor']:g}).")
+    return best
 
 
 def _best_grating(rows: list[dict]) -> dict:

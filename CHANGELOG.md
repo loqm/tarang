@@ -154,6 +154,18 @@ working until v0.2.0; old imports are updated with one command (see
   step B picks a fill factor other than its centre one, so the final fill factor's period
   is optimised too; the sensitivity figure names what each panel's runs held fixed; a
   gap run loaded twice (data, then field map) is counted once in the progress lines.
+- Design tool, second 1550 nm run: the benchmark pack stopped again ("cannot access local
+  variable 'np'") on the ring simulation, because numpy was imported only inside the
+  Gaussian-beam branch; a simulation that cannot be described is now noted in the README
+  instead of stopping the report. **The grating's efficiency peak is put at the design
+  wavelength** (`grating.centre_peak`, default true): after steps B/B2, step D moves the
+  period (secant steps on the peak wavelength, usually one or two runs) until the peak
+  is within 1 nm of it; before, the design with the highest efficiency at the wavelength
+  was kept, which can sit on the flank of a peak 8 nm away. `spectrum_summary` finds the
+  peak between samples (parabola) and gives the 1 dB / 3 dB band edges; the spectrum
+  figure shades the 1 dB band. The layout figure draws every shape with an outline, so
+  the 1 µm bus is visible beside the 1 mm device, labels the parts, and adds a zoom of
+  the waveguide-to-taper joint.
 
 - **Material fits that swing between sparse data points.** A pole fit can pass through
   every tabulated point and still oscillate between them: `si3n4` fitted over 0.68–0.88 µm

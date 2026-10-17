@@ -3,6 +3,7 @@ account checks, assumptions with sources and the benchmark pack. No FlexCredits,
 
     python -m pytest tests/test_phase11.py -q
 """
+import csv
 import datetime as dt
 import io
 import math
@@ -254,8 +255,18 @@ def test_grating_stage_through_report_and_benchmark_pack(tmp_path, fake_web, mon
     monkeypatch.setattr(rgs, "ring_gap_sweep", _fake_gap_fit)
     ctx = _ctx(tmp_path, gap__gaps_um=[0.4, 0.5, 0.6, 0.7], grating__fill_factors=[0.5, 0.7, 0.9],
                run__max_total_cost=5.0)
-    for name, func in (("gap", stages.stage_gap), ("grating", stages.stage_grating),
-                       ("layout", stages.stage_layout)):
+    ctx.state["stages"]["gap"] = {"results": stages.stage_gap(ctx)}
+    # a real saved partial-ring simulation, as the cloud cache leaves it (mode source, no
+    # Gaussian beam: the case that failed in the second 1550 nm run)
+    from tarang.geometries.partial_ring_resonator import get_active_simulation as partial
+    ring_dir = ctx.out / "cloud" / "gap_sweep" / "partialRingResonator_R107.50um_gap600nm_1.550um"
+    ring_dir.mkdir(parents=True)
+    with pytest.warns(UserWarning, match="ends inside the simulation domain"):
+        ring = partial(radius=107.5, gap=0.6, wg_width=1.0, wg_height=0.7, core_medium=SIN,
+                       box_medium=SIO2, wavelength_um=1.55, span_angle_rad=math.radians(45),
+                       fine_steps_per_wvl=8, coarse_steps_per_wvl=6)
+    ring.sim.to_file(str(ring_dir / "simulation.json"))
+    for name, func in (("grating", stages.stage_grating), ("layout", stages.stage_layout)):
         ctx.state["stages"][name] = {"results": func(ctx)}
     res = ctx.state["stages"]["grating"]["results"]
     assert Path(res["final_sim"]).exists()
@@ -263,6 +274,7 @@ def test_grating_stage_through_report_and_benchmark_pack(tmp_path, fake_web, mon
     out = report.write(ctx)
     readme = (Path(out["folder"]) / "README.md").read_text(encoding="utf-8")
     assert "### Final grating-coupler simulation (2D)" in readme
+    assert "### Ring–bus gap simulation (gap 0.6 µm shown" in readme
     assert (Path(out["folder"]) / "simulations" / "grating_final.json").exists()
 
 
@@ -311,3 +323,79 @@ def test_a_run_loaded_twice_is_counted_once(tmp_path):
             _emit("cached", name=f"run_{fp}", fingerprint=fp)
     text = ctx.ui.out.getvalue()
     assert "[2/2]" in text and "[3/2]" not in text
+
+
+# ---- fixes found in the second 1550 nm run ------------------------------------------------ #
+def test_describe_sim_without_a_gaussian_beam():
+    """A ring simulation (mode source only) is described too; numpy was imported only in
+    the Gaussian-beam branch, which left it unbound for every other simulation."""
+    from tarang.design.benchmark import describe_sim
+    sim = td.Simulation(
+        size=(4, 3, 3), run_time=1e-13, grid_spec=td.GridSpec.auto(wavelength=1.55),
+        structures=[td.Structure(geometry=td.Box(size=(td.inf, 1, 0.7)), medium=SIN)],
+        sources=[td.ModeSource(center=(-1.5, 0, 0), size=(0, 2, 2), direction="+",
+                               source_time=td.GaussianPulse(freq0=td.C_0 / 1.55,
+                                                            fwidth=td.C_0 / 1.55 / 10),
+                               mode_spec=td.ModeSpec(), mode_index=0)],
+        monitors=[td.ModeMonitor(center=(1.5, 0, 0), size=(0, 2, 2), freqs=[td.C_0 / 1.55],
+                                 mode_spec=td.ModeSpec(), name="through")])
+    text = "\n".join(describe_sim(sim, 1.55))
+    assert "through: ModeMonitor" in text and "at 1.5500 µm" in text
+
+
+def test_spectrum_summary_finds_the_peak_between_samples_and_the_band_edges():
+    wl = np.linspace(1.45, 1.65, 101)                        # 2 nm samples, as simulated
+    eta = 0.3 * np.exp(-((wl - 1.5503) / 0.03) ** 2)
+    s = spectrum_summary(wl, eta, 1.55)
+    assert abs(s["peak_wavelength_um"] - 1.5503) < 0.0002   # well below the 2 nm spacing
+    half = 0.03 * math.sqrt(math.log(10 ** 0.1))             # 1 dB half-width
+    assert abs(s["band_1db_lo_um"] - (1.5503 - half)) < 3e-4
+    assert abs(s["band_1db_hi_um"] - (1.5503 + half)) < 3e-4
+
+
+def test_centring_puts_the_peak_on_the_design_wavelength(tmp_path, fake_web, monkeypatch):
+    """The best efficiency at 1550 nm can sit on the flank of a spectrum peaking elsewhere
+    (as in the second 1550 nm run: peak 1541.6 nm). Step D moves the period until the
+    peak is at 1550 nm; with centre_peak = False the old choice is kept."""
+    from test_design import _ctx
+    from tarang.design import stages
+    from tarang.grating_coupler.grating_coupler import GratingCoupler
+    fake_web.cost = 0.01
+
+    def spectrum(self, output_dir, verbose=False):
+        # peak wavelength nonlinear in the period (so one secant step is not exact), a
+        # peak height falling with the period, and a skewed shape
+        self._run_sim(output_dir)
+        c = self.config
+        n_avg = c.ff * 1.85 + (1 - c.ff)
+        x = c.period - 1.10
+        peak_wl = c.period * (n_avg - math.sin(math.radians(12))) + 0.8 * x * x
+        height = 0.33 - 3.0 * x
+        wl = np.linspace(c.wavelength_um - c.bandwidth_um, c.wavelength_um + c.bandwidth_um, 101)
+        width = np.where(wl < peak_wl, 0.035, 0.02)
+        return wl, height * np.exp(-((wl - peak_wl) / width) ** 2)
+    monkeypatch.setattr(GratingCoupler, "get_spectrum", spectrum)
+
+    ctx = _ctx(tmp_path, grating__fill_factors=[0.75], grating__detuning=[0.97, 1.0, 1.03],
+               run__max_total_cost=5.0)
+    res = stages.stage_grating(ctx)
+    assert abs(res["peak_wavelength_um"] - 1.55) <= 0.001
+    lo, hi = res["band_1db_um"]
+    assert lo < 1.55 < hi
+    rows = (ctx.out / "tables" / "grating_sweep.csv").read_text().splitlines()
+    assert any(r.startswith("D,") for r in rows)
+
+    ctx2 = _ctx(tmp_path / "b", grating__fill_factors=[0.75], grating__detuning=[0.97, 1.0, 1.03],
+                grating__centre_peak=False, run__max_total_cost=5.0)
+    res2 = stages.stage_grating(ctx2)
+    rows2 = list(csv.DictReader(open(ctx2.out / "tables" / "grating_sweep.csv")))
+    assert not any(r["step"] == "D" for r in rows2)
+    assert abs(res2["efficiency_2d"] - max(float(r["efficiency_at_target"]) for r in rows2)) < 1e-9
+
+
+def test_a_simulation_that_cannot_be_described_does_not_stop_the_pack(tmp_path):
+    from tarang.design.benchmark import _describe_file
+    bad = tmp_path / "simulation.json"
+    bad.write_text("{not json", encoding="utf-8")
+    lines = _describe_file(bad, 1.55)
+    assert len(lines) == 1 and "could not describe simulation.json" in lines[0]

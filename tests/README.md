@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `267 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `271 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -335,7 +335,7 @@ cloud for the cloud stages.
 | `test_report_lists_values_to_check_elsewhere` | The report has every section; `check_values.csv` and `design_summary.json` are written, with no solver-specific content |
 | `test_command_line_lists_the_stages` | `python -m tarang.design --list` works |
 
-## `test_phase11.py`: fibre orientation, spectra, coupling measures, benchmark pack (19 tests, Phase 11)
+## `test_phase11.py`: fibre orientation, spectra, coupling measures, benchmark pack (23 tests, Phase 11)
 
 | Test | Checks |
 |---|---|
@@ -357,3 +357,7 @@ cloud for the cloud stages.
 | `test_period_is_varied_again_when_the_best_fill_factor_moves` | When step B picks another fill factor, step B2 varies the period around it (four batches: A, B, B2, C) |
 | `test_sensitivity_panels_name_what_their_runs_held_fixed` | Each sensitivity panel names the fill factor or period its own runs used, not the final design's |
 | `test_a_run_loaded_twice_is_counted_once` | A cached run loaded again (for its field map) is counted once in the progress lines |
+| `test_describe_sim_without_a_gaussian_beam` | A ring simulation (mode source, one wavelength) is described as well as a grating one |
+| `test_spectrum_summary_finds_the_peak_between_samples_and_the_band_edges` | On 2 nm samples the peak wavelength is found to 0.2 nm; the 1 dB band edges match the Gaussian |
+| `test_centring_puts_the_peak_on_the_design_wavelength` | With a peak wavelength nonlinear in the period and a skewed spectrum, step D puts the peak within 1 nm of 1550 nm inside the 1 dB band; `centre_peak = False` keeps the highest efficiency at 1550 nm |
+| `test_a_simulation_that_cannot_be_described_does_not_stop_the_pack` | An unreadable simulation file is noted in the README instead of stopping the report |
