@@ -148,6 +148,12 @@ working until v0.2.0; old imports are updated with one command (see
 - Design tool: settings files that start with a byte-order mark (Windows PowerShell 5)
   are read; the grating stage no longer prints a phase-matched period for the wrong
   orientation.
+- Design tool report: building the benchmark pack stopped with "The truth value of an
+  array ... is ambiguous" when describing the grating simulation (Tidy3D stores monitor
+  frequencies as an array). The grating stage now varies the period again (step B2) when
+  step B picks a fill factor other than its centre one, so the final fill factor's period
+  is optimised too; the sensitivity figure names what each panel's runs held fixed; a
+  gap run loaded twice (data, then field map) is counted once in the progress lines.
 
 - **Material fits that swing between sparse data points.** A pole fit can pass through
   every tabulated point and still oscillate between them: `si3n4` fitted over 0.68–0.88 µm

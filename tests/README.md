@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `262 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `267 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -335,7 +335,7 @@ cloud for the cloud stages.
 | `test_report_lists_values_to_check_elsewhere` | The report has every section; `check_values.csv` and `design_summary.json` are written, with no solver-specific content |
 | `test_command_line_lists_the_stages` | `python -m tarang.design --list` works |
 
-## `test_phase11.py`: fibre orientation, spectra, coupling measures, benchmark pack (14 tests, Phase 11)
+## `test_phase11.py`: fibre orientation, spectra, coupling measures, benchmark pack (19 tests, Phase 11)
 
 | Test | Checks |
 |---|---|
@@ -352,3 +352,8 @@ cloud for the cloud stages.
 | `test_candidates_tie_break_on_the_te_tm_split` | Equally robust candidates are ordered by the TE00/TM00 index split |
 | `test_nested_sampler_passes_the_fibre_orientation` | The nested sampler builds "towards" couplers unless told otherwise |
 | `test_report_writes_a_complete_benchmark_pack` | `benchmark_pack/` has its README (every section), assumptions, results with the threshold, settings and a zip; nothing solver-specific |
+| `test_describe_sim_reads_monitor_bands_stored_as_arrays` | A saved grating simulation (monitor wavelengths stored as an array by Tidy3D) is described in the benchmark README with its 1.45-1.65 µm band |
+| `test_grating_stage_through_report_and_benchmark_pack` | Gap, grating and layout stages, then the report: the benchmark pack describes and contains the final grating simulation |
+| `test_period_is_varied_again_when_the_best_fill_factor_moves` | When step B picks another fill factor, step B2 varies the period around it (four batches: A, B, B2, C) |
+| `test_sensitivity_panels_name_what_their_runs_held_fixed` | Each sensitivity panel names the fill factor or period its own runs used, not the final design's |
+| `test_a_run_loaded_twice_is_counted_once` | A cached run loaded again (for its field map) is counted once in the progress lines |

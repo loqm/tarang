@@ -227,3 +227,87 @@ def test_report_writes_a_complete_benchmark_pack(tmp_path):
     assert zipfile.ZipFile(res["zip"]).namelist()
     text = (ctx.out / "report.md").read_text(encoding="utf-8")
     assert "## Assumed values" in text and "## Known limits" in text
+
+
+# ---- fixes found in the first 1550 nm run with Phase 11 ----------------------------------- #
+def test_describe_sim_reads_monitor_bands_stored_as_arrays(tmp_path):
+    """Tidy3D stores a monitor's frequencies as a numpy array; the benchmark README must
+    describe a saved grating simulation (it crashed on `array or []`)."""
+    from tarang.design.benchmark import describe_sim
+    path = tmp_path / "simulation.json"
+    _gc().sim.to_file(str(path))
+    sim = td.Simulation.from_file(str(path))
+    assert any(isinstance(getattr(m, "freqs", None), np.ndarray) and len(m.freqs) > 1
+               for m in sim.monitors)
+    text = "\n".join(describe_sim(sim, 1.55))
+    assert "wavelengths 1.4500-1.6500 µm" in text
+
+
+def test_grating_stage_through_report_and_benchmark_pack(tmp_path, fake_web, monkeypatch):
+    """The whole path that failed: a grating stage with a saved final simulation, then
+    the report and the benchmark pack built from it."""
+    import tarang.ring_resonator.ring_gap_sweep as rgs
+    from test_design import _ctx, _fake_gap_fit, _fake_spectra
+    from tarang.design import report, stages
+    fake_web.cost = 0.01
+    _fake_spectra(monkeypatch)
+    monkeypatch.setattr(rgs, "ring_gap_sweep", _fake_gap_fit)
+    ctx = _ctx(tmp_path, gap__gaps_um=[0.4, 0.5, 0.6, 0.7], grating__fill_factors=[0.5, 0.7, 0.9],
+               run__max_total_cost=5.0)
+    for name, func in (("gap", stages.stage_gap), ("grating", stages.stage_grating),
+                       ("layout", stages.stage_layout)):
+        ctx.state["stages"][name] = {"results": func(ctx)}
+    res = ctx.state["stages"]["grating"]["results"]
+    assert Path(res["final_sim"]).exists()
+    ctx.cfg.save(ctx.out / "design.toml")
+    out = report.write(ctx)
+    readme = (Path(out["folder"]) / "README.md").read_text(encoding="utf-8")
+    assert "### Final grating-coupler simulation (2D)" in readme
+    assert (Path(out["folder"]) / "simulations" / "grating_final.json").exists()
+
+
+def test_period_is_varied_again_when_the_best_fill_factor_moves(tmp_path, fake_web, monkeypatch):
+    """Step B picks a fill factor other than its centre one: step B2 varies the period
+    around it, so the period sensitivity belongs to the final fill factor."""
+    from test_design import _ctx, _fake_spectra
+    from tarang.design import stages
+    fake_web.cost = 0.01
+    calls = _fake_spectra(monkeypatch)              # best at fill factor 0.7
+    ctx = _ctx(tmp_path, grating__fill_factors=[0.5, 0.65, 0.9], run__max_total_cost=5.0)
+    res = stages.stage_grating(ctx)
+    assert fake_web.names().count("batch_start") == 4          # A, B, B2 and C
+    assert abs(res["fill_factor"] - 0.7) < 1e-9
+    assert len({p for p, ff, _ in calls if abs(ff - 0.7) < 1e-9}) >= 5
+    assert not any("varied at fill factor" in n for n in res["notes"])
+    rows = (ctx.out / "tables" / "grating_sweep.csv").read_text().splitlines()
+    assert any(r.startswith("B2,") for r in rows)
+
+
+def test_sensitivity_panels_name_what_their_runs_held_fixed(tmp_path, monkeypatch):
+    from tarang.design import visuals
+    titles = []
+    import matplotlib.axes
+    orig = matplotlib.axes.Axes.set_title
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_title",
+                        lambda self, t, *a, **k: titles.append(t) or orig(self, t, *a, **k))
+    row = lambda p, f, x, e: dict(period_um=p, fill_factor=f, source_x_um=x,  # noqa: E731
+                                  efficiency_at_target=e)
+    ff_rows = [row(1.19, 0.6, 5.2, 0.2), row(1.10, 0.75, 5.2, 0.3)]
+    period_rows = [row(1.12, 0.7, 5.2, 0.25), row(1.14, 0.7, 5.2, 0.28)]
+    align_rows = [row(1.10, 0.75, 5.2, 0.30), row(1.10, 0.75, 7.8, 0.31)]
+    best = row(1.10, 0.75, 7.8, 0.31)
+    visuals.grating_sensitivity(ff_rows, period_rows, align_rows, best,
+                                tmp_path / "s.png", 1.55)
+    assert "FF = 0.70" in titles[1] and "P = 1.1000 µm, FF = 0.75" in titles[2]
+    assert (tmp_path / "s.png").exists()
+
+
+def test_a_run_loaded_twice_is_counted_once(tmp_path):
+    from test_design import _ctx
+    from tarang.utilities.cloud_run import _emit
+    ctx = _ctx(tmp_path)
+    with ctx.cloud_progress("gap sweep", 2):
+        for fp in ("aaa", "aaa", "bbb", "bbb"):          # data, then the field map
+            _emit("cached", name=f"run_{fp}", fingerprint=fp)
+    text = ctx.ui.out.getvalue()
+    assert "[2/2]" in text and "[3/2]" not in text

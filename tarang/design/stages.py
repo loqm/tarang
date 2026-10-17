@@ -124,17 +124,25 @@ class Context:
         from tarang.utilities.cloud_run import progress_listener
         from tarang.design.visuals import fmt_minutes
         count = {"n": 0}
+        seen: set = set()
         ui = self.ui
 
         def show(event: str, info: dict) -> None:
             name = info.get("name", "")
             if event == "cached":
+                # a run loaded again (e.g. for its field map) is counted once
+                tag = info.get("fingerprint") or name
+                if tag in seen:
+                    return
+                seen.add(tag)
                 count["n"] += 1
                 ui.say(f"  [{count['n']}/{total}] {label}: {name} - already computed, loaded")
             elif event == "running":
                 ui.say(f"  [{count['n'] + 1}/{total}] {label}: {name} - running on the cloud "
                        f"(estimate {info.get('cost', 0):.3f} FC) ...")
             elif event == "done":
+                if info.get("fingerprint"):
+                    seen.add(info["fingerprint"])
                 count["n"] += 1
                 ui.say(f"      done in {fmt_minutes(info.get('seconds', 0))}")
         return progress_listener(show)
@@ -805,14 +813,30 @@ def stage_grating(ctx: Context) -> dict:
             key = lambda r: (round(r["period_um"], 4), r["fill_factor"], r["source_x_um"])  # noqa: E731
             ff_rows = [r for r in stage_b if key(r) in set(pts_ff)]
             period_rows = [r for r in stage_b if key(r) in set(pts_p)]
+            periods_tried = [p for p, _, _ in pts_p]
+            if abs(final["fill_factor"] - f0) > 1e-9:
+                # ---- B2: the best fill factor differs from the centre one; its period was
+                # set only by phase matching, so vary the period around it as well
+                f1, p1 = final["fill_factor"], final["period_um"]
+                pts_p2 = [(round(p1 * k, 4), f1, sx0) for k in (0.98, 0.99, 1.01, 1.02)]
+                stage_b2 = run_set(pts_p2, f"B2. period around the best fill factor ({f1:g})",
+                                   "B2")
+                if stage_b2:
+                    period_rows = stage_b2 + [final]
+                    periods_tried = [p for p, _, _ in pts_p2] + [p1]
+                    final = max(period_rows, key=lambda r: r["efficiency_at_target"])
             # ---- C: fibre position for the best design
             stage_c = run_set([(final["period_um"], final["fill_factor"], x) for x in sx_list],
                               "C. fibre position along the grating", "C")
             if stage_c:
                 align_rows = stage_c + ([final] if final["source_x_um"] not in sx_list else [])
                 final = max(align_rows, key=lambda r: r["efficiency_at_target"])
-            edge += _edge_notes(final, ffs_b, [p for p, _, _ in pts_p],
+            same_ff = {r["fill_factor"] for r in period_rows} == {final["fill_factor"]}
+            edge += _edge_notes(final, ffs_b, periods_tried if same_ff else None,
                                 sx_list if stage_c else None)
+            if not same_ff:
+                edge.append(f"the period was varied at fill factor {f0:g} only; the chosen "
+                            f"fill factor {final['fill_factor']:g} uses its phase-matched period.")
     best3d = None
     if ui.value(cfg, "grating", "check_3d"):
         r3 = run_set([(final["period_um"], final["fill_factor"], final["source_x_um"])],
