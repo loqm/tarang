@@ -119,6 +119,9 @@ class Grating:
                              "um")
     retune: bool = _f(True, "Shift the period so the efficiency peak lands on the design "
                             "wavelength, then refine fill factor and fibre position")
+    centre_peak: bool = _f(True, "Set the period so the efficiency peak sits at the design "
+                                 "wavelength (the middle of the band); False keeps the design "
+                                 "with the highest efficiency at the wavelength")
     check_3d: bool = _f(False, "Also simulate the best design in 3D (several times the 2D cost)")
     taper_length_um: float = _f(300.0, "Linear taper from the grating width to the waveguide", "um")
 
