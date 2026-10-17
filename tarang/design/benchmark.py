@@ -21,6 +21,8 @@ import glob
 import shutil
 from pathlib import Path
 
+import numpy as np
+
 C_UM = 2.99792458e14
 
 
@@ -105,7 +107,9 @@ def describe_sim(sim, wavelength_um: float) -> list[str]:
         out.append(line)
     out.append("- Monitors:")
     for m in sim.monitors:
-        freqs = list(getattr(m, "freqs", []) or [])
+        # Tidy3D keeps monitor frequencies as a numpy array (never test its truth value)
+        raw = getattr(m, "freqs", None)
+        freqs = [] if raw is None else [float(f) for f in np.atleast_1d(np.asarray(raw))]
         band = ""
         if freqs:
             wls = sorted(C_UM / f for f in freqs)

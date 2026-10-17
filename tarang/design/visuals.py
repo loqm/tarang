@@ -229,18 +229,37 @@ def grating_sensitivity(ff_rows, period_rows, align_rows, best, path: Path,
     position around the final design (one parameter changed at a time)."""
     plt = _plt()
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.2))
-    panels = ((axes[0], ff_rows, "fill_factor", "Fill factor", f"P = {best['period_um']:.4f} µm"),
-              (axes[1], period_rows, "period_um", "Period (µm)", f"FF = {best['fill_factor']:.2f}"),
+
+    def held(rows, key, fmt):
+        vals = sorted({r[key] for r in rows})
+        return f"{vals[0]:{fmt}}" if len(vals) == 1 else "varied"
+
+    # Each panel states what was held fixed in ITS runs, which need not be the final design.
+    panels = ((axes[0], ff_rows, "fill_factor", "Fill factor",
+               "period kept phase-matched for each fill factor"),
+              (axes[1], period_rows, "period_um", "Period (µm)",
+               f"FF = {held(period_rows, 'fill_factor', '.2f')}" if period_rows else ""),
               (axes[2], align_rows, "source_x_um", "Fibre position on the grating (µm)",
-               "alignment"))
+               f"P = {held(align_rows, 'period_um', '.4f')} µm, "
+               f"FF = {held(align_rows, 'fill_factor', '.2f')}" if align_rows else ""))
     for ax, rows, key, label, sub in panels:
         rows = sorted(rows, key=lambda r: r[key])
         if rows:
             ax.plot([r[key] for r in rows], [r["efficiency_at_target"] for r in rows], "o-")
-            ax.axvline(best[key], color="red", ls="--", lw=1, label="chosen")
+            # the final period and fill factor (at this panel's fibre position)
+            mine = [r for r in rows if r["period_um"] == best["period_um"]
+                    and r["fill_factor"] == best["fill_factor"]
+                    and (key != "source_x_um" or r["source_x_um"] == best["source_x_um"])]
+            if mine:
+                ax.plot([best[key]], [mine[0]["efficiency_at_target"]], "o", ms=11,
+                        mfc="none", mec="red", mew=2, label="final design")
+                ax.legend(fontsize=8, loc="lower center")
+            else:
+                ax.text(0.5, 0.03, "final design not in this sweep", transform=ax.transAxes,
+                        ha="center", fontsize=8, color="0.4")
         ax.set_xlabel(label)
         ax.set_ylabel(f"Efficiency at {target_um} µm")
-        ax.set_title(f"{label.split(' (')[0]} sensitivity ({sub})", fontsize=10)
+        ax.set_title(f"{label.split(' (')[0]} sensitivity\n({sub})", fontsize=10)
         ax.grid(alpha=0.3)
     return _save(fig, path)
 
