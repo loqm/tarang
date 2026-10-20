@@ -1,11 +1,15 @@
 """Figures of the design tool: what is about to be simulated, and what came out.
 
-Every function writes one PNG into ``<run>/figures`` and returns its path. They never
-stop a run: a figure that cannot be drawn is reported and skipped (``safe``).
+Every function writes one figure into ``<run>/figures`` (PNG at ``run.figure_dpi``, plus
+PDF and/or SVG per ``run.figure_formats``: vector files for papers and slides, with text
+kept as text) and returns the PNG path. They never stop a run: a figure that cannot be
+drawn is reported and skipped (``safe``); a file that cannot be replaced because another
+program has it open is written next to it as ``<name>_new.<ext>``.
 """
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -13,32 +17,91 @@ import numpy as np
 
 C_UM = 2.99792458e14
 
+# Okabe-Ito colours: distinguishable with every common colour-vision deficiency
+PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#F0E442",
+           "#000000"]
+SETTINGS = {"formats": ["png", "pdf"], "dpi": 300}
+_LAST_NOTES: list[str] = []
+
+
+def configure(formats=None, dpi=None) -> None:
+    """Figure files to write (png, pdf, svg) and the PNG resolution."""
+    if formats:
+        fm = [str(f).lower().lstrip(".") for f in formats]
+        bad = set(fm) - {"png", "pdf", "svg"}
+        if bad:
+            raise ValueError(f"unknown figure format(s) {sorted(bad)}; use png, pdf, svg")
+        SETTINGS["formats"] = fm
+    if dpi:
+        SETTINGS["dpi"] = int(dpi)
+
 
 def _plt():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    cycler = matplotlib.cycler
+    plt.rcParams.update({
+        "font.size": 10, "axes.titlesize": 11, "axes.labelsize": 10, "legend.fontsize": 8.5,
+        "xtick.labelsize": 9, "ytick.labelsize": 9, "lines.linewidth": 1.8,
+        "lines.markersize": 6, "axes.grid": False, "grid.alpha": 0.3,
+        "axes.prop_cycle": cycler(color=PALETTE), "figure.dpi": 110,
+        "savefig.bbox": "tight", "savefig.pad_inches": 0.05,
+        "pdf.fonttype": 42, "ps.fonttype": 42, "svg.fonttype": "none",   # editable text
+        "image.cmap": "magma"})
     return plt
 
 
 def safe(ctx, label: str, fn: Callable, *args, **kwargs) -> Optional[Path]:
     """Draw a figure; on any error say so and carry on."""
     try:
+        _LAST_NOTES.clear()
         path = fn(*args, **kwargs)
     except Exception as err:                                    # noqa: BLE001
         ctx.ui.say(f"  (figure '{label}' not drawn: {type(err).__name__}: {err})")
         return None
+    for note in _LAST_NOTES:
+        ctx.ui.say("  " + note)
     if path:
         ctx.ui.figure(path)
     return path
 
 
+def _write(fig, target: Path, **kw) -> Path:
+    """Save via a temporary file and swap it in; if the old file is held open by another
+    program (e.g. a Windows image viewer), keep it and write <name>_new.<ext>."""
+    tmp = target.with_name(target.stem + ".tmp" + target.suffix)
+    fig.savefig(tmp, **kw)
+    try:
+        os.replace(tmp, target)
+        return target
+    except OSError:
+        alt = target.with_name(target.stem + "_new" + target.suffix)
+        try:
+            os.replace(tmp, alt)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
+        _LAST_NOTES.append(f"{target.name} is open in another program; saved as {alt.name}")
+        return alt
+
+
 def _save(fig, path: Path) -> Path:
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(path, dpi=130)
+    try:
+        fig.tight_layout()
+    except Exception:
+        pass
+    out = None
+    for fmt in SETTINGS["formats"]:
+        target = path.with_suffix("." + fmt)
+        kw = {"dpi": SETTINGS["dpi"]} if fmt == "png" else {}
+        written = _write(fig, target, **kw)
+        if fmt == "png" or out is None:
+            out = written
     _plt().close(fig)
-    return path
+    return out
 
 
 # =============================================================== cross-section
@@ -115,6 +178,96 @@ def _mode_panel(ctx, ax, H, W) -> None:
     _plt().colorbar(im, ax=ax, shrink=0.8)
 
 
+def mode_profiles(rows: list, H: float, W: float, path: Path, title: str,
+                  cores: Optional[list] = None, components: bool = True) -> Path:
+    """Mode profiles in the cross-section plane (y across the width, z up): one row per
+    mode, with |E|^2 and (``components``) |Ex|, |Ey|, |Ez|, each normalised to the mode's
+    largest field component, so the weak components show how polarised the mode is.
+
+    ``rows``: (label, mode dict from localmodes). ``cores``: core rectangles (y0, z0, w, h)
+    to outline (default: one core at the origin)."""
+    plt = _plt()
+    cores = cores or [(-W / 2, 0.0, W, H)]
+    ncol = 4 if components else 1
+    fig, axes = plt.subplots(len(rows), ncol, figsize=(4.1 * ncol, 3.2 * len(rows) + 0.4),
+                             squeeze=False)
+    ymin = min(c[0] for c in cores) - 1.2
+    ymax = max(c[0] + c[2] for c in cores) + 1.2
+    for r, (label, m) in enumerate(rows):
+        f = m["fields"]
+        amp = {k: np.abs(v) for k, v in f.items()}
+        top = max(a.max() for a in amp.values())
+        panels = [("|E|²", sum(a ** 2 for a in amp.values()) / top ** 2, "magma")]
+        if components:
+            panels += [(f"|{k}|", amp[k] / top, "viridis") for k in ("Ex", "Ey", "Ez")]
+        for c, (name, val, cmap) in enumerate(panels):
+            ax = axes[r, c]
+            im = ax.pcolormesh(m["y"], m["z"], np.asarray(val).T, shading="auto", cmap=cmap,
+                               vmin=0, vmax=max(float(np.max(val)), 1e-12) if c == 0 else 1)
+            for (y0, z0, w, h) in cores:
+                ax.add_patch(plt.Rectangle((y0, z0), w, h, fill=False, ec="w", lw=1))
+            ax.axhline(0, color="w", lw=0.5, ls=":")
+            ax.set_xlim(ymin, ymax)
+            ax.set_ylim(-1.2, H + 1.0)
+            ax.set_aspect("equal")
+            ax.set_xlabel("y (µm)")
+            if c == 0:
+                ax.set_ylabel(f"{label}\nz (µm)")
+            ax.set_title(name if r else name, fontsize=10)
+            fig.colorbar(im, ax=ax, shrink=0.75)
+        extra = f", n_g {m['ng']:.4f}" if m.get("ng") else ""
+        axes[r, 0].text(0.02, 0.97, f"n_eff {m['neff']:.5f}{extra}\nA_eff {m['aeff']:.3f} µm²\n"
+                        f"TE fraction {m['te']:.3f}", transform=axes[r, 0].transAxes,
+                        va="top", fontsize=7.5, color="w")
+    fig.suptitle(title)
+    return _save(fig, path)
+
+
+def supermodes(sm: dict, H: float, W: float, path: Path, theta_est: Optional[float],
+               theta_fdtd: Optional[float]) -> Path:
+    """Even and odd TE supermodes of the bus and the ring at one gap (cross-section at the
+    closest point), and what their index split says about the coupling."""
+    plt = _plt()
+    cores = sm["cores"]
+    half = sm["shift_um"] / 2 + W + 1
+    fig, axes = plt.subplots(1, 3, figsize=(15, 3.9))
+    for ax, key in zip(axes[:2], ("even", "odd")):
+        m = sm[key]
+        ey = np.real(m["fields"]["Ey"])
+        ey = ey / np.max(np.abs(ey))
+        im = ax.pcolormesh(m["y"], m["z"], ey.T, shading="auto", cmap="RdBu_r", vmin=-1, vmax=1)
+        for (y0, z0, w, h) in cores:
+            ax.add_patch(plt.Rectangle((y0, z0), w, h, fill=False, ec="k", lw=1))
+        ax.set_xlim(-half, half)
+        ax.set_ylim(-1, H + 0.9)
+        ax.set_aspect("equal")
+        ax.set_xlabel("y (µm)")
+        ax.set_ylabel("z (µm)")
+        ax.set_title(f"{key} supermode, Re(Ey): n_eff {m['neff']:.5f}")
+        fig.colorbar(im, ax=ax, shrink=0.8)
+    ax = axes[2]
+    m = sm["even"]
+    zi = int(np.argmin(np.abs(m["z"] - H / 2)))
+    for key, col in (("even", PALETTE[0]), ("odd", PALETTE[1])):
+        e2 = np.sum([np.abs(sm[key]["fields"][k][:, zi]) ** 2 for k in ("Ex", "Ey", "Ez")], axis=0)
+        ax.semilogy(sm[key]["y"], e2 / e2.max(), color=col, label=f"{key} |E|²")
+    for (y0, _, w, _) in cores:
+        ax.axvspan(y0, y0 + w, color="0.85", lw=0)
+    ax.set_ylim(1e-5, 2)
+    ax.set_xlim(-half, half)
+    ax.set_xlabel("y (µm), through the middle of the cores")
+    ax.set_title("evanescent overlap across the gap (log)")
+    ax.legend(fontsize=8)
+    txt = (f"gap {sm['gap_um'] * 1e3:.0f} nm: Δn = {sm['dn']:.2e}, κ = πΔn/λ = "
+           f"{sm['kappa_per_um'] * 1e3:.3f} /mm, full transfer in L_c = λ/2Δn = "
+           f"{sm['coupling_length_um']:.0f} µm")
+    if theta_est is not None:
+        txt += (f"\nper pass along the ring (coupled-mode theory): θ = κ·√(2πR/γ) = "
+                f"{theta_est:.4f}" + (f";  3D FDTD: {theta_fdtd:.4f}" if theta_fdtd else ""))
+    fig.suptitle(txt, fontsize=10)
+    return _save(fig, path)
+
+
 # =============================================================== simulation views
 def sim_views(sim, path: Path, views: list[dict], title: str,
               notes: Optional[str] = None) -> Path:
@@ -165,35 +318,131 @@ def grating_geometry(device, path: Path, title: str) -> Path:
 
 # =============================================================== gap
 def gap_coupling(gaps, cross_raw, cross, fit, targets: dict, path: Path,
-                 chosen: dict) -> Path:
-    """Coupled power per pass against gap (log scale): as measured, after the bus-only
-    normalisation, the exponential fit, and the critical / over-coupled targets."""
+                 chosen: dict, fit_r2: Optional[float] = None) -> Path:
+    """Coupled power per pass against gap on three panels:
+
+    1. linear scale (%): where the useful coupling lies and where the critical and
+       over-coupled targets cross the curve;
+    2. log scale: the exponential evanescent decay is a straight line; 1 - T relative to the
+       source levels off at the gap-independent bus loss;
+    3. the fit space: theta = asin(sqrt(coupled)) against gap on a log axis (straight line
+       theta0 exp(-gamma g)), with the through power T = 1 - coupled on a linear right axis.
+    """
     plt = _plt()
-    fig, ax = plt.subplots(figsize=(7.5, 4.6))
     g = np.asarray(gaps, float)
-    if cross_raw is not None:
-        ax.semilogy(g, np.clip(cross_raw, 1e-8, None), "s", mfc="none", color="0.5",
-                    label="1 − T relative to the source (includes bus losses)")
-    ax.semilogy(g, np.clip(cross, 1e-8, None), "o", color="C0",
-                label="power coupled into the ring")
-    if fit:
-        picks = [x for x in chosen.values() if x]
-        gg = np.linspace(min([g.min(), *picks]), max([g.max(), *picks]), 200)
-        theta = fit["theta_0"] * np.exp(-fit["gamma"] * gg)
-        ax.semilogy(gg, np.sin(np.clip(theta, 0, np.pi / 2)) ** 2, "-", color="C0",
+    k2 = np.clip(np.asarray(cross, float), 1e-12, 1)
+    picks = [x for x in chosen.values() if x]
+    lo, hi = min([g.min(), *picks]) - 0.05, max([g.max(), *picks]) + 0.05
+    gg = np.linspace(max(lo, 0.0), hi, 400)
+    fitc = (np.sin(np.clip(fit["theta_0"] * np.exp(-fit["gamma"] * gg), 0, np.pi / 2)) ** 2
+            if fit else None)
+    cols = {"critical": PALETTE[1], "over": "0.45"}
+
+    def colour(label):
+        return cols["critical"] if "critical" in label else cols["over"]
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
+    for ax, log in ((axes[0], False), (axes[1], True)):
+        sc = 1.0 if log else 100.0
+        if fitc is not None:
+            ax.plot(gg, fitc * sc, "-", color=PALETTE[2],
                     label=f"fit: θ = {fit['theta_0']:.3f}·exp(−{fit['gamma']:.2f} g)")
+        ax.plot(g, k2 * sc, "o", color=PALETTE[2], label="power coupled into the ring")
+        if cross_raw is not None:
+            ax.plot(g, np.clip(cross_raw, 1e-12, None) * sc, "s", mfc="none", color="0.5",
+                    label="1 − T vs source (includes bus loss)")
+        for label, level in targets.items():
+            ax.axhline(level * sc, ls="--", lw=1, color=colour(label))
+        for label, gap in chosen.items():
+            if gap:
+                ax.axvline(gap, ls=":", lw=1.2, color=colour(label))
+        ax.set_xlabel("Ring–bus gap (µm)")
+        ax.grid(alpha=0.3, which="both")
+        if log:
+            ax.set_yscale("log")
+            ax.set_ylabel("Coupled power per pass κ²")
+            ax.set_title("log scale: straight line = exponential decay")
+        else:
+            top = max(targets.values()) if targets else k2.max()
+            ax.set_ylim(0, 2.6 * top * 100)
+            ax.set_ylabel("Coupled power per pass κ² (%)")
+            ax.set_title("linear scale")
+            y = 2.45 * top * 100
+            for label, gap in chosen.items():
+                if gap:
+                    lvl = next((v for k, v in targets.items() if (("critical" in k) ==
+                                                                  ("critical" in label))), None)
+                    txt = f"{label}: {gap * 1e3:.0f} nm" + (f"\n(κ² = {lvl * 100:.3f} %)"
+                                                            if lvl else "")
+                    ax.annotate(txt, (gap, (lvl or 0) * 100), (g.min() + 0.55 * (g.max() - g.min()), y),
+                                color=colour(label), fontsize=8.5, va="top",
+                                arrowprops=dict(arrowstyle="->", color=colour(label), lw=1))
+                    y -= 0.42 * top * 100
+            ax.legend(loc="center right", fontsize=8)
+    ax = axes[2]
+    th = np.arcsin(np.sqrt(k2))
+    if fit:
+        ax.semilogy(gg, fit["theta_0"] * np.exp(-fit["gamma"] * gg), "-", color=PALETTE[3],
+                    label="θ₀·exp(−γ g)")
+    ax.semilogy(g, th, "s", color=PALETTE[0], label="θ = asin(√κ²)")
     for label, level in targets.items():
-        ax.axhline(level, ls="--", lw=1, color="C3" if "critical" in label else "C2")
-        ax.text(g.max(), level, f" {label}", va="bottom", ha="right", fontsize=8)
+        if "critical" in label:
+            ax.axhline(math.asin(math.sqrt(level)), ls="--", lw=1, color=colour(label),
+                       label=f"target θ (critical) = {math.asin(math.sqrt(level)):.4f}")
     for label, gap in chosen.items():
-        if gap:
-            ax.axvline(gap, ls=":", color="C3" if "critical" in label else "C2")
-            ax.text(gap, ax.get_ylim()[0] * 3, f" {label}\n {gap * 1e3:.0f} nm", fontsize=8)
+        if gap and "critical" in label:
+            ax.axvline(gap, ls=":", lw=1.2, color=colour(label),
+                       label=f"critical gap = {gap * 1e3:.1f} nm")
+    ax2 = ax.twinx()
+    if fitc is not None:
+        ax2.plot(gg, 1 - fitc, "--", color="0.6", lw=1)
+    ax2.plot(g, 1 - k2, "o", color="0.4", ms=5)
+    ax2.set_ylabel("Through power T = 1 − κ² (linear)", color="0.4")
+    tmin = float(np.min(1 - k2))
+    ax2.set_ylim(max(0.0, tmin - 0.25 * (1 - tmin)), 1 + 0.02 * (1 - tmin))
     ax.set_xlabel("Ring–bus gap (µm)")
-    ax.set_ylabel("Power coupled into the ring per pass")
+    ax.set_ylabel("Coupling angle θ (rad)")
+    ax.set_title("fit space" + (f" (R² of ln θ = {fit_r2:.5f})" if fit_r2 else ""))
     ax.grid(alpha=0.3, which="both")
-    ax.legend(fontsize=8, loc="upper right")
-    ax.set_title("Ring–bus coupling against gap")
+    ax.legend(fontsize=8, loc="lower left")
+    fig.suptitle("Ring–bus coupling against gap")
+    return _save(fig, path)
+
+
+def _field_e2(data, monitor: str, f0: float):
+    """|E|^2 of a field monitor at the frequency nearest f0, and its two in-plane axes."""
+    mon = data[monitor]
+    comps = [getattr(mon, c, None) for c in ("Ex", "Ey", "Ez")]
+    comps = [c for c in comps if c is not None]
+    e2 = None
+    for c in comps:
+        a = np.abs(c.sel(f=f0, method="nearest").values) ** 2
+        e2 = a if e2 is None else e2 + a
+    coords = comps[0].coords
+    axes = [ax for ax in ("x", "y", "z") if coords[ax].size > 1]
+    return np.squeeze(e2), {a: coords[a].values for a in axes}, axes
+
+
+def gap_field_map(data, path: Path, wavelength_um: float, gap_um: float, title: str) -> Path:
+    """Top view (xy, middle of the core) of |E|^2 in a gap run, on a log scale so the
+    evanescent field across the gap and the light in the ring are both visible."""
+    plt = _plt()
+    e2, c, axes_ = _field_e2(data, "coupling_field_map", C_UM / wavelength_um)
+    x, y = c[axes_[0]], c[axes_[1]]
+    v = np.log10(e2 / e2.max() + 1e-7)
+    fig, axs = plt.subplots(2, 1, figsize=(12, 6.2), gridspec_kw=dict(height_ratios=[1, 1.2]))
+    for ax, zoom in zip(axs, (False, True)):
+        im = ax.pcolormesh(x, y, v.T, shading="auto", cmap="magma", vmin=-5, vmax=0)
+        ax.set_aspect("equal")
+        ax.set_xlabel(f"{axes_[0]} (µm)")
+        ax.set_ylabel(f"{axes_[1]} (µm)")
+        if zoom:
+            yb = y[np.argmax(e2[np.argmin(np.abs(x - x.min() - 0.1 * (x.max() - x.min())))])]
+            ax.set_xlim(-12, 12)
+            ax.set_ylim(yb - 2.5, yb + 4.5)
+            ax.set_title("coupling region")
+        else:
+            ax.set_title(title)
+        fig.colorbar(im, ax=ax, shrink=0.85, label="log₁₀ |E|² (normalised)")
     return _save(fig, path)
 
 
@@ -294,10 +543,23 @@ def grating_spectrum(wl, eta, summary: dict, path: Path, title: str) -> Path:
 
 
 def grating_field(sim_data, path: Path, wavelength_um: float, title: str) -> Path:
+    """Side view (xz) of the field at the design wavelength: |E| (linear) and |E|^2 on a
+    log scale, which shows the beam coming in, the light diffracted down into the BOX and
+    the guided mode leaving towards the waveguide."""
     plt = _plt()
-    fig, ax = plt.subplots(figsize=(11, 3.8))
-    sim_data.plot_field("field_y_plane", "E", "abs", f=C_UM / wavelength_um, ax=ax)
-    ax.set_title(title)
+    e2, c, axes_ = _field_e2(sim_data, "field_y_plane", C_UM / wavelength_um)
+    x, z = c[axes_[0]], c[axes_[1]]
+    fig, axs = plt.subplots(2, 1, figsize=(12, 6.0))
+    im0 = axs[0].pcolormesh(x, z, np.sqrt(e2).T, shading="auto", cmap="magma")
+    im1 = axs[1].pcolormesh(x, z, np.log10(e2.T / e2.max() + 1e-6), shading="auto",
+                            cmap="magma", vmin=-4, vmax=0)
+    for ax, im, lab in ((axs[0], im0, "|E|"), (axs[1], im1, "log₁₀ |E|² (normalised)")):
+        ax.set_aspect("equal")
+        ax.set_xlabel(f"{axes_[0]} (µm)")
+        ax.set_ylabel(f"{axes_[1]} (µm)")
+        fig.colorbar(im, ax=ax, shrink=0.85, label=lab)
+    axs[0].set_title(title)
+    axs[1].set_title("same field, log scale")
     return _save(fig, path)
 
 

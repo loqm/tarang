@@ -1,13 +1,13 @@
 # TARANG test suite
 
 ```bash
-python -m pytest                     # whole suite, ~4 min, no FlexCredits
-python -m pytest -m "not slow"       # quick check, under a minute (skips 15 mode-solve / fitting tests)
+python -m pytest                     # whole suite, ~10-15 min, no FlexCredits
+python -m pytest -m "not slow"       # quick check, ~2 min (skips 18 mode-solve / fitting tests)
 python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `271 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `293 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -44,6 +44,10 @@ Apart from the opt-in cloud test, the suite costs nothing to run:
 3. **Analytic stand-ins.** Constant-index materials (n = 1.996, 1.444, 3.476) are
    used where real dispersion fits don't matter, and Gaussian likelihoods with a
    known evidence replace FDTD in the sampler tests.
+4. **Fast stand-ins in the design-tool tests** (autouse fixtures in `conftest.py`): the
+   design tool's local mode solves for figures and checks (`tarang.design.localmodes`)
+   return a synthetic TE00/TM00 pair and supermodes, and figures are written as 72 dpi
+   PNG only. Tests marked `real_modes` or `real_figures` use the real ones.
 
 Physics tests check **relations**: orderings (TM00 above TE00), signs (D > 0),
 counts (one guided TE mode) and trends. They don't check 4-decimal values,
@@ -53,6 +57,8 @@ because coarse-mesh n_eff shifts by ~0.005 between Tidy3D versions.
 
 * `slow`: needs a local mode solve or a fresh material fit (tens of seconds).
 * `cloud`: real Tidy3D job; runs only with `--run-cloud` and an API key.
+* `real_modes`: the design tool's real local mode solver (slow tests).
+* `real_figures`: figures with the configured formats and resolution.
 
 **Warnings policy** (`pytest.ini`): TARANG calling one of its own deprecated
 names is an **error**, so the old names can never creep back into the code.
@@ -361,3 +367,30 @@ cloud for the cloud stages.
 | `test_spectrum_summary_finds_the_peak_between_samples_and_the_band_edges` | On 2 nm samples the peak wavelength is found to 0.2 nm; the 1 dB band edges match the Gaussian |
 | `test_centring_puts_the_peak_on_the_design_wavelength` | With a peak wavelength nonlinear in the period and a skewed spectrum, step D puts the peak within 1 nm of 1550 nm inside the 1 dB band; `centre_peak = False` keeps the highest efficiency at 1550 nm |
 | `test_a_simulation_that_cannot_be_described_does_not_stop_the_pack` | An unreadable simulation file is noted in the README instead of stopping the report |
+
+## `test_phase12.py`: run links, credits, one-table forms, checks, LLE inputs (22 tests, Phase 12A)
+
+| Test | Checks |
+|---|---|
+| `test_a_run_records_its_task_and_web_link` | A cloud run writes `task.json` with the task id, a web link containing it, its estimate and date; `collect_runs` lists it |
+| `test_an_interrupted_run_is_reattached_not_paid_again` | A run stopped (Ctrl+C) while running on Tidy3D is picked up again: one upload, one start, the "reattached" event carries the link |
+| `test_a_failed_task_is_submitted_again` | A task that failed on Tidy3D is not reattached but submitted again |
+| `test_batch_runs_record_each_task_and_reattach` | Each task of an interrupted batch has a record and a link; the rerun reattaches without starting a new batch |
+| `test_links_of_earlier_runs_are_filled_in_from_the_task_list` | Results saved without a record get their task id and link from the account's task list (matched by fingerprint), once |
+| `test_supermodes_reproduce_the_fdtd_critical_gap` (slow) | Coupled-mode theory from the real supermodes gives the 0.7 × 1.0 µm, R = 107.5 µm critical gap within 10 nm of 3D FDTD (469.6 nm) and γ within 5 % |
+| `test_supermodes_are_true_even_and_odd_modes_at_a_wide_gap` (slow) | At a 0.9 µm gap the supermodes are mirror-even and mirror-odd (not localised in one core, as seen once on Windows), straddle the single-core n_eff, and split less than at 0.6 µm |
+| `test_mode_profiles_tell_te_from_tm` (slow) | The real solve finds TE00 above TM00, n_g = 2.223, and the bent mode shifted outwards by less than 50 nm |
+| `test_a_stage_form_accepts_with_enter_and_edits_by_number` | A stage table: a row number edits that value, Enter accepts all, values are saved; a second time nothing is asked |
+| `test_q_stops_a_form_and_the_question_mark_explains` | `?` lists every setting with its explanation; `q` stops |
+| `test_credit_commands_set_limit_reset_and_list_spending` | Spending is grouped by stage and date with the earlier total as its own row; `--budget` saves the limit; `--reset-spent` starts at 0; a negative budget is refused |
+| `test_settings_added_later_keep_old_results_and_fingerprints` | A design whose gap already ran keeps the old recess and band points (and says so); a real change gives a new fingerprint; a new design uses the new defaults |
+| `test_gap_tolerance_moves_the_coupling_ratio_the_right_way` | Wider waveguides (smaller gap) over-couple, narrower under-couple; K = 1 and K = 1.5 at the design gaps; loaded Q = Q_i / (1 + K) |
+| `test_mode_family_crossings_follow_from_the_fsr_difference` | TE00 is first; TM00 crosses it every FSR₀₀ / |FSR₀₀ − FSR_TM| modes |
+| `test_loss_budget_adds_up` | Two grating couplers at 31.3 % give 2 × 5.04 dB; the total is the sum of the items |
+| `test_power_budget_of_the_reverse_run_gives_directionality_and_overlap` | From up/down/past flux and the reflected mode: directionality = up / (up + down), overlap = efficiency / up, reflection in dB |
+| `test_lle_inputs_are_written_in_pylle_format` | `lle_inputs.json` has γ, Q_c, Q_L; `pyLLE_dispersion.csv` has no header, increasing mode numbers and frequencies; the FSR matches c / (2πR n_g) of the input dispersion to 0.1 % |
+| `test_lle_export_waits_for_the_ring_stage` | Without the ring stage nothing is written |
+| `test_figures_are_written_in_every_format_at_the_chosen_resolution` | PNG, PDF and SVG at the chosen dpi; an unknown format is refused |
+| `test_a_figure_open_elsewhere_is_saved_beside_it` | A figure locked by another program is saved as `<name>_new.png` with a note; the old file and no temporary file are left |
+| `test_an_unreachable_account_does_not_hang` | Reading the account gives up after its timeout |
+| `test_budget_with_only_the_folder_keeps_the_saved_settings` | `--out <run> --budget 20` changes only the limit in that run's `design.toml`; without a design the command is refused |

@@ -26,7 +26,7 @@ from tarang.design.config import DesignConfig
 from tarang.design.ui import Prompter, parse_list
 
 logger = get_logger(__name__)
-C_UM = 2.99792458e14
+C_UM = 2.99792458e14                 # um/s: f = C_UM / wavelength_um gives Hz
 
 
 # =============================================================================== context
@@ -39,7 +39,45 @@ class Context:
         self.state_path = self.out / "state.json"
         self.state: dict = (json.loads(self.state_path.read_text(encoding="utf-8"))
                             if self.state_path.exists() else {"stages": {}, "spent": 0.0})
+        self.state.setdefault("spend_log", [])
         self._media: dict = {}
+        from tarang.design import visuals
+        try:
+            visuals.configure(cfg.run.figure_formats, cfg.run.figure_dpi)
+        except ValueError as err:
+            ui.say(f"  ({err}; using png + pdf)")
+        self.stage = ""
+
+    # ---- versions and settings added after a run was made ------------------------- #
+    def record_versions(self) -> None:
+        import datetime as dt
+        import platform
+        vers = {"python": platform.python_version()}
+        for mod in ("tarang", "tidy3d", "numpy"):
+            try:
+                vers[mod] = __import__(mod).__version__
+            except Exception:
+                vers[mod] = "?"
+        vers["date"] = dt.datetime.now().isoformat(timespec="seconds")
+        self.state["versions"] = vers
+
+    def apply_legacy(self) -> list[str]:
+        """Use, for settings added after this run's stages were computed, the values that
+        reproduce those results (see config.LEGACY); returns notes for the user."""
+        from tarang.design.config import LEGACY
+        notes = []
+        for sec, values in LEGACY.items():
+            done = self.state.get("stages", {}).get(sec, {}).get("results", {})
+            if not done or done.get("skipped"):
+                continue
+            for key, old in values.items():
+                if f"{sec}.{key}" in self.cfg.given:
+                    continue
+                setattr(getattr(self.cfg, sec), key, old)
+                self.cfg.given.add(f"{sec}.{key}")
+                notes.append(f"{sec}.{key} = {old}: kept as in this run's saved {sec} results "
+                             "(change it in design.toml to use the new default).")
+        return notes
 
     # ---- persistence ----------------------------------------------------------------- #
     def save_state(self) -> None:
@@ -57,8 +95,13 @@ class Context:
     def spent(self) -> float:
         return float(self.state.get("spent", 0.0))
 
-    def add_spent(self, cost: float) -> None:
-        self.state["spent"] = self.spent + float(cost)
+    def add_spent(self, cost: float, what: str = "") -> None:
+        import datetime as dt
+        cost = float(cost)
+        self.state["spent"] = self.spent + cost
+        if cost > 0:
+            self.state["spend_log"].append(dict(date=dt.datetime.now().isoformat(timespec="seconds"),
+                                                stage=self.stage, what=what, estimate=cost))
 
     @property
     def budget_left(self) -> float:
@@ -140,6 +183,15 @@ class Context:
             elif event == "running":
                 ui.say(f"  [{count['n'] + 1}/{total}] {label}: {name} - running on the cloud "
                        f"(estimate {info.get('cost', 0):.3f} FC) ...")
+                if info.get("url"):
+                    ui.say(f"      Tidy3D: {info['url']}")
+            elif event == "submitted":                    # one task of a batch
+                ui.say(f"      {name}: {info.get('url', '')}")
+            elif event == "reattached":
+                ui.say(f"  {label}: {name} was submitted before the last stop and is "
+                       f"{info.get('status', 'running')} on Tidy3D; following it (no new charge)")
+                if info.get("url"):
+                    ui.say(f"      Tidy3D: {info['url']}")
             elif event == "done":
                 if info.get("fingerprint"):
                     seen.add(info["fingerprint"])
@@ -228,6 +280,37 @@ def _losses(cfg) -> tuple[float, float]:
             pre["absorption_db_cm"] if absl is None else float(absl))
 
 
+def _wavelength_ok(v) -> str:
+    try:
+        return "" if 0.2 < float(v) < 20 else "wavelength must be in um, e.g. 1.55"
+    except (TypeError, ValueError):
+        return "wavelength must be a number in um, e.g. 1.55"
+
+
+def _heights_default(cfg) -> list:
+    wl, H, dH = cfg.run.wavelength_um, cfg.stack.core_height_um, cfg.cross_section.tolerance_height_um
+    if H:
+        return [round(H - dH, 4), round(H, 4), round(H + dH, 4)]
+    st = _step(0.032 * wl)
+    return _grid(physics.round_to(0.32 * wl, st), physics.round_to(0.58 * wl, st), st)
+
+
+def _widths_default(cfg) -> list:
+    wl = cfg.run.wavelength_um
+    st = _step(0.065 * wl)
+    return _grid(physics.round_to(0.39 * wl, st), physics.round_to(1.16 * wl, st), st)
+
+
+def _gaps_default(cfg) -> list:
+    wl = cfg.run.wavelength_um
+    st = _step(0.065 * wl)
+    return _grid(physics.round_to(0.19 * wl, st), physics.round_to(0.52 * wl, st), st)
+
+
+def _budget_items() -> list:
+    return [dict(section="run", key="max_cost_per_run"), dict(section="run", key="max_total_cost")]
+
+
 def _material_ok(key: str) -> str:
     """'' if key is a known material, a CSV file that exists, or air."""
     from tarang.media.medium_helper import _media_database
@@ -243,8 +326,15 @@ def _material_ok(key: str) -> str:
 # ============================================================================== stages
 def stage_materials(ctx: Context) -> dict:
     cfg, ui = ctx.cfg, ctx.ui
-    wl = ui.value(cfg, "run", "wavelength_um", check=lambda v: "" if 0.2 < float(v) < 20
-                  else "wavelength must be in um, e.g. 1.55")
+    handle_ok = lambda v: "" if str(v).lower() == "none" else _material_ok(v)  # noqa: E731
+    ui.form(cfg, "Materials", [
+        dict(section="run", key="wavelength_um", check=_wavelength_ok),
+        dict(section="run", key="band_um", default=lambda c: round(0.13 * c.run.wavelength_um, 3)),
+        dict(section="materials", key="core", check=_material_ok),
+        dict(section="materials", key="box", check=_material_ok),
+        dict(section="materials", key="cladding", check=_material_ok),
+        dict(section="materials", key="handle", check=handle_ok)])
+    wl = ui.value(cfg, "run", "wavelength_um", check=_wavelength_ok)
     ui.value(cfg, "run", "band_um", default=round(0.13 * wl, 3))
     for key in ("core", "box", "cladding"):
         ui.value(cfg, "materials", key, check=_material_ok)
@@ -295,10 +385,9 @@ def stage_materials(ctx: Context) -> dict:
 
 
 def _plot_materials(ctx, wls, curves) -> Path:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(7, 4.2), dpi=130)
+    from tarang.design import visuals
+    plt = visuals._plt()
+    fig, ax = plt.subplots(figsize=(7, 4.2))
     for role, (key, n, _) in curves.items():
         ax.plot(wls, n, lw=2, label=f"{role}: {Path(str(key)).stem}")
     ax.axvline(ctx.cfg.run.wavelength_um, color="0.5", ls=":")
@@ -306,16 +395,25 @@ def _plot_materials(ctx, wls, curves) -> Path:
     ax.set_ylabel("Refractive index n (fitted)")
     ax.grid(alpha=0.3)
     ax.legend()
-    path = ctx.path("figures", "1_materials.png")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-    return path
+    from tarang.design import visuals
+    return visuals._save(fig, ctx.path("figures", "1_materials.png"))
 
 
 def stage_cross_section(ctx: Context) -> dict:
     cfg, ui = ctx.cfg, ctx.ui
     wl = cfg.run.wavelength_um
+    clad_not_air = str(cfg.materials.cladding).lower() != "air"
+    ui.form(cfg, "Cross-section map", [
+        dict(section="stack", key="core_height_um"),
+        dict(section="stack", key="box_height_um"),
+        dict(section="stack", key="cladding_height_um", show=clad_not_air),
+        dict(section="cross_section", key="tolerance_width_um"),
+        dict(section="cross_section", key="tolerance_height_um"),
+        dict(section="cross_section", key="heights_um", default=_heights_default, cast=parse_list),
+        dict(section="cross_section", key="widths_um", default=_widths_default, cast=parse_list),
+        dict(section="cross_section", key="map_steps",
+             check=lambda v: "" if v >= 30 else "use at least 30 (50 for maps)"),
+        dict(section="run", key="workers")])
     H_fixed = ui.value(cfg, "stack", "core_height_um")
     ui.value(cfg, "stack", "box_height_um")
     if str(cfg.materials.cladding).lower() != "air":
@@ -364,6 +462,10 @@ def stage_cross_section(ctx: Context) -> dict:
            "TE_TM_split = |n_eff(TE00) - n_eff(TM00)|: a larger split keeps the TE and TM "
            "mode families further from crossing (fewer avoided crossings in the comb).")
     best = ranked[0]
+    ui.form(cfg, "Chosen cross-section (default: the most robust candidate)", [
+        dict(section="cross_section", key="height_um", default=best["H_um"]),
+        dict(section="cross_section", key="width_um", default=best["W_um"]),
+        dict(section="cross_section", key="decision_steps")])
     H = ui.value(cfg, "cross_section", "height_um", default=best["H_um"])
     W = ui.value(cfg, "cross_section", "width_um", default=best["W_um"])
 
@@ -409,6 +511,7 @@ def stage_cross_section(ctx: Context) -> dict:
     from tarang.design import visuals
     fig_xs = visuals.safe(ctx, "cross-section", visuals.cross_section, ctx, H, W,
                           ctx.path("figures", "2_cross_section.png"))
+    fig_mode_profiles(ctx, H, W)
     return dict(height_um=H, width_um=W, steps=dsteps, D=centre["D_TE0"], n_group=centre["ng_TE0"],
                 figure=str(fig_xs) if fig_xs else None, convergence=[
                     dict(steps=r["steps"], D=r["D_TE0"]) for r in conv],
@@ -420,6 +523,103 @@ def stage_cross_section(ctx: Context) -> dict:
                 tolerance_box_target=robust, mesh_change=change,
                 map_file=str(grid_file), map_figure=str(plots / "design_map.png"),
                 report=str(ctx.out / "results" / "finalist_report" / "report.md"))
+
+
+# ======================================================== figures shared with the checks stage
+def fig_mode_profiles(ctx: Context, H: float, W: float) -> Optional[Path]:
+    """TE00 / TM00 field components in the cross-section (free, local mode solver)."""
+    from tarang.design import localmodes, visuals
+    wl = ctx.cfg.run.wavelength_um
+
+    def draw():
+        ms = localmodes.cross_section_modes(ctx, H, W, num_modes=4, group_index=True)
+        te, tm = localmodes.te00(ms), localmodes.tm00(ms)
+        rows = [("TE00", te)] + ([("TM00", tm)] if tm else [])
+        return visuals.mode_profiles(rows, H, W, ctx.path("figures", "2b_mode_profiles.png"),
+                                     f"Modes of the {H * 1e3:.0f} × {W * 1e3:.0f} nm core at "
+                                     f"{wl} µm (cross-section, y across the width)")
+    return visuals.safe(ctx, "mode profiles", draw)
+
+
+def fig_bent_mode(ctx: Context, H: float, W: float, R: float) -> dict:
+    """Straight and bent TE00 side by side; returns the outward shift of the bent mode."""
+    from tarang.design import localmodes, visuals
+    info: dict = {}
+
+    def draw():
+        st = localmodes.te00(localmodes.cross_section_modes(ctx, H, W, num_modes=2))
+        bt = localmodes.te00(localmodes.cross_section_modes(ctx, H, W, bend_radius=R, num_modes=4))
+        info.update(shift_nm=1e3 * (bt["yc"] - st["yc"]), n_eff_bent=bt["neff"])
+        return visuals.mode_profiles([("TE00 straight", st), (f"TE00 bent, R = {R:g} µm", bt)],
+                                     H, W, ctx.path("figures", "3b_bent_mode.png"),
+                                     f"Bent mode: shifted {info['shift_nm']:+.1f} nm towards the "
+                                     "outside of the ring", components=False)
+    visuals.safe(ctx, "bent mode", draw)
+    return info
+
+
+def gap_extras(ctx: Context, gap: dict, devices: Optional[dict] = None) -> dict:
+    """Coupled-mode check of the gap (local supermodes) and the top-view field map of the
+    gap run nearest the critical gap (from its saved data). Returns the check's numbers."""
+    from tarang.design import localmodes, visuals
+    cfg, ui = ctx.cfg, ctx.ui
+    xs, ring = ctx.results("cross_section"), ctx.results("ring")
+    H, W, R, wl = xs["height_um"], xs["width_um"], ring["radius_um"], cfg.run.wavelength_um
+    g_crit, target, gaps = gap["critical_gap_um"], gap["target_cross_power"], gap["gaps_um"]
+    fit = gap.get("fit") or {}
+    cmt: dict = {}
+
+    def supermode_check():
+        near = sorted(sorted(gaps, key=lambda x: abs(x - g_crit))[:3])
+        res = localmodes.coupling_from_supermodes(ctx, H, W, R, near)
+        cmt.update(theta0=res["theta0"], gamma_per_um=res["gamma_per_um"], per_gap=res["rows"],
+                   critical_gap_um=math.log(res["theta0"] / math.asin(math.sqrt(target)))
+                   / res["gamma_per_um"])
+        sm = localmodes.coupler_supermodes(ctx, H, W, g_crit)
+        th = res["theta0"] * math.exp(-res["gamma_per_um"] * g_crit)
+        th_fdtd = fit["theta_0"] * math.exp(-fit["gamma"] * g_crit) if fit else None
+        return visuals.supermodes(sm, H, W, ctx.path("figures", "4c_gap_supermodes.png"),
+                                  th, th_fdtd)
+    visuals.safe(ctx, "gap supermodes", supermode_check)
+    if cmt:
+        ui.say(f"  Check by coupled-mode theory (local supermodes, free): critical gap "
+               f"{cmt['critical_gap_um'] * 1e3:.0f} nm, decay γ = {cmt['gamma_per_um']:.2f} /µm "
+               f"(3D FDTD: {g_crit * 1e3:.0f} nm, γ = {fit.get('gamma', float('nan')):.2f} /µm).")
+    g_show = min(gaps, key=lambda x: abs(x - g_crit))
+
+    def field_map():
+        from tarang.utilities.sweep_helpers import cache_dir as sweep_cache_dir
+        d = (devices or {}).get(g_show) or _gap_device(ctx, g_show)
+        cache = sweep_cache_dir(Path(gap["folder"]), d)
+        if not d.is_cached(cache):                  # a figure never starts a cloud run
+            ui.say(f"  (gap field map: no saved results for gap {g_show} µm)")
+            return None
+        data = d._run_sim(cache)
+        return visuals.gap_field_map(data, ctx.path("figures", "4d_gap_field.png"), wl, g_show,
+                                     f"|E|² in the middle of the core, gap {g_show} µm "
+                                     "(log scale: light entering the ring is visible)")
+    visuals.safe(ctx, "gap field map", field_map)
+    return cmt
+
+
+def _gap_device(ctx: Context, gap_um: float):
+    """The partial-ring device of a gap with this run's settings (to reload its results)."""
+    import warnings as _w
+    from tarang.geometries.partial_ring_resonator import get_active_simulation as partial
+    cfg = ctx.cfg
+    xs, ring = ctx.results("cross_section"), ctx.results("ring")
+    clad_is_air = str(cfg.materials.cladding).lower() == "air"
+    with _w.catch_warnings():
+        _w.simplefilter("ignore")
+        return partial(radius=ring["radius_um"], gap=gap_um, wavelength_um=cfg.run.wavelength_um,
+                       span_angle_rad=math.radians(cfg.gap.span_angle_deg),
+                       wg_width=xs["width_um"], wg_height=xs["height_um"],
+                       core_medium=ctx.medium(cfg.materials.core),
+                       box_medium=ctx.medium(cfg.materials.box), box_height=cfg.stack.box_height_um,
+                       top_cladding_medium=None if clad_is_air else ctx.medium(cfg.materials.cladding),
+                       top_cladding_height=0.0 if clad_is_air else cfg.stack.cladding_height_um,
+                       fine_steps_per_wvl=cfg.gap.fine_steps, coarse_steps_per_wvl=cfg.gap.coarse_steps,
+                       **gap_builder_options(cfg))
 
 
 def _rank_targets(rows, heights, widths) -> list[dict]:
@@ -453,18 +653,32 @@ def stage_ring(ctx: Context) -> dict:
     cfg, ui = ctx.cfg, ctx.ui
     xs = ctx.results("cross_section")
     H, W, ng, wl = xs["height_um"], xs["width_um"], xs["n_group"], cfg.run.wavelength_um
+    from tarang.design import assumptions
+    if "ring.loss_preset" not in cfg.given or ui.review:
+        ui.say("Loss presets (values from publications; your own measured values can replace "
+               "them below):")
+        ui.table([dict(preset=k, scattering_dB_cm=v["scattering_db_cm"],
+                       absorption_dB_cm=v["absorption_db_cm"], source=v["source"])
+                  for k, v in assumptions.LOSS_PRESETS.items()])
+    ui.say(f"n_g = {ng:.4f}: R = c / (2π n_g FSR) gives the radius for the FSR target.")
+    pre_of = lambda c: assumptions.preset(c.ring.loss_preset)  # noqa: E731
+    ui.form(cfg, "Ring", [
+        dict(section="ring", key="fsr_ghz"),
+        dict(section="ring", key="radius_um", default=lambda c: physics.round_to(
+            physics.radius_for_fsr(c.ring.fsr_ghz, ng), 0.5)),
+        dict(section="ring", key="loss_preset",
+             check=lambda v: "" if str(v).lower() in assumptions.LOSS_PRESETS else
+             "choose one of " + ", ".join(assumptions.LOSS_PRESETS)),
+        dict(section="ring", key="scattering_loss_db_cm",
+             default=lambda c: pre_of(c)["scattering_db_cm"]),
+        dict(section="ring", key="absorption_loss_db_cm",
+             default=lambda c: pre_of(c)["absorption_db_cm"]),
+        dict(section="ring", key="bend_check")])
     fsr = ui.value(cfg, "ring", "fsr_ghz")
     R0 = physics.round_to(physics.radius_for_fsr(fsr, ng), 0.5)
     ui.say(f"n_g = {ng:.4f} -> R = {physics.radius_for_fsr(fsr, ng):.2f} um for {fsr:g} GHz "
            f"(rounded to {R0} um)")
     R = ui.value(cfg, "ring", "radius_um", default=R0)
-    from tarang.design import assumptions
-    if "ring.loss_preset" not in cfg.given:
-        ui.say("Loss presets (values from publications; your own measured values can replace "
-               "them in the next two questions):")
-        ui.table([dict(preset=k, scattering_dB_cm=v["scattering_db_cm"],
-                       absorption_dB_cm=v["absorption_db_cm"], source=v["source"])
-                  for k, v in assumptions.LOSS_PRESETS.items()])
     name = ui.value(cfg, "ring", "loss_preset",
                     check=lambda v: "" if str(v).lower() in assumptions.LOSS_PRESETS else
                     "choose one of " + ", ".join(assumptions.LOSS_PRESETS))
@@ -485,6 +699,7 @@ def stage_ring(ctx: Context) -> dict:
         if rec:
             bend_loss = float(rec.get("loss_TE0_dB_cm", 0.0))
             ui.say(f"Bend loss of TE00 at R = {R} um (local bent-mode solve): {bend_loss:.3g} dB/cm")
+    bent_info = fig_bent_mode(ctx, H, W, R)
     total = scat + absl + bend_loss
     qi = physics.q_intrinsic(total, ng, wl)
     fsr_r = physics.fsr_ghz(R, ng)
@@ -507,7 +722,8 @@ def stage_ring(ctx: Context) -> dict:
     return dict(radius_um=R, fsr_ghz=fsr_r, n_group=ng, loss_db_cm=total, bend_loss_db_cm=bend_loss,
                 scattering_loss_db_cm=scat, absorption_loss_db_cm=absl, q_intrinsic=qi,
                 D2_2pi_MHz=_num(prof.get("D2_2pi_MHz")), D3_2pi_kHz=_num(prof.get("D3_2pi_kHz")),
-                zdw_nm=prof.get("ZDWs_nm"), profile_figure=str(fig))
+                zdw_nm=prof.get("ZDWs_nm"), profile_figure=str(fig),
+                bent_mode_shift_nm=bent_info.get("shift_nm"))
 
 
 def _num(x):
@@ -532,9 +748,20 @@ def stage_gap(ctx: Context) -> dict:
     xs, ring = ctx.results("cross_section"), ctx.results("ring")
     H, W, R = xs["height_um"], xs["width_um"], ring["radius_um"]
     wl = cfg.run.wavelength_um
-    st = _step(0.065 * wl)
-    gdef = _grid(physics.round_to(0.19 * wl, st), physics.round_to(0.52 * wl, st), st)
-    gaps = ui.value(cfg, "gap", "gaps_um", default=gdef, cast=parse_list)
+    ui.form(cfg, "Ring-bus gap", [
+        dict(section="gap", key="gaps_um", default=_gaps_default, cast=parse_list),
+        dict(section="gap", key="span_angle_deg"),
+        dict(section="gap", key="over_coupling"),
+        dict(section="gap", key="reference", check=lambda v: "" if v in
+             ("ring_port", "bus_only", "source") else "answer ring_port, bus_only or source"),
+        dict(section="gap", key="fine_steps"),
+        dict(section="gap", key="coarse_steps"),
+        dict(section="gap", key="band_points",
+             check=lambda v: "" if int(v) >= 1 and int(v) % 2 == 1 else "an odd number >= 1"),
+        dict(section="gap", key="ring_inner_box_recess_um",
+             check=lambda v: "" if 0 <= float(v) < 1 else "0 <= recess < 1 um"),
+        *_budget_items()])
+    gaps = ui.value(cfg, "gap", "gaps_um", default=_gaps_default(cfg), cast=parse_list)
     span = ui.value(cfg, "gap", "span_angle_deg")
     K = ui.value(cfg, "gap", "over_coupling")
     reference = ui.value(cfg, "gap", "reference", check=lambda v: "" if v in
@@ -557,10 +784,11 @@ def stage_gap(ctx: Context) -> dict:
                top_cladding_medium=None if clad_is_air else ctx.medium(cfg.materials.cladding),
                top_cladding_height=0.0 if clad_is_air else cfg.stack.cladding_height_um,
                fine_steps_per_wvl=fine, coarse_steps_per_wvl=coarse)
+    extra = gap_builder_options(cfg)
     folder = ctx.out / "cloud" / "gap_sweep"
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        devices = {g: partial(radius=R, gap=g, **geo) for g in gaps}
+        devices = {g: partial(radius=R, gap=g, **geo, **extra) for g in gaps}
     for msg in sorted({str(w.message) for w in caught}):
         ui.say(f"  Note from the builder: {msg}")
     jobs = {f"gap_{g:g}": (d, sweep_cache_dir(folder, d)) for g, d in devices.items()}
@@ -603,8 +831,8 @@ def stage_gap(ctx: Context) -> dict:
         crit = ring_gap_sweep(gaps, folder, R, ring["q_intrinsic"], volume,
                               n_group=ring["n_group"], reference=reference,
                               **{k: v for k, v in geo.items() if k != "span_angle_rad"},
-                              span_angle_rad=math.radians(span))
-    ctx.add_spent(cost)
+                              span_angle_rad=math.radians(span), builder_kwargs=extra)
+    ctx.add_spent(cost, f"gap sweep, {len(todo)} runs")
     g_crit = crit["critical_gap_um"]
     g_over = physics.gap_for_over_coupling(crit, K) if K and K != 1 else None
 
@@ -634,7 +862,10 @@ def stage_gap(ctx: Context) -> dict:
     fig = visuals.safe(ctx, "gap coupling", visuals.gap_coupling, g_sorted,
                        raw if reference != "source" else None, coupled, crit.get("fit_params"),
                        targets, ctx.path("figures", "4b_gap_coupling.png"),
-                       {"critical": g_crit, f"K = {K:g}": g_over})
+                       {"critical": g_crit, f"over-coupled K = {K:g}": g_over},
+                       crit.get("fit_r_squared_log_theta"))
+    cmt = gap_extras(ctx, dict(critical_gap_um=g_crit, target_cross_power=target, gaps_um=list(gaps),
+                               fit=crit.get("fit_params"), folder=str(folder)), devices)
     rows = [dict(regime="critical (K = 1)", gap_um=g_crit, Q_loaded=physics.loaded_q(ring["q_intrinsic"], 1))]
     if g_over is not None:
         rows.append(dict(regime=f"over-coupled (K = {K:g})", gap_um=g_over,
@@ -657,7 +888,23 @@ def stage_gap(ctx: Context) -> dict:
                 reference_through_power=ref_power, target_cross_power=target,
                 span_angle_deg=span, gaps_um=list(gaps), per_gap=per_gap, table=str(table),
                 figure=str(fig) if fig else None, estimated_cost=cost, folder=str(folder),
-                mesh_steps=[fine, coarse])
+                mesh_steps=[fine, coarse], band_points=int(cfg.gap.band_points),
+                ring_inner_box_recess_um=float(cfg.gap.ring_inner_box_recess_um),
+                coupled_mode_check=cmt or None)
+
+
+def gap_builder_options(cfg) -> dict:
+    """Partial-ring builder options from the gap settings: the BOX pocket inside the ring
+    and the frequencies the ring-port monitors record (odd count, centred exactly on the
+    design frequency, +/-8 %). The values of runs made before Phase 12 (0.1 um, one
+    frequency) give the builder's original simulation, bit for bit."""
+    g = cfg.gap
+    opts = dict(inner_box_recess_um=float(g.ring_inner_box_recess_um))
+    n = int(g.band_points)
+    if n > 1:
+        f0 = C_UM / cfg.run.wavelength_um
+        opts["monitor_freqs"] = [f0 * (1 + 0.08 * x) for x in np.linspace(-1, 1, n)]
+    return opts
 
 
 def stage_grating(ctx: Context) -> dict:
@@ -674,6 +921,30 @@ def stage_grating(ctx: Context) -> dict:
     xs = ctx.results("cross_section")
     H, wl = xs["height_um"], cfg.run.wavelength_um
     g = cfg.grating
+    is_partial = lambda c: c.grating.etch == "partial"  # noqa: E731
+    ui.form(cfg, "Grating coupler", [
+        dict(section="grating", key="etch",
+             check=lambda v: "" if v in ("full", "partial") else "answer full or partial"),
+        dict(section="grating", key="etch_depth_um", show=is_partial, default=round(H / 2, 3),
+             check=lambda v: "" if 0 < v < H else f"0 < depth < {H}"),
+        dict(section="grating", key="fiber_angle_deg"),
+        dict(section="grating", key="fiber_tilt",
+             check=lambda v: "" if v in ("towards", "away") else "answer towards or away"),
+        dict(section="grating", key="mfd_um"),
+        dict(section="grating", key="n_teeth"),
+        dict(section="grating", key="width_um"),
+        dict(section="grating", key="min_feature_um"),
+        dict(section="grating", key="bandwidth_um"),
+        dict(section="grating", key="fill_factors", cast=parse_list,
+             default=lambda c: [0.5, 0.6, 0.7, 0.8, 0.9] if c.grating.etch == "full"
+             else [0.4, 0.5, 0.6, 0.7, 0.8]),
+        dict(section="grating", key="detuning", cast=parse_list),
+        dict(section="grating", key="retune"),
+        dict(section="grating", key="centre_peak", show=lambda c: bool(c.grating.retune)),
+        dict(section="grating", key="source_x_um", cast=parse_list,
+             default=lambda c: [round(c.grating.mfd_um * f, 2) for f in (0.25, 0.375, 0.5, 0.75, 1.0)]),
+        dict(section="grating", key="check_3d"),
+        *_budget_items()])
     etch = ui.value(cfg, "grating", "etch", check=lambda v: "" if v in ("full", "partial")
                     else "answer full or partial")
     depth = H if etch == "full" else ui.value(cfg, "grating", "etch_depth_um", default=round(H / 2, 3),
@@ -693,8 +964,7 @@ def stage_grating(ctx: Context) -> dict:
     retune = ui.value(cfg, "grating", "retune")
     centre = bool(retune and ui.value(cfg, "grating", "centre_peak"))
 
-    from tarang.grating_coupler.grating_coupler import (GratingConfig, GratingCoupler,
-                                                        phase_matched_period, spectrum_summary)
+    from tarang.grating_coupler.grating_coupler import phase_matched_period, spectrum_summary
     from tarang.utilities.cloud_run import run_batch_cached
     from tarang.design import visuals
     m = cfg.materials
@@ -716,21 +986,10 @@ def stage_grating(ctx: Context) -> dict:
     ui.value(cfg, "run", "max_cost_per_run")
     ui.value(cfg, "run", "max_total_cost")
 
-    handle = None if str(m.handle).lower() == "none" else ctx.medium(m.handle)
-    clad = None if str(m.cladding).lower() == "air" else ctx.medium(m.cladding)
     folder = ctx.out / "cloud" / "grating"
 
     def device(period, ff, sx, is_3d=False):
-        gcfg = GratingConfig(wavelength_um=wl, theta_deg=abs(angle), mfd=mfd, source_x=sx,
-                             source_gap=2.0, core_height=H,
-                             top_cladding_height=cfg.stack.cladding_height_um,
-                             box_height=cfg.stack.box_height_um, handle_height=3.0,
-                             etch_depth=depth, period=round(period, 4), ff=round(ff, 4),
-                             n_teeth=teeth, w_grating=width, pol_angle=math.pi / 2, buffer=3.0,
-                             fiber_tilt=tilt, bandwidth_um=band)
-        return GratingCoupler.from_config(gcfg, core_medium=ctx.medium(m.core),
-                                          box_medium=ctx.medium(m.box), handle_medium=handle,
-                                          top_cladding_medium=clad, is_3d=is_3d)
+        return grating_device(ctx, period, ff, sx, H=H, depth=depth, is_3d=is_3d)
 
     def feasible(period, ff) -> bool:
         return min(ff, 1 - ff) * period >= min_feat - 1e-9
@@ -763,7 +1022,7 @@ def stage_grating(ctx: Context) -> dict:
             summ = spectrum_summary(wls, eta, wl)
             out.append(dict(step=step, period_um=pt[0], fill_factor=pt[1], source_x_um=pt[2],
                             dim="3D" if is_3d else "2D", **summ))
-        ctx.add_spent(cost)
+        ctx.add_spent(cost, f"{label} ({len(todo)} runs)")
         results.extend(out)
         ui.table(sorted(out, key=lambda r: -r["efficiency_at_target"])[:8],
                  ["period_um", "fill_factor", "source_x_um", "peak_wavelength_um",
@@ -908,6 +1167,32 @@ def stage_grating(ctx: Context) -> dict:
                 final_sim=str(folder / fdev.get_dir_name() / "simulation.json"))
 
 
+def grating_device(ctx: Context, period: float, ff: float, sx: float, *, H: float,
+                   depth: float, angle: Optional[float] = None, is_3d: bool = False,
+                   mesh: float = 1.0):
+    """The grating-coupler device of this design (2D unless ``is_3d``). ``angle``
+    overrides the fibre angle and ``mesh`` scales the mesh steps (tolerance and mesh
+    checks); the defaults give exactly the grating stage's simulations."""
+    from tarang.grating_coupler.grating_coupler import GratingConfig, GratingCoupler
+    cfg = ctx.cfg
+    m, g = cfg.materials, cfg.grating
+    handle = None if str(m.handle).lower() == "none" else ctx.medium(m.handle)
+    clad = None if str(m.cladding).lower() == "air" else ctx.medium(m.cladding)
+    gcfg = GratingConfig(wavelength_um=cfg.run.wavelength_um,
+                         theta_deg=abs(g.fiber_angle_deg if angle is None else angle),
+                         mfd=g.mfd_um, source_x=sx, source_gap=2.0, core_height=H,
+                         top_cladding_height=cfg.stack.cladding_height_um,
+                         box_height=cfg.stack.box_height_um, handle_height=3.0,
+                         etch_depth=depth, period=round(period, 4), ff=round(ff, 4),
+                         n_teeth=g.n_teeth, w_grating=g.width_um, pol_angle=math.pi / 2,
+                         buffer=3.0, fiber_tilt=g.fiber_tilt, bandwidth_um=g.bandwidth_um)
+    kw = {} if mesh == 1.0 else dict(fine_steps_per_wvl=int(round(15 * mesh)),
+                                     coarse_steps_per_wvl=int(round(10 * mesh)))
+    return GratingCoupler.from_config(gcfg, core_medium=ctx.medium(m.core),
+                                      box_medium=ctx.medium(m.box), handle_medium=handle,
+                                      top_cladding_medium=clad, is_3d=is_3d, **kw)
+
+
 def _centre_peak(design: dict, results: list[dict], run_set, wl: float, ui,
                  tol_um: float = 0.001, max_runs: int = 3) -> dict:
     """Step D: move the period, at the design's fill factor and fibre position, until the
@@ -998,6 +1283,8 @@ STAGES: list[tuple[str, str, str, Callable[[Context], dict]]] = [
     ("ring", "Ring radius, losses, Q, integrated dispersion", "local", stage_ring),
     ("gap", "Ring-bus gap (critical and over-coupled)", "cloud", stage_gap),
     ("grating", "Grating coupler", "cloud", stage_grating),
+    ("checks", "Checks: tolerances, mode families, losses, band, grating budget", "cloud",
+     lambda ctx: __import__("tarang.design.checks", fromlist=["stage_checks"]).stage_checks(ctx)),
     ("layout", "Layout (GDS) and parameter export", "local", stage_layout),
     ("report", "Report and tables", "local", stage_report),
 ]
@@ -1010,6 +1297,7 @@ DEPENDS = {
     "ring": ("ring",),
     "gap": ("gap",),
     "grating": ("grating",),
+    "checks": ("checks",),
     "layout": ("layout",),
     "report": (),
 }
@@ -1029,5 +1317,12 @@ def settings_key(cfg: DesignConfig, stage: str) -> str:
             val = getattr(cfg, sec)
             parts[dep] = getattr(val, key) if key else {
                 k: v for k, v in val.__dict__.items() if k not in KEY_IGNORE.get(sec, ())}
+    from tarang.design.config import LEGACY
+    for sec, values in LEGACY.items():               # settings added later: a value that
+        d = parts.get(sec)                            # reproduces older runs is left out
+        if isinstance(d, dict):
+            for key, old in values.items():
+                if key in d and d[key] == old:
+                    d.pop(key)
     blob = json.dumps(parts, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]

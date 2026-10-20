@@ -1,8 +1,10 @@
 """Questions and answers for the design tool.
 
-Interactive: every setting not given in the config file is asked, with its default shown;
-pressing Enter accepts it. Non-interactive (``--yes``, or no terminal): defaults are used
-and cloud stages run only if their estimate fits the budget.
+Each stage starts with ONE table of its settings (``Prompter.form``): Enter accepts them,
+a number changes that setting, ``?`` explains them all, ``q`` (or Ctrl+C) stops; settings
+already saved in design.toml are shown without a question unless ``--review`` is given.
+Non-interactive (``--yes``, or no terminal): defaults are used and cloud stages run only if
+their estimate fits the budget.
 """
 from __future__ import annotations
 
@@ -20,11 +22,12 @@ class Stop(Exception):
 
 class Prompter:
     def __init__(self, interactive: bool, out=None, inp: Callable[[str], str] = input,
-                 show_figures: bool = False):
+                 show_figures: bool = False, review: bool = False):
         self.interactive = interactive
         self.out = out or sys.stdout
         self.inp = inp
         self.show_figures = show_figures and interactive
+        self.review = review and interactive    # ask saved settings again
 
     # ---- output -------------------------------------------------------------------- #
     def say(self, text: str = "") -> None:
@@ -111,6 +114,79 @@ class Prompter:
             cfg.given.add(f"{section}.{key}")
             return value
 
+    def form(self, cfg, title: str, items: list) -> None:
+        """One table for a stage's settings.
+
+        ``items``: dicts with ``section``, ``key`` and optionally ``default`` (a value, or a
+        function of cfg evaluated each time the table is shown, so it follows earlier
+        settings), ``cast``, ``check`` (returns an error message or ""), ``show`` (bool or
+        function of cfg). Accepted values are stored in cfg and marked as given, so the
+        stage's later ``value()`` calls return them without asking.
+        """
+        def active():
+            return [it for it in items
+                    if (it["show"](cfg) if callable(it.get("show")) else it.get("show", True))]
+
+        def current(it):
+            sec = getattr(cfg, it["section"])
+            v = getattr(sec, it["key"])
+            if v in (None, []) and it.get("default") is not None:
+                d = it["default"]
+                v = d(cfg) if callable(d) else d
+            return v
+
+        def meta(it):
+            f = {x.name: x for x in fields(getattr(cfg, it["section"]))}[it["key"]]
+            return f.metadata
+
+        def accept_all():
+            for it in active():
+                setattr(getattr(cfg, it["section"]), it["key"], current(it))
+                cfg.given.add(f"{it['section']}.{it['key']}")
+
+        saved = {f"{it['section']}.{it['key']}" for it in items} & set(cfg.given)
+        pending = [it for it in active() if f"{it['section']}.{it['key']}" not in cfg.given]
+        if not self.interactive or (not pending and not self.review):
+            accept_all()
+            self._form_table(cfg, title, active(), current, meta, saved, compact=True)
+            return
+        while True:
+            rows = active()
+            self._form_table(cfg, title, rows, current, meta, saved)
+            ans = self._ask("Enter = use these, a number = change it, ? = explain, q = stop", "")
+            if ans == "":
+                accept_all()
+                return
+            if ans == "?":
+                for i, it in enumerate(rows, 1):
+                    m = meta(it)
+                    unit = f" [{m['unit']}]" if m.get("unit") else ""
+                    self.say(f"  {i}. {it['section']}.{it['key']}{unit}: {m['help']}")
+                continue
+            try:
+                it = rows[int(ans) - 1]
+            except (ValueError, IndexError):
+                self.say("  Type the number of a setting, ? or press Enter.")
+                continue
+            key = f"{it['section']}.{it['key']}"
+            cfg.given.discard(key)
+            sec = getattr(cfg, it["section"])
+            if getattr(sec, it["key"]) in (None, []):
+                setattr(sec, it["key"], current(it))
+            self.value(cfg, it["section"], it["key"], cast=it.get("cast"), check=it.get("check"))
+            saved.discard(key)
+
+    def _form_table(self, cfg, title, rows, current, meta, saved, compact=False) -> None:
+        self.say(f"{title}:" if not compact else f"{title} (settings; change with --review "
+                 "or in design.toml):")
+        for i, it in enumerate(rows, 1):
+            m = meta(it)
+            label = _label(m["help"])
+            unit = f" {m['unit']}" if m.get("unit") and m["unit"] != "FlexCredits" else (
+                " FC" if m.get("unit") == "FlexCredits" else "")
+            where = "saved" if f"{it['section']}.{it['key']}" in saved else ""
+            self.say(f"  {i:>2}  {label:<52.52} {_show(current(it)) + unit:<28} {where}")
+
     def proceed(self, what: str, cost: Optional[float] = None, budget_left: Optional[float] = None,
                 per_run_limit: Optional[float] = None) -> bool:
         """Ask whether to run the next stage. Returns False to skip it."""
@@ -139,6 +215,12 @@ class Prompter:
             if ans in {"s", "skip", "n", "no"}:
                 return False
             self.say("  Please answer y, s or q.")
+
+
+def _label(help_text: str) -> str:
+    """Short name of a setting: its description up to the first bracket or colon."""
+    t = help_text.split(" (")[0].split(": ")[0].split("; ")[0].strip()
+    return t if len(t) <= 52 else t[:49] + "..."
 
 
 def _show(v: Any) -> str:

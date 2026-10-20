@@ -23,13 +23,16 @@ def _f(default=None, help: str = "", unit: str = ""):
 @dataclass
 class Run:
     name: str = _f("design", "Name of this design (used for file names)")
-    wavelength_um: float = _f(1.55, "Centre (pump) wavelength", "um")
-    band_um: Optional[float] = _f(None, "Half-width of the band the materials are fitted over "
-                                        "(default: 0.13 x wavelength)", "um")
-    max_cost_per_run: float = _f(1.0, "Largest FlexCredit cost allowed for any single cloud run",
+    wavelength_um: float = _f(1.55, "Design wavelength (the pump)", "um")
+    band_um: Optional[float] = _f(None, "Material-fit band half-width (default: 0.13 x "
+                                        "wavelength)", "um")
+    max_cost_per_run: float = _f(1.0, "Largest cost of any single cloud run",
                                  "FlexCredits")
     max_total_cost: float = _f(10.0, "Budget for all cloud stages together", "FlexCredits")
     workers: int = _f(2, "Parallel processes for local mode solving (about 1 GB RAM each)")
+    figure_formats: list = _f(["png", "pdf"], "Figure files to write: png (raster), pdf and/or svg "
+                                              "(vector, for papers and slides)")
+    figure_dpi: int = _f(300, "Resolution of png figures", "dpi")
 
 
 @dataclass
@@ -38,8 +41,8 @@ class Materials:
                             "CSV (columns wl [um], n, k)")
     box: str = _f("sio2", "Buried oxide under the core (key or CSV path)")
     cladding: str = _f("air", "Top cladding (key or CSV path; air for an air-clad device)")
-    handle: str = _f("si_franta", "Silicon wafer under the box, used for the grating coupler "
-                                  "('none' to leave it out)")
+    handle: str = _f("si_franta", "Silicon wafer under the BOX (grating coupler only; 'none' "
+                                  "leaves it out)")
 
 
 @dataclass
@@ -76,15 +79,15 @@ class Ring:
                                                       "(default: from loss_preset)", "dB/cm")
     absorption_loss_db_cm: Optional[float] = _f(None, "Material absorption loss (default: from "
                                                       "loss_preset)", "dB/cm")
-    bend_check: bool = _f(True, "Solve the bent waveguide locally to include bend loss (free)")
+    bend_check: bool = _f(True, "Bend loss from a local bent-mode solve (free)")
 
 
 @dataclass
 class Gap:
     gaps_um: list = _f([], "Ring-bus gaps to simulate (default: 0.19-0.52 x wavelength)", "um")
     span_angle_deg: float = _f(45.0, "Span of the partial ring simulated next to the bus", "deg")
-    over_coupling: float = _f(1.5, "Also report the gap for this over-coupling ratio "
-                                   "K = Q_int / Q_coupling (1 = critical)")
+    over_coupling: float = _f(1.5, "Over-coupling ratio K = Q_int/Q_c for the second gap "
+                                   "(1 = critical only)")
     reference: str = _f("ring_port", "How the coupled power is measured: 'ring_port' (power "
                                      "entering the ring arc; no extra run), 'bus_only' (through "
                                      "power relative to a run of the bus alone; one extra run) "
@@ -92,6 +95,12 @@ class Gap:
                                      "by numerical losses on the bus)")
     fine_steps: int = _f(15, "FDTD mesh steps per wavelength in the waveguide")
     coarse_steps: int = _f(10, "FDTD mesh steps per wavelength elsewhere")
+    band_points: int = _f(11, "Wavelengths recorded at the ring ports (across +/-8 % of the "
+                              "design frequency: coupling against wavelength; 1 = the design "
+                              "wavelength only)")
+    ring_inner_box_recess_um: float = _f(0.0, "BOX pocket inside the ring (air cut into the BOX "
+                                              "by the partial-ring builder; 0 = flat BOX, 0.1 = "
+                                              "runs made before Phase 12)", "um")
 
 
 @dataclass
@@ -108,22 +117,37 @@ class Grating:
     width_um: float = _f(12.0, "Grating width (transverse)", "um")
     fill_factors: list = _f([], "Fill factors (tooth / period) to try (default: 0.5-0.9 for a "
                                 "full etch, 0.4-0.8 for a partial etch)")
-    detuning: list = _f([0.95, 1.0, 1.05], "Periods to try for each fill factor, as multiples of "
-                                           "its phase-matched period")
+    detuning: list = _f([0.95, 1.0, 1.05], "Period multiples tried per fill factor (of its "
+                                           "phase-matched period)")
     periods_um: list = _f([], "Fixed periods to try for every fill factor instead (default: "
                               "use detuning)", "um")
     source_x_um: list = _f([], "Fibre positions on the grating surface to try (default: five "
                                "positions across the grating)", "um")
     min_feature_um: float = _f(0.1, "Smallest tooth or groove your lithography can make", "um")
-    bandwidth_um: float = _f(0.1, "Half-width of the simulated spectrum around the wavelength",
-                             "um")
-    retune: bool = _f(True, "Shift the period so the efficiency peak lands on the design "
-                            "wavelength, then refine fill factor and fibre position")
-    centre_peak: bool = _f(True, "Set the period so the efficiency peak sits at the design "
-                                 "wavelength (the middle of the band); False keeps the design "
-                                 "with the highest efficiency at the wavelength")
+    bandwidth_um: float = _f(0.1, "Spectrum half-width around the wavelength", "um")
+    retune: bool = _f(True, "Retune the period onto the wavelength (then refine fill factor "
+                            "and fibre position)")
+    centre_peak: bool = _f(True, "Centre the efficiency peak on the wavelength (False: keep the "
+                                 "design with the highest efficiency at the wavelength)")
     check_3d: bool = _f(False, "Also simulate the best design in 3D (several times the 2D cost)")
     taper_length_um: float = _f(300.0, "Linear taper from the grating width to the waveguide", "um")
+
+
+@dataclass
+class Checks:
+    band: bool = _f(True, "Coupling against wavelength (critical and over-coupled gaps; 2 "
+                          "cloud runs, none if the gap runs recorded the band)")
+    grating_extras: bool = _f(True, "Grating extras (back-reflection into the waveguide, fibre angle "
+                                    "+/- tolerance, film thickness and tooth width +/- tolerance, "
+                                    "and where the light goes; about 8 small 2D runs)")
+    angle_tolerance_deg: float = _f(1.0, "Fibre angle tolerance of your holders (+/-)", "deg")
+    litho_bias_um: float = _f(0.02, "Lithography width error of teeth and gaps (+/-)", "um")
+    mesh_grating: bool = _f(True, "Grating mesh check (final grating again at 1.5x finer mesh; "
+                                  "1 small 2D run)")
+    mesh_gap: bool = _f(False, "Gap mesh check (critical gap again at 1.5x finer mesh; 1 3D "
+                               "run, about 5x the cost of a gap run)")
+    mode_families: bool = _f(True, "Ring mode families (other guided modes of the bent waveguide "
+                                   "and how often they cross TE00; local, free)")
 
 
 @dataclass
@@ -135,8 +159,8 @@ class Assumptions:
 @dataclass
 class Layout:
     bus_length_um: float = _f(400.0, "Straight bus length between the tapers", "um")
-    tone: str = _f("structure", "'structure': polygons are the core; 'trench': polygons are the "
-                                "etched trenches around it (positive resist)")
+    tone: str = _f("structure", "Polygon tone ('structure': polygons are the core; 'trench': "
+                                "they are the etched trenches around it, positive resist)")
     trench_width_um: float = _f(3.0, "Trench width for tone = 'trench'", "um")
     waveguide_layer: list = _f([1, 0], "GDS [layer, datatype] of bus waveguides")
     ring_layer: list = _f([1, 0], "GDS [layer, datatype] of the ring")
@@ -144,8 +168,14 @@ class Layout:
     grating_layer: list = _f([1, 0], "GDS [layer, datatype] of the grating teeth")
 
 
+# Settings added after a run was made, with the value that reproduces that run exactly.
+# If a run folder already has results for the stage and its design.toml lacks the setting,
+# the legacy value is used (so saved simulations stay valid), and the stage's settings key
+# leaves it out (so the stage is not repeated).
+LEGACY = {"gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1}}
+
 SECTIONS = {"run": Run, "materials": Materials, "stack": Stack, "cross_section": CrossSection,
-            "ring": Ring, "gap": Gap, "grating": Grating, "layout": Layout,
+            "ring": Ring, "gap": Gap, "grating": Grating, "checks": Checks, "layout": Layout,
             "assumptions": Assumptions}
 
 
@@ -158,6 +188,7 @@ class DesignConfig:
     ring: Ring = field(default_factory=Ring)
     gap: Gap = field(default_factory=Gap)
     grating: Grating = field(default_factory=Grating)
+    checks: Checks = field(default_factory=Checks)
     layout: Layout = field(default_factory=Layout)
     assumptions: Assumptions = field(default_factory=Assumptions)
     given: set = field(default_factory=set, repr=False, compare=False)   # "section.key" read from a file

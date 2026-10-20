@@ -198,8 +198,8 @@ each starts with a table of the functions it shows):
 material data cover:
 
 ```
-materials -> cross-section (H x W) -> ring (radius, Q, D_int) -> ring-bus gap -> grating coupler -> layout -> report
-   local           local                    local                  cloud            cloud           local     local
+materials -> cross-section (H x W) -> ring (radius, Q, D_int) -> ring-bus gap -> grating coupler -> checks -> layout -> report
+   local           local                    local                  cloud            cloud        free + cloud  local    local
 ```
 
 Each stage asks only what it needs (the default is shown; Enter accepts it), then prints
@@ -207,12 +207,50 @@ its results and saves its figures and tables. Cloud stages first show the FlexCr
 estimate and wait for your confirmation. Your answers are saved in `design.toml`, so the
 same design can be repeated, or continued after a stop, without questions:
 
-```bash
-python -m tarang.design                                     # asks everything
-python -m tarang.design --config design_runs/my_ring/design.toml --yes   # repeat, no questions
-python -m tarang.design --config design_runs/my_ring/design.toml --only grating --redo grating
-python -m tarang.design --list                              # the stages
-```
+Each stage shows **one table** of its settings: press Enter to use them, type a row number
+to change that value, `?` to explain every row, `q` to stop. Values already saved in
+`design.toml` are shown in a compact list and not asked again (`--review` asks anyway).
+
+### Every command
+
+Below, `D` stands for your design's settings file, e.g. `design_runs/my_ring/design.toml`
+(on Windows `design_runs\my_ring\design.toml`).
+
+| To | Run |
+|---|---|
+| start a new design (asks everything) | `python -m tarang.design` |
+| continue a stopped design | `python -m tarang.design --config D` |
+| repeat with no questions | `python -m tarang.design --config D --yes` |
+| look at every setting again | `python -m tarang.design --config D --review` |
+| run some stages only | `python -m tarang.design --config D --only gap,grating` |
+| run a stage again (new results beside the old) | `python -m tarang.design --config D --only grating --redo grating` |
+| run the extra checks (tolerances, band, mode families, loss budget) | `python -m tarang.design --config D --only checks` |
+| open each figure as it is made | add `--show` |
+| list the stages | `python -m tarang.design --list` |
+| credits: limit, spent, what on, account balance | `python -m tarang.design --config D --credits` |
+| set this design's credit limit to 20 FC | `python -m tarang.design --config D --budget 20` |
+| start the spend count at 0 again (e.g. before a new phase) | `python -m tarang.design --config D --reset-spent` |
+| list every cloud run with its Tidy3D web link | `python -m tarang.design --config D --runs` |
+| figure formats and resolution | in `D`: `run.figure_formats = ["png", "pdf"]` (also `"svg"`), `run.figure_dpi = 300` |
+
+**Stopping is always safe.** Type `q` at any question, or press Ctrl+C at any time
+(also during a cloud run). Finished stages and finished cloud runs are kept, and your
+answers are in `design.toml`. A cloud run that was in progress keeps running on Tidy3D;
+the same command later picks it up again (it is not submitted or paid twice). Closing
+the terminal has the same effect as Ctrl+C.
+
+**Credits.** Two numbers decide whether a cloud stage may run: the design's limit
+`run.max_total_cost` (FlexCredits, in `D`) and TARANG's running total of the estimates
+it has spent (`spent` in `state.json`). A stage whose estimate is more than what is left
+is not run. `--budget` changes the limit, `--reset-spent` starts the total at 0 again
+(the history stays in `state.json`; `--credits` shows it by stage and date). Neither
+changes your Tidy3D account. `run.max_cost_per_run` caps any single simulation.
+
+**Web links.** Every cloud run is recorded in a `task.json` next to its results, with
+its Tidy3D task id and a link that opens the simulation (geometry, sources, monitors,
+results) in the Tidy3D web interface; the links are printed as runs start and listed in
+`tables/cloud_runs.csv` and the report. `--runs` also finds the links of runs made
+before these records existed.
 
 | Stage | Asks for | Produces |
 |---|---|---|
@@ -221,8 +259,9 @@ python -m tarang.design --list                              # the stages
 | Ring | FSR target, losses (a published preset, or your own values) | radius, *Q*<sub>int</sub>, bend loss, *D*(λ), *D*<sub>int</sub>, threshold estimate |
 | Gap | gaps, over-coupling ratio | coupled power per gap (read where light enters the ring), critical and over-coupled gap, loaded *Q* |
 | Grating coupler | etch, fibre angle, orientation and MFD, smallest feature | spectra of a period × fill-factor map, the period tuned onto your wavelength, fill-factor / period / fibre-position sensitivity, 1 dB and 3 dB bandwidths; optional 3D check |
-| Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv`, layout figure |
-| Report | | `report.md` with every figure, `benchmark_pack/` (and its zip), `design_summary.json` |
+| Checks | which checks (each cloud check is priced first) | gap tolerance (K, loaded Q, dip depth), coupled-mode-theory check of the gap, FSR tolerance, ring mode families and crossings, fibre-to-fibre loss budget; optional: coupling across the band, grating angle / film / tooth-width tolerances, back-reflection and directionality, mesh checks |
+| Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv`, layout figure; `lle/` inputs for a comb (Lugiato-Lefever) solver, incl. pyLLE's dispersion-file format |
+| Report | | `report.md` with every figure, `benchmark_pack/` (and its zip), `design_summary.json`, `tables/cloud_runs.csv` |
 
 While it runs, the tool shows what it is about to simulate (a picture of each geometry,
 before any cost question), a line for every cloud run, and the figures of each stage

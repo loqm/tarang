@@ -162,6 +162,8 @@ def write(ctx) -> dict:
               "neighbours are targets, then by the TE00/TM00 index split.", ""]
         L += _fig(ctx, xs.get("map_figure"), "design map")
         L += _fig(ctx, xs.get("figure"), "cross-section and TE00 mode")
+        L += _fig(ctx, ctx.out / "figures" / "2b_mode_profiles.png",
+                  "TE00 and TM00 mode profiles (|E| and its components)")
         mesh_change = ("-" if xs.get("mesh_change") is None else f"{xs['mesh_change'] * 100:.1f} %")
         L += [f"Chosen: **{xs['height_um'] * 1e3:.0f} nm × {xs['width_um'] * 1e3:.0f} nm** "
               f"({xs['steps']} mesh steps per wavelength).", "",
@@ -200,6 +202,10 @@ def write(ctx) -> dict:
         if pth_o:
             L.append(f"| threshold, over-coupled K = {K:g} | {pth_o:.0f} mW |")
         L += [""] + _fig(ctx, ring.get("profile_figure"), "dispersion profile")
+        L += _fig(ctx, ctx.out / "figures" / "3b_bent_mode.png", "straight and bent TE00")
+        if ring.get("bent_mode_shift_nm") is not None:
+            L += [f"In the bend the TE00 mode moves {ring['bent_mode_shift_nm']:+.1f} nm towards "
+                  "the outside of the ring (local bent-mode solve).", ""]
 
     # ---- 4 gap
     if gap_ok:
@@ -214,7 +220,8 @@ def write(ctx) -> dict:
               "angle θ = asin(√coupled) is fitted with θ = θ0·exp(−γ g); the critical gap gives "
               "sin²θ = 1 − a², with a² the round-trip power survival from Q_i; the over-coupled "
               "gap gives K times that.", ""]
-        L += _fig(ctx, gap.get("figure"), "gap coupling")
+        L += _fig(ctx, ctx.out / "figures" / "4a_gap_geometry.png", "gap simulation geometry")
+        L += _fig(ctx, gap.get("figure"), "gap coupling (linear, log and fit)")
         L += ["| regime | gap | loaded Q |", "|---|---|---|",
               f"| critical | {gap['critical_gap_um'] * 1e3:.0f} nm | {gap['q_loaded_critical']:.3g} |"]
         if gap.get("over_coupled_gap_um"):
@@ -223,7 +230,7 @@ def write(ctx) -> dict:
         fit = gap.get("fit") or {}
         L += ["", f"Fit: θ0 = {fit.get('theta_0', float('nan')):.4f}, γ = "
               f"{fit.get('gamma', float('nan')):.3f} /µm over "
-              f"{gap.get('fit_gap_range_um')} µm (R² of ln θ = {gap.get('fit_r2')}). "
+              f"{gap.get('fit_gap_range_um')} µm (R² of ln θ = {_r(gap.get('fit_r2'), 5)}). "
               f"Per-gap values: `{_rel(ctx, gap.get('table', ''))}`."]
         if gap.get("reference") == "source" or not gap.get("reference"):
             L += ["", "**Caution:** this gap used the source-referenced through power, which "
@@ -231,6 +238,24 @@ def write(ctx) -> dict:
                   "critical gap wide. Rerun this stage with `gap.reference = \"ring_port\"`."]
         if gap.get("extrapolated"):
             L += ["", "The critical gap lies outside the fitted gaps (extrapolated)."]
+        recess = gap.get("ring_inner_box_recess_um", 0.1)
+        L += ["", f"Simulation details: {gap.get('band_points', 1)} wavelength(s) recorded at the "
+              f"ring ports; inside the ring the air region reaches {recess:g} µm into the BOX"
+              + (" (a recess the real full etch does not have; it touches only the ring's inner "
+                 "side, not the gap)." if recess else " (no recess: the BOX top is flat).")]
+        cmt = gap.get("coupled_mode_check") or st.get("checks", {}).get("coupled_mode_check") or {}
+        if cmt.get("critical_gap_um"):
+            L += ["", "**Independent check (coupled-mode theory, free).** The even and odd TE "
+                  "supermodes of bus and ring side by side give the coupling per length "
+                  "κ = π Δn / λ; with the gap growing as x²/2R along the ring, the coupling "
+                  "angle per pass is θ = κ(g) √(2πR/γ).", "",
+                  "| | critical gap | γ (/µm) |", "|---|---|---|",
+                  f"| 3D FDTD fit | {gap['critical_gap_um'] * 1e3:.0f} nm | "
+                  f"{fit.get('gamma', float('nan')):.2f} |",
+                  f"| coupled-mode theory | {cmt['critical_gap_um'] * 1e3:.0f} nm | "
+                  f"{cmt['gamma_per_um']:.2f} |", ""]
+            L += _fig(ctx, ctx.out / "figures" / "4c_gap_supermodes.png", "coupler supermodes")
+        L += _fig(ctx, ctx.out / "figures" / "4d_gap_field.png", "gap field map")
         L.append("")
     elif gap:
         L += ["## 4. Ring–bus gap", "", "Skipped (not confirmed, over budget or no credits).", ""]
@@ -245,12 +270,17 @@ def write(ctx) -> dict:
               f"±{gc.get('bandwidth_um', 0.01) * 1e3:.0f} nm band. Step A maps period × fill "
               "factor around the phase-matched period of each fill factor; step B moves the "
               "period so the peak lands on the design wavelength and varies fill factor and "
-              "period around it; step C moves the fibre along the grating.", ""]
+              "period around it (B2: the period again around the best fill factor, when that "
+              "differs from the centre one); step C moves the fibre along the grating; step D "
+              "(when on) corrects the period once more so the peak of the final spectrum, "
+              "refined by a parabola through its top three points, sits on the design "
+              "wavelength.", ""]
         for key, alt in (("5a_grating_geometry.png", "grating geometry"),
                          ("5b_grating_map.png", "grating map"),
                          ("5c_grating_sensitivity.png", "grating sensitivity"),
                          ("5d_grating_spectrum.png", "grating spectrum"),
-                         ("5e_grating_field.png", "grating field")):
+                         ("5e_grating_field.png", "grating field"),
+                         ("5f_grating_final_geometry.png", "final grating geometry")):
             L += _fig(ctx, ctx.out / "figures" / key, alt)
         eff3d = "-" if gc.get("efficiency_3d") is None else f"{gc['efficiency_3d']:.3f}"
         bw1 = gc.get("bandwidth_1db_nm")
@@ -292,14 +322,17 @@ def write(ctx) -> dict:
     # ---- limits
     L += ["## Known limits", "",
           "- Vertical sidewalls everywhere; the n, k data are tabulated bulk values, not your film.",
-          "- Ring: the bent mode is solved for loss and dispersion; avoided crossings between "
-          "mode families are not modelled.",
+          "- Ring: the bent mode is solved for loss and dispersion; how often other mode "
+          "families cross TE00 is estimated (checks), but the strength of an avoided crossing "
+          "is not modelled.",
           "- Gap: a partial ring whose arcs end inside the simulation box; the span is not "
-          "converged against longer arcs. Inside the ring the builder's air region reaches "
-          "0.1 µm into the BOX (a shallow recess the real full etch does not have); it touches "
-          "the ring's inner side only, not the gap.",
+          "converged against longer arcs.",
           "- Grating: 2D, uniform period; no taper; no 3D beam overlap unless the 3D check ran.",
           ""]
+
+    L += _checks_section(ctx, st.get("checks", {}))
+    L += _lle_section(ctx, lay.get("lle"))
+    L += _runs_section(ctx)
 
     checks = _check_values(cfg, mat, xs, ring, gap, gc, pth_c)
     table = ctx.path("tables", "check_values.csv")
@@ -372,3 +405,149 @@ def _check_values(cfg, mat, xs, ring, gap, gc, pth_c=None) -> list[dict]:
         add("grating peak wavelength (2D)", gc.get("peak_wavelength_um"), "um", "same run")
         add("grating 1 dB bandwidth (2D)", gc.get("bandwidth_1db_nm"), "nm", "same run")
     return rows
+
+
+HEADERS = {"gap_um": "gap (µm)", "Q_loaded": "loaded Q", "dip_depth_db": "dip depth (dB)",
+           "n_eff": "n_eff", "n_g": "n_g", "fsr_ghz": "FSR (GHz)", "loss_db_cm": "loss (dB/cm)",
+           "modes_between_crossings": "TE00 modes between crossings",
+           "crossings_in_band": "crossings in the band", "loss_db": "loss (dB)",
+           "estimate_FC": "estimate (FC)", "efficiency_at_target": "efficiency at λ",
+           "peak_wavelength_nm": "peak (nm)", "peak_shift_nm": "peak shift (nm)",
+           "change_db_at_target": "change at λ (dB)", "wavelengths_nm": "band (nm)",
+           "K_min": "K min", "K_max": "K max"}
+
+
+def _r(v, nd):
+    return "-" if v is None else round(float(v), nd)
+
+
+def _md_table(rows: list[dict], cols: list[str], fmt: dict | None = None) -> list[str]:
+    fmt = fmt or {}
+    out = ["| " + " | ".join(HEADERS.get(c, c.replace("_", " ")) for c in cols) + " |",
+           "|" + "---|" * len(cols)]
+    for r in rows:
+        cells = []
+        for c in cols:
+            v = r.get(c)
+            cells.append("-" if v is None else (format(v, fmt[c]) if c in fmt and
+                                                isinstance(v, (int, float)) else str(v)))
+        out.append("| " + " | ".join(cells) + " |")
+    return out + [""]
+
+
+def _checks_section(ctx, chk: dict) -> list[str]:
+    """Section 7: tolerances, mode families, loss budget and the cloud checks."""
+    if not chk:
+        return []
+    wl = ctx.cfg.run.wavelength_um
+    L = ["## 7. Checks", "",
+         "Free checks (local solves and saved results) and, when confirmed, small cloud runs. "
+         "Tables: `tables/`.", ""]
+    if chk.get("gap_tolerance"):
+        dW = ctx.cfg.cross_section.tolerance_width_um
+        L += [f"**Gap tolerance.** Waveguides {dW * 1e3:.0f} nm wider (or narrower) shrink "
+              "(or widen) the gap by the same amount. K = coupled power / round-trip loss "
+              "(1 = critical); loaded Q = Q_i / (1 + K); dip = depth of the through-port "
+              "resonance, ((1 − K)/(1 + K))².", ""]
+        L += _md_table(chk["gap_tolerance"], ["design", "case", "gap_um", "K", "Q_loaded",
+                                              "dip_depth_db"], {"Q_loaded": ".3g"})
+    f = chk.get("fsr_tolerance")
+    if f:
+        L += [f"**FSR tolerance.** Over the cross-section's tolerance box the FSR spans "
+              f"{f['fsr_min_ghz']:.1f}–{f['fsr_max_ghz']:.1f} GHz (n_g "
+              f"{f['n_g_min']:.4f}–{f['n_g_max']:.4f}).", ""]
+    if chk.get("mode_families"):
+        L += ["**Mode families of the ring waveguide** (bent, local solve). A family with a "
+              "different FSR drifts past TE00 by FSR₀₀ − FSRᵢ per mode, so it crosses TE00 every "
+              "FSR₀₀ / |FSR₀₀ − FSRᵢ| modes; near a crossing the resonances can shift "
+              "(avoided crossing), which locally changes the dispersion.", ""]
+        L += _md_table(chk["mode_families"], ["family", "n_eff", "n_g", "fsr_ghz", "loss_db_cm",
+                                              "modes_between_crossings", "crossings_in_band"])
+    if chk.get("loss_budget"):
+        L += [f"**Fibre-to-fibre loss budget** at {wl} µm, off resonance.", ""]
+        L += _md_table(chk["loss_budget"], ["item", "loss_db"], {"loss_db": ".2f"})
+        L += _fig(ctx, ctx.out / "figures" / "7c_loss_budget.png", "loss budget")
+    b = chk.get("band")
+    if b and b.get("curves"):
+        L += ["**Coupling across the band** (3D FDTD of the critical and over-coupled gaps, "
+              "recorded at several wavelengths): the coupling ratio K over the band.", ""]
+        rows = []
+        for k, c in b["curves"].items():
+            K = c["K"]
+            rows.append(dict(design=k, K_min=round(min(K), 2), K_max=round(max(K), 2),
+                             wavelengths_nm=f"{min(c['wavelength_um']) * 1e3:.0f}–"
+                                            f"{max(c['wavelength_um']) * 1e3:.0f}"))
+        L += _md_table(rows, ["design", "wavelengths_nm", "K_min", "K_max"])
+        L += _fig(ctx, ctx.out / "figures" / "7a_coupling_vs_wavelength.png",
+                  "coupling against wavelength")
+    g = chk.get("grating")
+    if g and g.get("variants"):
+        L += ["**Grating tolerances** (2D FDTD): fibre angle, film thickness, tooth width "
+              "(lithography bias) and a finer mesh, against the final design.", ""]
+        L += _md_table(g["variants"], ["case", "efficiency_at_target", "peak_wavelength_nm",
+                                       "peak_shift_nm", "change_db_at_target"],
+                       {"efficiency_at_target": ".3f"})
+        t = (g.get("power_budget") or {}).get("at_target")
+        if t:
+            L += [f"Light launched from the waveguide into the grating (reverse run) at {wl} µm: "
+                  f"{t['up'] * 100:.0f} % up, {t['down'] * 100:.0f} % into the substrate, "
+                  f"{t['past'] * 100:.0f} % past the grating; back-reflection into the waveguide "
+                  f"{t['reflection_db']:.1f} dB. Directionality (up / (up + down)) "
+                  f"{t['directionality'] * 100:.0f} %"
+                  + (f"; overlap of the upward beam with the fibre mode {t['overlap'] * 100:.0f} %."
+                     if t.get("overlap") else "."), ""]
+        L += _fig(ctx, ctx.out / "figures" / "7b_grating_checks.png", "grating checks")
+    m = chk.get("gap_mesh")
+    if m:
+        L += [f"**Gap mesh check.** At the critical gap with a 1.5× finer mesh the coupled "
+              f"power is {m['coupled_fine']:.4e} against {m['coupled_fit']:.4e} from the fit "
+              f"({m['change_percent']:+.1f} %).", ""]
+    return L
+
+
+def _lle_section(ctx, lle: dict | None) -> list[str]:
+    if not lle:
+        return []
+    L = ["## 8. Inputs for a comb (LLE) simulation", "",
+         "Written to `lle/`: `lle_inputs.json` (every number with units and definitions, and "
+         "a block in pyLLE's names), `pyLLE_dispersion.csv` (mode number, resonance frequency; "
+         "pyLLE's dispersion-file format) and `integrated_dispersion.csv` (D_int(μ)).", ""]
+    if lle.get("gamma_per_W_m"):
+        L.append(f"- nonlinear coefficient γ = 2π n₂ / (λ A_eff) = {lle['gamma_per_W_m']:.2f} /(W·m)")
+    d = lle.get("dispersion")
+    if d:
+        L.append(f"- pump mode m = {d['pump_mode_number']} at {d['f_pump_Hz'] / 1e12:.3f} THz; "
+                 f"FSR {d['FSR_Hz'] / 1e9:.3f} GHz; D2/2π {d['D2_2pi_Hz'] / 1e6:.2f} MHz")
+    for k, r in (lle.get("coupling") or {}).items():
+        L.append(f"- {k.replace('_', ' ')}: Q_c {r['Q_c']:.3g}, Q_L {r['Q_L']:.3g}, κ/2π "
+                 f"{r['kappa_2pi_Hz'] / 1e6:.1f} MHz, threshold {r['threshold_W'] * 1e3:.1f} mW")
+    return L + [""]
+
+
+def _runs_section(ctx) -> list[str]:
+    """Every cloud run with its Tidy3D link (tables/cloud_runs.csv), the spending by stage,
+    and the software versions."""
+    from tarang.utilities.cloud_run import collect_runs
+    from tarang.design import credits
+    L = ["## Cloud runs, credits and versions", ""]
+    rows = collect_runs(ctx.out / "cloud") if (ctx.out / "cloud").exists() else []
+    if rows:
+        table = ctx.path("tables", "cloud_runs.csv")
+        cols = ["name", "status", "task_id", "url", "estimated_cost", "real_cost", "submitted"]
+        with open(table, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore", lineterminator="\n")
+            w.writeheader()
+            w.writerows(rows)
+        linked = sum(1 for r in rows if r.get("url"))
+        L += [f"{len(rows)} cloud simulation(s), {linked} with a link to open them in the Tidy3D "
+              f"web interface: `{_rel(ctx, table)}`. Links missing for runs made before Phase 12 "
+              "are filled in by `python -m tarang.design --out <folder> --runs`.", ""]
+    s = credits.summary(ctx.cfg, ctx.out, ctx.state)
+    L += [f"Credits (estimates): spent {s['spent']:.3f} of the {s['limit']:g} FC limit.", ""]
+    if s["rows"]:
+        L += _md_table(s["rows"], ["date", "stage", "what", "estimate_FC"])
+    v = ctx.state.get("versions")
+    if v:
+        L += ["Software: " + ", ".join(f"{k} {v[k]}" for k in ("python", "tarang", "tidy3d", "numpy")
+                                       if k in v) + f" (recorded {v.get('date', '?')}).", ""]
+    return L

@@ -65,6 +65,15 @@ def _r(x, nd=4):
 def export(ctx) -> dict:
     ui = ctx.ui
     cfg = ctx.cfg
+    from tarang.design.ui import parse_list
+    ui.form(cfg, "Layout", [
+        dict(section="layout", key="bus_length_um"),
+        dict(section="layout", key="tone", check=lambda v: "" if v in ("structure", "trench")
+             else "answer structure or trench"),
+        dict(section="layout", key="trench_width_um", show=lambda c: c.layout.tone == "trench"),
+        *[dict(section="layout", key=k, cast=parse_list) for k in
+          ("waveguide_layer", "ring_layer", "taper_layer", "grating_layer")],
+        dict(section="grating", key="taper_length_um")])
     for key in ("bus_length_um", "tone", "trench_width_um", "waveguide_layer", "ring_layer",
                 "taper_layer", "grating_layer"):
         if key == "trench_width_um" and cfg.layout.tone != "trench":
@@ -75,11 +84,12 @@ def export(ctx) -> dict:
     out = ctx.out / "layout"
     out.mkdir(parents=True, exist_ok=True)
     files = _write_parameters(p, out)
+    lle = _lle(ctx)
     import importlib.util
     if importlib.util.find_spec("gdstk") is None:
         ui.say("gdstk is not installed, so no GDS was written (parameters were). Install it "
                'with: pip install "tarang-photonics[layout]" and rerun this stage.')
-        return dict(parameters=p, files=files, gds=None)
+        return dict(parameters=p, files=files, gds=None, lle=lle)
     files += build_gds(p, out)
     ui.say("Layout files:")
     for f in files:
@@ -96,7 +106,21 @@ def export(ctx) -> dict:
                f"{p['fiber_tilt']} the waveguide at both couplers"
                + (" (upper ends of the two fibres lean outward: a V)." if p["fiber_tilt"] == "towards"
                   else " (upper ends of the two fibres lean inward, over the chip)."))
-    return dict(parameters=p, files=[str(f) for f in files], figure=str(fig) if fig else None)
+    if lle:
+        ui.say("Comb-simulation (LLE) inputs: " + ", ".join(Path(f).name for f in lle["files"])
+               + f" in {ctx.out / 'lle'}")
+    return dict(parameters=p, files=[str(f) for f in files], figure=str(fig) if fig else None,
+                lle=lle)
+
+
+def _lle(ctx):
+    """LLE inputs (lle/); a failure here never stops the layout."""
+    from tarang.design import lle
+    try:
+        return lle.export(ctx)
+    except Exception as err:                                      # noqa: BLE001
+        ctx.ui.say(f"  (LLE inputs not written: {type(err).__name__}: {err})")
+        return None
 
 
 def _write_parameters(p: dict, out: Path) -> list[Path]:

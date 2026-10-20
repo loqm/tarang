@@ -5,7 +5,14 @@
     python -m tarang.design --config runs/sin1550/design.toml --yes   # repeat, no questions
     python -m tarang.design --config design.toml --only gap,grating   # selected stages
     python -m tarang.design --list                  # list the stages
+    python -m tarang.design --config <run>/design.toml --review     # ask saved settings again
+    python -m tarang.design --config <run>/design.toml --credits    # budget, spent, Tidy3D balance
+    python -m tarang.design --config <run>/design.toml --budget 25  # set the credit limit
+    python -m tarang.design --config <run>/design.toml --reset-spent  # restart the spend count
+    python -m tarang.design --config <run>/design.toml --runs       # every cloud run + Tidy3D link
 
+Stop at any time with q (at a question) or Ctrl+C: finished work is kept, and the same
+command continues; a cloud run that was in progress is picked up again, not paid twice.
 Cloud stages show their FlexCredit estimate and wait for confirmation; with --yes they run
 only if the estimate fits run.max_total_cost.
 """
@@ -35,6 +42,16 @@ def main(argv=None) -> int:
     ap.add_argument("--redo", default="", help="comma-separated stages to repeat")
     ap.add_argument("--show", action="store_true", help="open each figure as it is made")
     ap.add_argument("--list", action="store_true", help="list the stages and exit")
+    ap.add_argument("--review", action="store_true",
+                    help="show every stage's settings for changes, even those saved in design.toml")
+    ap.add_argument("--budget", type=float, metavar="FC",
+                    help="set run.max_total_cost (FlexCredits for this design) and save it")
+    ap.add_argument("--reset-spent", action="store_true",
+                    help="restart this design's spend count at 0 (the history is kept)")
+    ap.add_argument("--credits", action="store_true",
+                    help="show budget, spent, what it was spent on and the Tidy3D balance; exit")
+    ap.add_argument("--runs", action="store_true",
+                    help="list every cloud run of this design with its Tidy3D link; exit")
     a = ap.parse_args(argv)
     for s in (sys.stdout, sys.stderr):
         if hasattr(s, "reconfigure"):
@@ -48,14 +65,26 @@ def main(argv=None) -> int:
     set_tidy3d_output(False)
     cfg = DesignConfig.load(a.config) if a.config else DesignConfig()
     interactive = not a.yes and sys.stdin.isatty()
-    ui = Prompter(interactive=interactive, show_figures=a.show)
+    ui = Prompter(interactive=interactive, show_figures=a.show, review=a.review)
+    housekeeping = a.budget is not None or a.reset_spent or a.credits or a.runs
     if a.out:
         out = a.out
     elif a.config:
         out = a.config.resolve().parent
+    elif housekeeping:
+        print("Give the design with --config <run>/design.toml (or --out <run folder>).")
+        return 2
     else:
         ui.value(cfg, "run", "name")
         out = Path("design_runs") / cfg.run.name
+    if housekeeping:
+        from tarang.design import credits
+        saved = Path(out) / "design.toml"
+        if not a.config and saved.exists():          # --out alone: use that design's settings
+            cfg = DesignConfig.load(saved)
+        credits.main(cfg, Path(out), budget=a.budget, reset=a.reset_spent,
+                     show=a.credits or a.budget is not None or a.reset_spent, runs=a.runs)
+        return 0
     only = [s.strip() for s in a.only.split(",")] if a.only else None
     redo = [s.strip() for s in a.redo.split(",") if s.strip()]
     run(cfg, out, interactive=interactive, only=only, redo=redo, prompter=ui)

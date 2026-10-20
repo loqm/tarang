@@ -15,6 +15,51 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **Every cloud run has a web link and survives Ctrl+C.** Each run writes `task.json`
+  (Tidy3D task id, a link that opens the simulation in the Tidy3D web interface, status,
+  estimated and billed cost, date) next to its results; links are printed as runs start and
+  listed in `tables/cloud_runs.csv` and the report. A run interrupted while it was running
+  on Tidy3D is picked up again on the next start instead of being submitted (and paid)
+  twice; a run that failed on Tidy3D is submitted again. Batch runs do the same per task.
+  `python -m tarang.design --runs` lists every run and finds the links of runs made before
+  these records.
+- **Credits commands.** `--credits` (limit, spent, what it was spent on by stage and date,
+  account balance and expiry), `--budget FC` (this design's limit), `--reset-spent` (start
+  the count at 0; the history is kept). Every cost is now recorded with its stage and date.
+- **One table per stage.** Each stage shows its settings in one table: Enter accepts, a row
+  number changes that value, `?` explains, `q` stops. Saved settings are listed, not asked
+  again; `--review` asks anyway.
+- **Checks stage** (`--only checks`; free parts are local or from saved results, cloud
+  parts priced first):
+  gap tolerance (coupling ratio K, loaded Q and resonance depth with the waveguides ± the
+  width tolerance); an independent check of the gap by coupled-mode theory (even/odd
+  supermodes, κ = πΔn/λ, θ = κ√(2πR/γ): 466 nm against 470 nm from 3D FDTD for the 1550 nm
+  design); FSR over the tolerance box; guided mode families of the bent ring waveguide and
+  how often they cross TE00; fibre-to-fibre loss budget; optional coupling across the band
+  (both gaps, 3D FDTD recorded at `gap.band_points` wavelengths); grating tolerances (fibre
+  angle ± `checks.angle_tolerance_deg`, film thickness, tooth width ±
+  `checks.litho_bias_um`, 1.5× finer mesh) and a reverse run giving the power up, into the
+  substrate and past the grating, the back-reflection and the directionality; optional
+  gap mesh check.
+- **Figures for publication.** Every figure is written as 300 dpi PNG and PDF (fonts
+  embedded; `run.figure_formats` adds SVG, `run.figure_dpi` sets the resolution) in a
+  colour-blind-safe palette. New: TE00/TM00 mode profiles with |E| and each component,
+  straight against bent mode, gap coupling on linear and log scales with the fit, coupler
+  supermodes, a top-view field map of the gap run nearest the critical gap, coupling against
+  wavelength, grating checks and the loss budget. A figure held open by another program is
+  saved beside it as `<name>_new.png` instead of failing.
+- **Inputs for a comb (LLE) solver.** The layout stage writes `lle/lle_inputs.json` (pump,
+  FSR, D2, D3, Q_i, Q_c, Q_L, loss rates, threshold, γ = 2πn₂/(λA_eff), with units and
+  definitions), `lle/pyLLE_dispersion.csv` (mode number, resonance frequency: pyLLE's
+  dispersion-file format) and `lle/integrated_dispersion.csv`.
+- `gap.ring_inner_box_recess_um`: how far the air inside the ring reaches into the BOX in
+  the gap simulation (0 for new designs: a flat BOX, as fabricated; earlier designs keep
+  0.1 µm so their results stay valid). `gap.band_points`: wavelengths recorded at the ring
+  ports.
+- The report and `benchmark_pack/` gain the checks, the coupled-mode check, the LLE inputs,
+  the cloud runs with links, the spending by stage and the software versions; the pack
+  includes the PDF figures and `lle/`.
+
 - **Design runs show and record everything.** Before each stage the tool draws what it is
   about to simulate (stack and TE00 mode, partial ring and bus, grating with the fibre
   beam), before any cost question; every cloud run prints a progress line; each stage saves
@@ -138,6 +183,19 @@ working until v0.2.0; old imports are updated with one command (see
   defaults, and therefore FDTD costs, are unchanged.
 
 ### Fixed
+
+- `--budget`, `--credits` and the other credit commands given only `--out` now use that
+  design's saved settings (before, `--budget` with `--out` alone wrote default settings
+  into its `design.toml`).
+- Reading the Tidy3D account (credits, expiry) gives up after 15 s when offline instead of
+  waiting for Tidy3D's retries.
+- The coupled-mode check solves the even and odd supermodes separately with the mirror
+  symmetry imposed and the fine mesh covering both cores. Without that, the solver could
+  return modes localised in one core each (on Windows already at 0.4-0.6 µm gaps), and
+  the check gave a critical gap of 5.6 µm.
+- Settings added in this release do not repeat finished stages: a design whose gap ran
+  before keeps the values its results were computed with (the session says so), and its
+  stage fingerprints are unchanged.
 
 - **Ring–bus critical gap too wide.** The gap sweep took the coupled power as 1 − T with T
   relative to the source, and the simulated bus loses about 0.2 % of the power whatever
