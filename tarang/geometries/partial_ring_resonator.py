@@ -55,6 +55,7 @@ def get_passive_simulation(
 
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
+    inner_box_recess_um: float = 0.1,  # Air pocket cut into the BOX inside the ring (um); 0.1 = before Phase 12, 0 = flat BOX.
 ) -> PartialRingResonator:
     """Constructs a passive simulation with the ring physically clipped to
     span_angle_rad.
@@ -146,11 +147,21 @@ def get_passive_simulation(
         & clip_box
     )
 
+    # The hole that leaves the ring is 0.1 um taller than the core above it; below it
+    # reaches inner_box_recess_um into the BOX (0.1 before Phase 12: the original
+    # symmetric cylinder, kept bit-for-bit so earlier results stay valid).
+    recess = float(inner_box_recess_um)
+    if not np.isfinite(recess) or not 0 <= recess < box_height:
+        raise ValueError("inner_box_recess_um must be >= 0 and smaller than box_height.")
+    if recess == 0.1:
+        hole_center, hole_length = wg_height / 2.0, wg_height + 0.200
+    else:
+        hole_center, hole_length = (wg_height + 0.1 - recess) / 2.0, wg_height + 0.1 + recess
     ring_inner_geom = (
         td.Cylinder(
-            center=(0, 0, wg_height / 2.0),
+            center=(0, 0, hole_center),
             radius=r_inner,
-            length=wg_height + 0.200,
+            length=hole_length,
             axis=2,
         )
         & clip_box
@@ -278,6 +289,8 @@ def get_active_simulation(
 
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
+    inner_box_recess_um: float = 0.1,  # Air pocket in the BOX inside the ring (um); see get_passive_simulation.
+    monitor_freqs=None,  # Frequencies (Hz) recorded by the mode monitors; None = the design wavelength only.
 ) -> PartialRingResonator:
     """Add bus excitation and coupling monitors to the passive partial ring.
     The span is the total angle; clipped ring ends require reflection checks.
@@ -311,9 +324,13 @@ def get_active_simulation(
         coarse_steps_per_wvl=coarse_steps_per_wvl,
         wg_length=wg_length,
         run_time=run_time,
+        inner_box_recess_um=inner_box_recess_um,
     )
     sim = obj.sim
     frequency = td.C_0 / wavelength_um
+    freqs = [frequency] if monitor_freqs is None else [float(f) for f in monitor_freqs]
+    if not any(np.isclose(f, frequency, rtol=1e-12) for f in freqs):
+        raise ValueError("monitor_freqs must include the design frequency c / wavelength_um.")
     target_neff = core_target_neff(core_medium, frequency)
     mode_spec = td.ModeSpec(
         num_modes=1,
@@ -347,14 +364,14 @@ def get_active_simulation(
         td.ModeMonitor(
             center=(input_x, y_bus, z_core),
             size=(0, mon_w, mon_h),
-            freqs=[frequency],
+            freqs=freqs,
             mode_spec=mode_spec,
             name="Through_In",
         ),
         td.ModeMonitor(
             center=(through_x, y_bus, z_core),
             size=(0, mon_w, mon_h),
-            freqs=[frequency],
+            freqs=freqs,
             mode_spec=mode_spec,
             name="Through_Out",
         ),
@@ -381,7 +398,7 @@ def get_active_simulation(
             td.ModeMonitor(
                 center=(radius * np.sin(beta), y_ring, z_core),
                 size=(0, ring_mon_w, mon_h),
-                freqs=[frequency],
+                freqs=freqs,
                 mode_spec=td.ModeSpec(
                     num_modes=1,
                     target_neff=target_neff,

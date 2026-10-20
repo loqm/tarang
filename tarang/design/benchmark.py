@@ -161,8 +161,9 @@ def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
     if mat.get("table"):
         _copy(mat["table"], pack)
     _copy(ctx.out / "design.toml", pack)
-    for f in sorted((ctx.out / "figures").glob("*.png")):
-        _copy(f, pack / "figures")
+    for ext in ("png", "pdf", "svg"):                 # every format the run wrote
+        for f in sorted((ctx.out / "figures").glob(f"*.{ext}")):
+            _copy(f, pack / "figures")
     extra_figs = [xs.get("map_figure"), ring.get("profile_figure")]
     extra_figs += glob.glob(str(ctx.out / "results" / "mesh_convergence_plots" / "*.png"))
     extra_figs += glob.glob(str(ctx.out / "results" / "finalist_report" / "*.png"))
@@ -178,6 +179,8 @@ def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
         _copy(f, pack / "tables")
     for f in sorted((ctx.out / "layout").glob("*")):
         _copy(f, pack / "layout")
+    for f in sorted((ctx.out / "lle").glob("*")):
+        _copy(f, pack / "lle")
 
     sims_dir = pack / "simulations"
     sims_dir.mkdir()
@@ -274,12 +277,18 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
               f"(K = {gap['over_coupling']:g}) {(gap.get('over_coupled_gap_um') or 0) * 1e3:.0f} nm.",
               "- To compare: the coupled power at each gap (a full ring in the other solver is "
               "fine: compare the per-pass coupling), then the gaps.",
-              "- Geometry detail to copy (or expect a small difference): inside the ring, the "
-              "air region of TARANG's partial-ring builder reaches 0.1 µm into the BOX (z from "
-              "−0.1 µm); the bus side of the ring and the gap are unaffected.",
+              _recess_line(gap.get("ring_inner_box_recess_um", 0.1)),
+              f"- Recorded at {gap.get('band_points', 1)} wavelength(s) over the band.",
               "- Known numerical feature: 1 − T relative to the source shows a gap-independent "
               "excess of about 0.2 % (bus losses in the simulation, not coupling); the power "
-              "entering the ring arc agrees with 1 − T/T(widest gap) within about 1 %.", ""]
+              "entering the ring arc agrees with 1 − T/T(widest gap) within about 1 %."]
+        cmt = gap.get("coupled_mode_check") or {}
+        if cmt.get("critical_gap_um"):
+            L.append(f"- Independent estimate without FDTD (coupled-mode theory from the even/odd "
+                     f"supermodes of two cores at the gap, θ = (πΔn/λ)·√(2πR/γ)): critical gap "
+                     f"{cmt['critical_gap_um'] * 1e3:.0f} nm, γ = {cmt['gamma_per_um']:.2f} /µm. "
+                     "A mode solver alone can reproduce this.")
+        L.append("")
     if gc and not gc.get("skipped"):
         L += ["## 4. Grating coupler (2D FDTD)", "",
               f"- Uniform grating, {gc['etch']} etch ({gc['etch_depth_um']} µm), period "
@@ -297,15 +306,41 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
               (f"; peak {gc['peak_efficiency_2d'] * 100:.1f} % at {gc['peak_wavelength_um'] * 1e3:.1f} "
                f"nm; 1 dB band {gc['bandwidth_1db_nm']:.0f} nm" if gc.get("peak_efficiency_2d")
                else "") + ". Spectrum: `tables/grating_spectrum_final.csv`; all designs: "
-              "`tables/grating_sweep.csv`.", ""]
+              "`tables/grating_sweep.csv`."]
+        if (ctx.out / "tables" / "grating_checks.csv").exists():
+            L.append("- Tolerances and the reverse run (mode launched from the waveguide: power "
+                     "up, into the substrate, past the grating, and the back-reflection): "
+                     "`tables/grating_checks.csv`.")
+        L.append("")
     L += ["## 5. Layout", "",
           "`layout/` has the GDS files and `parameters.json` (every dimension). Each grating "
           f"starts where its {cfg.grating.taper_length_um:g} µm linear taper (from the grating "
           "width to the waveguide width) ends, as in the simulation; the taper itself is not "
           "simulated yet.", ""]
+    extra = [(n, d) for n, d in (
+        ("gap_tolerance.csv", "critical and over-coupled gap with the waveguide width ± its tolerance"),
+        ("coupling_vs_wavelength.csv", "coupling ratio K of both gaps across the band (3D FDTD)"),
+        ("mode_families.csv", "guided mode families of the bent ring waveguide and their crossings"),
+        ("loss_budget.csv", "fibre-to-fibre loss at the design wavelength"),
+        ("cloud_runs.csv", "every cloud simulation with its link in the Tidy3D web interface"))
+        if (ctx.out / "tables" / n).exists()]
+    if extra:
+        L += ["## 6. Checks and runs", ""] + [f"- `tables/{n}`: {d}" for n, d in extra] + [""]
+    if (ctx.out / "lle" / "lle_inputs.json").exists():
+        L += ["## 7. Comb (LLE) inputs", "",
+              "`lle/lle_inputs.json` (all numbers with units), `lle/pyLLE_dispersion.csv` (mode "
+              "number, resonance frequency in Hz) and `lle/integrated_dispersion.csv`.", ""]
     if sim_sections:
         L += ["## Simulation details", "",
               "The files in `simulations/` are the exact simulations TARANG ran; below is what "
               "they contain.", ""] + sim_sections
     L += ["## Every number", "", "`results.csv` (quantity, value, unit, how computed).", ""]
     return L
+
+
+def _recess_line(recess: float) -> str:
+    if recess:
+        return (f"- Geometry detail to copy (or expect a small difference): inside the ring, the "
+                f"air region of TARANG's partial-ring builder reaches {recess:g} µm into the BOX "
+                f"(z from −{recess:g} µm); the bus side of the ring and the gap are unaffected.")
+    return "- The BOX top is flat everywhere (no recess inside the ring)."

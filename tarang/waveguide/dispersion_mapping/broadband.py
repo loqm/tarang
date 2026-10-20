@@ -141,7 +141,7 @@ def analyse(rec, R_um, deg=8, mu_max=None):
     return dict(wf=wf, nf=nf, ng=ng, D=D, zdw=zdw, resid=resid, mus=mus, Dint=Dint,
                 lam_mu=lam_mu, FSR_GHz=D1 / (2 * np.pi) / 1e9, D2_2pi_MHz=D2 / (2 * np.pi) / 1e6,
                 D3_2pi_kHz=D3 / (2 * np.pi) / 1e3, D_pump=float(D[i0]), ng_pump=float(ng[i0]),
-                pump=pump,
+                pump=pump, m0=m0, om_mu=om_mu, om_pump=float(om_p), D1=float(D1),
                 wl_raw=wl, n_raw=n)
 
 

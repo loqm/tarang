@@ -5,9 +5,9 @@ Runs the TARANG pipeline as one session, for any wavelength the material data co
     materials -> cross-section (H x W) -> ring (radius, Q, D_int) -> ring-bus gap
     -> grating coupler -> layout (GDS, parameters) -> report
 
-Each stage asks only what it needs (defaults shown; Enter accepts), shows its results and
-figures, and, for cloud stages, the FlexCredit estimate before anything runs. Answers are
-saved to <run>/design.toml, so
+Each stage starts with one table of its settings (Enter accepts them, a number changes
+one, q or Ctrl+C stops), shows its results and figures, and, for cloud stages, the
+FlexCredit estimate before anything runs. Answers are saved to <run>/design.toml, so
 
     python -m tarang.design --config <run>/design.toml --yes
 
@@ -39,10 +39,18 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
     if unknown:
         raise ValueError(f"unknown stage(s) {sorted(unknown)}; stages are {STAGE_NAMES}")
     ui.say(f"TARANG design run '{cfg.run.name}' in {ctx.out.resolve()}")
-    ui.say("Press Enter to accept a default; type q to stop (everything done so far is kept).")
+    ui.say("Each stage shows its settings: Enter accepts them, a number changes one. Type q "
+           "(or press Ctrl+C) to stop at any point; everything done so far is kept and the "
+           "same command continues from there.")
     ui.say("Figures are saved in figures/ (and opened with --show); the report and a "
            "benchmark_pack/ folder are written at the end.")
+    ctx.record_versions()
+    for note in ctx.apply_legacy():
+        ui.say("  " + note)
     _show_assumptions(cfg, ui)
+    ui.say(f"Credits: budget {cfg.run.max_total_cost:g} FC for this design, {ctx.spent:.3f} "
+           f"spent so far, {ctx.budget_left:.3f} left (python -m tarang.design --config "
+           "<run>/design.toml --credits shows details).")
     stale = False
     try:
         for i, (name, title, kind, func) in enumerate(STAGES, 1):
@@ -57,12 +65,18 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
                 continue
             ui.heading(f"[{i}/{len(STAGES)}] {title}  ({kind}"
                        f"{', priced before it runs' if kind == 'cloud' else ', free'})")
+            ctx.stage = name
             results = func(ctx)
             ctx.state["stages"][name] = {"key": settings_key(cfg, name), "results": results}
             ctx.save_state()
             stale = True                         # later stages must follow this one
     except Stop:
-        ui.say("\nStopped. Settings so far are in design.toml; run again to continue.")
+        ui.say("\nStopped. Settings so far are in design.toml; run the same command again to "
+               "continue.")
+    except KeyboardInterrupt:
+        ui.say("\nStopped (Ctrl+C). Finished stages and finished cloud runs are kept. A cloud "
+               "run that was in progress keeps running on Tidy3D; the same command continues "
+               "and picks it up again without paying twice.")
     finally:
         ctx.save_state()
     return ctx
