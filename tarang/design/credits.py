@@ -102,6 +102,34 @@ def main(cfg, out: Path, budget=None, reset=False, show=True, runs=False) -> Non
             print(f"Links found on Tidy3D for {n} earlier run(s).")
         if not rows:
             print("No cloud runs in this design yet.")
+        drawn = draw_run_pictures(out, rows)
         for r in rows:
-            link = r["url"] or "(no link: not found on Tidy3D)"
+            link = r["url"] or "(no link: not in the task list of this account)"
             print(f"  {r['name']}\n      {r['status']:<10} {link}")
+        missing = sum(1 for r in rows if not r["url"])
+        if missing:
+            print(f"\n{missing} run(s) have no link: they were made before Phase 12 with a Tidy3D "
+                  "account whose task list this API key cannot see (for example an earlier "
+                  "account). Their results are on disk; their pages open only in that account.")
+        print(f"Geometry pictures: {out / 'figures' / 'sims'}"
+              + (f" ({drawn} drawn now)" if drawn else ""))
+
+
+def draw_run_pictures(out: Path, rows: list) -> int:
+    """A geometry picture (figures/sims/<cloud folder name>.png) for every run that has a
+    saved simulation.json and no picture yet; returns how many were drawn."""
+    from tarang.design import visuals
+    folder = Path(out) / "figures" / "sims"
+    n = 0
+    for r in rows:
+        src = Path(r["folder"]) / "simulation.json"
+        dst = folder / f"{Path(r['folder']).name}.png"
+        if dst.exists() or not src.exists():
+            continue
+        try:
+            import tidy3d as td
+            visuals.sim_picture(td.Simulation.from_file(str(src)), dst, r["name"])
+            n += 1
+        except Exception as err:                      # noqa: BLE001
+            print(f"  (picture of {r['name']} not drawn: {type(err).__name__}: {err})")
+    return n

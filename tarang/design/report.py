@@ -72,7 +72,15 @@ def threshold_mw(xs: dict, ring: dict, n2: float, K: float = 1.0) -> float | Non
 
 
 def write(ctx) -> dict:
-    from tarang.design import assumptions, benchmark, visuals
+    from tarang.design import assumptions, benchmark, checks as _checks, visuals
+    _checks.redraw_saved_figures(ctx)              # older runs: improved figures, no new runs
+    chk_res = ctx.state["stages"].get("checks", {}).get("results")
+    if chk_res and chk_res.get("loss_budget") is not None:          # include later stages (taper)
+        g_res = ctx.state["stages"].get("grating", {}).get("results") or {}
+        lb_now = _checks.loss_budget(ctx, None if g_res.get("skipped") else (g_res or None))
+        if lb_now != chk_res["loss_budget"]:
+            chk_res["loss_budget"] = lb_now
+            visuals.safe(ctx, "loss budget", _checks.draw_loss_budget, ctx, lb_now)
     cfg = ctx.cfg
     st = {k: v.get("results", {}) for k, v in ctx.state["stages"].items()}
     mat, xs, ring = st.get("materials", {}), st.get("cross_section", {}), st.get("ring", {})
@@ -319,7 +327,13 @@ def write(ctx) -> dict:
                   + (": the two fibres form a V (upper ends lean outward)." if p["fiber_tilt"] ==
                      "towards" else ": the upper ends of the two fibres lean inward."), ""]
 
-    # ---- limits
+    L += _checks_section(ctx, st.get("checks", {}))
+    L += _taper_section(ctx, st.get("taper", {}))
+    L += _apodise_section(ctx, st.get("apodise", {}))
+    L += _lle_section(ctx, lay.get("lle"))
+    L += _runs_section(ctx)
+
+    # ---- limits (last, after every result)
     L += ["## Known limits", "",
           "- Vertical sidewalls everywhere; the n, k data are tabulated bulk values, not your film.",
           "- Ring: the bent mode is solved for loss and dispersion; how often other mode "
@@ -327,12 +341,12 @@ def write(ctx) -> dict:
           "is not modelled.",
           "- Gap: a partial ring whose arcs end inside the simulation box; the span is not "
           "converged against longer arcs.",
-          "- Grating: 2D, uniform period; no taper; no 3D beam overlap unless the 3D check ran.",
+          "- Grating: 2D; its width enters only through the lateral overlap with the fibre "
+          "(effective-index method, section 7b); no 3D grating run unless the 3D check ran.",
+          "- Taper: EME of the straight linear taper (fundamental mode in and out), even modes "
+          "only; sidewalls vertical.",
           ""]
 
-    L += _checks_section(ctx, st.get("checks", {}))
-    L += _lle_section(ctx, lay.get("lle"))
-    L += _runs_section(ctx)
 
     checks = _check_values(cfg, mat, xs, ring, gap, gc, pth_c)
     table = ctx.path("tables", "check_values.csv")
@@ -414,7 +428,8 @@ HEADERS = {"gap_um": "gap (µm)", "Q_loaded": "loaded Q", "dip_depth_db": "dip d
            "estimate_FC": "estimate (FC)", "efficiency_at_target": "efficiency at λ",
            "peak_wavelength_nm": "peak (nm)", "peak_shift_nm": "peak shift (nm)",
            "change_db_at_target": "change at λ (dB)", "wavelengths_nm": "band (nm)",
-           "K_min": "K min", "K_max": "K max"}
+           "K_min": "K min", "K_max": "K max", "arc_end_reflection_db": "arc-end reflection (dB)",
+           "bus_reflection_db": "back towards the source (dB)"}
 
 
 def _r(v, nd):
@@ -451,6 +466,19 @@ def _checks_section(ctx, chk: dict) -> list[str]:
               "resonance, ((1 − K)/(1 + K))².", ""]
         L += _md_table(chk["gap_tolerance"], ["design", "case", "gap_um", "K", "Q_loaded",
                                               "dip_depth_db"], {"Q_loaded": ".3g"})
+    refl = chk.get("arc_reflection")
+    if refl:
+        worst = max(r["arc_end_reflection"] for r in refl)
+        L += [f"**Reflections in the gap runs.** The arcs of the partial ring end inside the "
+              f"simulation box, so some light that entered the ring is reflected back (the "
+              f"stripes of period λ/2n_eff in the field map). At the ring port it is at most "
+              f"{10 * math.log10(max(worst, 1e-12)):.1f} dB of the forward power. The coupled "
+              "power is read from the forward-travelling part only, so the gap result is "
+              "affected only through the light that couples back into the bus (κ² times this).",
+              ""]
+        L += _md_table([dict(r, arc_end_reflection_db=round(10 * math.log10(max(r["arc_end_reflection"], 1e-12)), 1),
+                             bus_reflection_db=round(10 * math.log10(max(r["bus_reflection"], 1e-12)), 1))
+                        for r in refl], ["gap_um", "arc_end_reflection_db", "bus_reflection_db"])
     f = chk.get("fsr_tolerance")
     if f:
         L += [f"**FSR tolerance.** Over the cross-section's tolerance box the FSR spans "
@@ -491,7 +519,10 @@ def _checks_section(ctx, chk: dict) -> list[str]:
         if t:
             L += [f"Light launched from the waveguide into the grating (reverse run) at {wl} µm: "
                   f"{t['up'] * 100:.0f} % up, {t['down'] * 100:.0f} % into the substrate, "
-                  f"{t['past'] * 100:.0f} % past the grating; back-reflection into the waveguide "
+                  f"{t['past'] * 100:.0f} % past the grating"
+                  + (f", {t['scattered_back'] * 100:.0f} % scattered backwards"
+                     if t.get("scattered_back") is not None else "")
+                  + f"; back-reflection into the waveguide "
                   f"{t['reflection_db']:.1f} dB. Directionality (up / (up + down)) "
                   f"{t['directionality'] * 100:.0f} %"
                   + (f"; overlap of the upward beam with the fibre mode {t['overlap'] * 100:.0f} %."
@@ -502,6 +533,78 @@ def _checks_section(ctx, chk: dict) -> list[str]:
         L += [f"**Gap mesh check.** At the critical gap with a 1.5× finer mesh the coupled "
               f"power is {m['coupled_fine']:.4e} against {m['coupled_fit']:.4e} from the fit "
               f"({m['change_percent']:+.1f} %).", ""]
+    return L
+
+
+def _taper_section(ctx, tp: dict) -> list[str]:
+    """Section 7b: grating width (fibre overlap) and taper length (EME)."""
+    if not tp or tp.get("skipped"):
+        return []
+    L = ["## 7b. Grating width and taper", "",
+         "**Width.** The 2D grating simulation is infinitely wide. A grating of width W carries "
+         "its fundamental lateral mode ψ(y); the fibre delivers a Gaussian G(y) of waist MFD/2. "
+         "Only their overlap η_y = |∫ψG dy|² / (∫|ψ|² dy ∫|G|² dy) couples, so the 3D efficiency is "
+         f"about η_2D·η_y. ψ comes from the effective-index method (slab index "
+         f"{tp['n_slab']:.4f}).", "",
+         "| | width | η_y |", "|---|---|---|",
+         f"| set before | {tp['width_before_um']:g} µm | {tp['eta_y_before'] * 100:.1f} % |",
+         f"| best for the fibre | {tp['best_width_um']:g} µm | - |",
+         f"| **used** | **{tp['grating_width_um']:g} µm** | **{tp['eta_y'] * 100:.1f} %** |", ""]
+    if tp.get("efficiency_3d_estimate"):
+        e = tp["efficiency_3d_estimate"]
+        L += [f"Grating efficiency with the width: about {e * 100:.1f} % "
+              f"({-10 * math.log10(e):.2f} dB) per coupler.", ""]
+    L += _fig(ctx, ctx.out / "figures" / "8a_grating_width.png", "grating width")
+    if tp.get("lengths_um"):
+        L += ["**Length.** Tidy3D's eigenmode expansion (EME) of the linear taper from the "
+              "grating width to the waveguide: the local modes of 30 cells joined by their "
+              "overlaps give the transmission of the fundamental mode; rescaling the cells gives "
+              "it for every length in one run.", ""]
+        if tp.get("taper_length_um"):
+            L += [f"Shortest taper below {ctx.cfg.taper.max_loss_db:g} dB: "
+                  f"**{tp['taper_length_um']:g} µm** ({tp['taper_loss_db']:.3f} dB); the "
+                  f"{tp['previous_length_um']:g} µm taper used before loses "
+                  f"{tp['loss_db_at_previous_length']:.3f} dB.", ""]
+        L += _fig(ctx, ctx.out / "figures" / "8b_taper_length.png", "taper length")
+    if tp.get("use_in_layout"):
+        L += ["The layout uses this width and length (`taper.use_in_layout`).", ""]
+    return L
+
+
+def _apodise_section(ctx, ap: dict) -> list[str]:
+    """Section 7c: apodised grating."""
+    if not ap or not ap.get("scattering"):
+        return []
+    a_lo, a_hi = ap["alpha_range_per_um"]
+    L = ["## 7c. Apodised grating", "",
+         "In a uniform grating every tooth scatters the same fraction of the guided light, so "
+         "the light leaves with an exponential profile, which overlaps a Gaussian fibre mode by "
+         "at most about 80 %. Shaping the scattering strength along the grating, "
+         "α(x) = A·G²(x) / (2(1 − A∫₀ˣG²)), makes the emitted profile the fibre's Gaussian "
+         "itself. α and the phase-matched period of each fill factor were measured on uniform "
+         "gratings (2D FDTD, light launched from the waveguide, field recorded 1.5 µm above the "
+         "grating: the decay of |E|² gives α, its phase slope the Bloch index).", "",
+         f"Measured α: {a_lo:.3f} to {a_hi:.3f} per µm over fill factors "
+         f"{ap['scattering'][0]['fill_factor']:g} to {ap['scattering'][-1]['fill_factor']:g} "
+         f"(`tables/apodise_scattering.csv`). 1D emission model: the uniform grating overlaps the "
+         f"fibre by {ap['model_uniform'] * 100:.0f} %, the apodised one by "
+         f"{ap['model_apodised'] * 100:.0f} % ({len(ap['teeth'])} teeth, "
+         "`tables/apodised_teeth.csv`).", ""]
+    L += _fig(ctx, ctx.out / "figures" / "9a_apodise_design.png", "apodisation design")
+    if ap.get("verified"):
+        L += [f"**2D FDTD check:** {ap['efficiency_2d'] * 100:.1f} % at "
+              f"{ctx.cfg.run.wavelength_um} µm ({-10 * math.log10(max(ap['efficiency_2d'], 1e-9)):.2f} dB), "
+              f"peak at {ap['peak_wavelength_nm']} nm, 1 dB band {ap['bandwidth_1db_nm']:.0f} nm; "
+              f"uniform {ap['uniform_efficiency_2d'] * 100:.1f} %. Fibre at "
+              f"{ap['source_x_um']} µm, period scale {ap['scale']:g} (`tables/apodised_check.csv`).",
+              ""]
+        L += _fig(ctx, ctx.out / "figures" / "9b_apodised_spectrum.png", "apodised spectrum")
+        if ap.get("better_than_uniform") and ctx.cfg.apodise.use_in_layout:
+            L += ["The layout uses the apodised grating (`layout/grating_teeth.csv`).", ""]
+    elif ap.get("verified") is False:
+        L += ["The available fill factors cannot scatter weakly enough to shape the beam, so the "
+              "apodised design was not run in FDTD; a shallower (partial) etch gives weaker teeth.",
+              ""]
     return L
 
 
@@ -540,8 +643,12 @@ def _runs_section(ctx) -> list[str]:
             w.writerows(rows)
         linked = sum(1 for r in rows if r.get("url"))
         L += [f"{len(rows)} cloud simulation(s), {linked} with a link to open them in the Tidy3D "
-              f"web interface: `{_rel(ctx, table)}`. Links missing for runs made before Phase 12 "
-              "are filled in by `python -m tarang.design --out <folder> --runs`.", ""]
+              f"web interface: `{_rel(ctx, table)}`; a picture of each run's geometry is in "
+              "`figures/sims/` (same name as its cloud folder). "
+              + (f"{len(rows) - linked} run(s) made before Phase 12 have no link: "
+                 "`python -m tarang.design --out <folder> --runs` finds them in the task list of "
+                 "the Tidy3D account in use; runs made with another account stay without a link "
+                 "(their results are on disk)." if linked < len(rows) else ""), ""]
     s = credits.summary(ctx.cfg, ctx.out, ctx.state)
     L += [f"Credits (estimates): spent {s['spent']:.3f} of the {s['limit']:g} FC limit.", ""]
     if s["rows"]:

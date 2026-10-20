@@ -47,6 +47,27 @@ def pytest_collection_modifyitems(config, items):
 # --------------------------------------------------------------------------- #
 # Fake Tidy3D web API
 # --------------------------------------------------------------------------- #
+def fake_result(sim):
+    """An empty result of the right type; an EME simulation gets an S-matrix whose
+    fundamental-mode transmission rises with the swept taper length as 1 - exp(-L/40 um)
+    (a stand-in for an adiabatic taper)."""
+    if isinstance(sim, td.EMESimulation):
+        from tidy3d.components.data.data_array import EMESMatrixDataArray
+        from tidy3d.components.eme.data.dataset import EMESMatrixDataset
+        scales = list(sim.sweep_spec.scale_factors) if sim.sweep_spec else [1.0]
+        L0 = sim.size[0] - 4.0
+        n, m = len(scales), 2
+        t = np.sqrt(1 - np.exp(-np.array(scales) * L0 / 40.0))
+        vals = np.zeros((len(sim.freqs), n, m, m), complex)
+        vals[:, :, 0, 0] = t
+        coords = dict(f=list(sim.freqs), sweep_index=list(range(n)), mode_index_out=[0, 1],
+                      mode_index_in=[0, 1])
+        arr = EMESMatrixDataArray(vals, coords=coords)
+        sm = EMESMatrixDataset(S11=arr * 0, S12=arr, S21=arr, S22=arr * 0)
+        return td.EMESimulationData(simulation=sim, data=(), smatrix=sm)
+    return td.SimulationData(simulation=sim, data=())
+
+
 class FakeWeb:
     """Records calls; 'runs' a task by writing an empty SimulationData."""
 
@@ -87,8 +108,7 @@ class FakeWeb:
 
             def load(self, path_dir=".", **kw):
                 fake.calls.append(("batch_load", len(self.simulations)))
-                return {name: td.SimulationData(simulation=sim, data=())
-                        for name, sim in self.simulations.items()}
+                return {name: fake_result(sim) for name, sim in self.simulations.items()}
 
         self.Batch = Batch
 
@@ -123,7 +143,7 @@ class FakeWeb:
     def load(self, tid, path=None, verbose=False, **kw):
         self.calls.append(("load", tid))
         self.status[tid] = "success"
-        data = td.SimulationData(simulation=self.sims[tid], data=())
+        data = fake_result(self.sims[tid])
         data.to_file(str(path))
         return data
 

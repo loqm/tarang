@@ -27,6 +27,11 @@ def device_parameters(ctx) -> dict:
     xs, ring = ctx.results("cross_section"), ctx.results("ring")
     gap = ctx.state["stages"].get("gap", {}).get("results", {})
     gc = ctx.state["stages"].get("grating", {}).get("results", {})
+    tp = ctx.state["stages"].get("taper", {}).get("results", {}) or {}
+    use_tp = bool(tp) and not tp.get("skipped") and bool(cfg.taper.use_in_layout)
+    ap = ctx.state["stages"].get("apodise", {}).get("results", {}) or {}
+    use_ap = (bool(ap.get("verified")) and bool(ap.get("better_than_uniform"))
+              and bool(cfg.apodise.use_in_layout))
     lay = cfg.layout
     return {
         "name": cfg.run.name,
@@ -43,14 +48,18 @@ def device_parameters(ctx) -> dict:
         "grating_period_um": gc.get("period_um"),
         "grating_fill_factor": gc.get("fill_factor"),
         "grating_tooth_length_um": _r(gc["period_um"] * gc["fill_factor"]) if gc.get("period_um") else None,
-        "grating_teeth": gc.get("n_teeth"),
-        "grating_width_um": gc.get("width_um"),
+        "grating_teeth": len(ap["teeth"]) if use_ap else gc.get("n_teeth"),
+        "grating_apodised": use_ap,
+        "grating_teeth_list": [list(t) for t in ap["teeth"]] if use_ap else None,
+        "grating_width_um": (tp["grating_width_um"] if use_tp and tp.get("grating_width_um")
+                             else gc.get("width_um")),
         "grating_etch": gc.get("etch"),
         "grating_etch_depth_um": gc.get("etch_depth_um"),
         "fiber_angle_deg": gc.get("fiber_angle_deg"),
         "fiber_tilt": gc.get("fiber_tilt", "away" if gc.get("period_um") else None),
-        "fiber_position_um": gc.get("source_x_um"),
-        "taper_length_um": cfg.grating.taper_length_um,
+        "fiber_position_um": ap["source_x_um"] if use_ap else gc.get("source_x_um"),
+        "taper_length_um": (tp["taper_length_um"] if use_tp and tp.get("taper_length_um")
+                            else cfg.grating.taper_length_um),
         "tone": lay.tone,
         "trench_width_um": lay.trench_width_um,
         "layers": {"waveguide": list(lay.waveguide_layer), "ring": list(lay.ring_layer),
@@ -124,7 +133,8 @@ def _lle(ctx):
 
 
 def _write_parameters(p: dict, out: Path) -> list[Path]:
-    flat = {k: v for k, v in p.items() if k != "layers"}
+    flat = {k: v for k, v in p.items() if k not in ("layers", "grating_teeth_list")}
+    teeth = p.get("grating_teeth_list")
     flat.update({f"layer_{k}": v[0] for k, v in p["layers"].items()})
     flat.update({f"datatype_{k}": v[1] for k, v in p["layers"].items()})
     js = out / "parameters.json"
@@ -139,13 +149,24 @@ def _write_parameters(p: dict, out: Path) -> list[Path]:
             lines.append(f"p.{k} = '{v}';")
         else:
             lines.append(f"p.{k} = {v};")
+    if teeth:      # apodised grating: one row per tooth, [x_start, length] in um
+        lines.append("p.grating_teeth_list = [" + "; ".join(f"{a} {b}" for a, b in teeth) + "];")
+        flat["grating_teeth_list"] = "grating_teeth.csv"
     m.write_text("\n".join(lines) + "\n", encoding="utf-8")
     c = out / "parameters.csv"
     with open(c, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(["parameter", "value"])
         w.writerows(flat.items())
-    return [js, m, c]
+    files = [js, m, c]
+    if teeth:
+        t = out / "grating_teeth.csv"
+        with open(t, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f, lineterminator="\n")
+            w.writerow(["tooth", "x_start_um", "length_um"])
+            w.writerows([i, a, b] for i, (a, b) in enumerate(teeth))
+        files.append(t)
+    return files
 
 
 # ------------------------------------------------------------------------------- GDS
@@ -174,7 +195,19 @@ def build_gds(p: dict, out: Path) -> list[Path]:
         taper = gdstk.Polygon([(x0, -W / 2), (x0 + Lt, -Wg / 2), (x0 + Lt, Wg / 2), (x0, W / 2)],
                               **lay["taper"])
         g0 = x0 + Lt
-        if p.get("grating_etch") == "full":
+        tl = p.get("grating_teeth_list")
+        if tl:                             # apodised: explicit teeth from x = 0 at the grating start
+            ends = [a + b for a, b in tl]
+            L_g = tl[-1][0] + (tl[-1][0] - tl[-2][0] if len(tl) > 1 else tl[-1][1])
+            if p.get("grating_etch") == "full":
+                shapes = [gdstk.rectangle((g0 + a, -Wg / 2), (g0 + a + b, Wg / 2), **lay["grating"])
+                          for a, b in tl]
+            else:
+                shapes = [gdstk.rectangle((g0, -Wg / 2), (g0 + L_g, Wg / 2), **lay["taper"])]
+                starts = [a for a, _ in tl[1:]] + [L_g]
+                shapes += [gdstk.rectangle((g0 + e, -Wg / 2), (g0 + s_, Wg / 2), **lay["grating"])
+                           for e, s_ in zip(ends, starts) if s_ > e]
+        elif p.get("grating_etch") == "full":
             # full etch: the teeth are the remaining core; grooves are etched through
             shapes = [gdstk.rectangle((g0 + i * P, -Wg / 2), (g0 + i * P + ff * P, Wg / 2),
                                       **lay["grating"]) for i in range(n)]

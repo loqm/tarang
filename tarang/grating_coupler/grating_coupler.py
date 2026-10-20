@@ -84,6 +84,9 @@ class GratingConfig(RenamedAttributes):
 
     fiber_tilt: str = "towards"
     bandwidth_um: float = 0.1
+    # Apodised grating: explicit teeth as ((x_start, length), ...) in um, first tooth at
+    # x = 0; then period, ff and n_teeth only describe the design (n_teeth = len(teeth)).
+    teeth: tuple | None = None
 
     _renamed_attrs = {"cladding_height": "top_cladding_height",
                       "substrate_height": "handle_height"}
@@ -242,6 +245,12 @@ class GratingCoupler(CloudCachedDevice, RenamedAttributes):
         simulation.json beside the results and in the fingerprint."""
         cfg = self.config
         dim = "3D" if self.is_3d else "2D"
+        if cfg.teeth:
+            import hashlib
+            sig = ",".join(f"{a:.4f}:{b:.4f}" for a, b in cfg.teeth)
+            h = hashlib.sha256(sig.encode()).hexdigest()[:6]
+            return (f"gc{dim}_apod{len(cfg.teeth)}_{h}_e{cfg.etch_depth:.4f}_"
+                    f"sx{cfg.source_x:.4f}_{cfg.wavelength_um:.3f}um")
         return (
             f"gc{dim}_p{cfg.period:.4f}_ff{cfg.ff:.4f}_e{cfg.etch_depth:.4f}_"
             f"n{cfg.n_teeth}_sx{cfg.source_x:.4f}_{cfg.wavelength_um:.3f}um"

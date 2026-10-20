@@ -145,15 +145,18 @@ def get_active_simulation(
         name="Etched_Waveguide",
     )
 
-    # 4. Grating Teeth
+    # 4. Grating Teeth: uniform (period, ff, n_teeth) or an explicit list (apodised)
+    teeth = getattr(config, "teeth", None)
+    spans = ([(float(a), float(b)) for a, b in teeth] if teeth else
+             [(i * config.period, config.period * config.ff) for i in range(config.n_teeth)])
     gratings: list = []
-    for i in range(config.n_teeth):
-        tooth_center_x = (config.ff * config.period / 2) + (i * config.period)
+    for i, (x0_tooth, length) in enumerate(spans):
+        tooth_center_x = x0_tooth + length / 2
         tooth_center_z = config.core_height - (config.etch_depth / 2)
         tooth = td.Structure(
             geometry=td.Box(
                 center=(tooth_center_x, 0, tooth_center_z),
-                size=(config.period * config.ff, y_size, config.etch_depth),
+                size=(length, y_size, config.etch_depth),
             ),
             medium=core_medium,
             name=f"Tooth_{i}",
@@ -175,7 +178,10 @@ def get_active_simulation(
     floor = [] if full_etch else [etched_waveguide]
     structures = [cladding, *floor, slab_waveguide, box] + gratings
 
-    l_grating = config.n_teeth * config.period
+    if teeth and len(spans) > 1:     # the last tooth plus its gap (the last local period)
+        l_grating = spans[-1][0] + (spans[-1][0] - spans[-2][0])
+    else:
+        l_grating = config.n_teeth * config.period
     z_min_2d = -config.box_height - (
         config.handle_height if handle_medium is not None else config.buffer
     )

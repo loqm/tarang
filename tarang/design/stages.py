@@ -38,7 +38,8 @@ class Context:
         self.out.mkdir(parents=True, exist_ok=True)
         self.state_path = self.out / "state.json"
         self.state: dict = (json.loads(self.state_path.read_text(encoding="utf-8"))
-                            if self.state_path.exists() else {"stages": {}, "spent": 0.0})
+                            if self.state_path.exists() else {"stages": {}, "spent": 0.0,
+                                                              "figure_version": FIGURE_VERSION})
         self.state.setdefault("spend_log", [])
         self._media: dict = {}
         from tarang.design import visuals
@@ -186,7 +187,9 @@ class Context:
                 if info.get("url"):
                     ui.say(f"      Tidy3D: {info['url']}")
             elif event == "submitted":                    # one task of a batch
-                ui.say(f"      {name}: {info.get('url', '')}")
+                key = info.get("key") or ""
+                label_ = f"{key} ({name})" if key and key not in name else name
+                ui.say(f"      {label_}: {info.get('url', '')}")
             elif event == "reattached":
                 ui.say(f"  {label}: {name} was submitted before the last stop and is "
                        f"{info.get('status', 'running')} on Tidy3D; following it (no new charge)")
@@ -198,6 +201,31 @@ class Context:
                 count["n"] += 1
                 ui.say(f"      done in {fmt_minutes(info.get('seconds', 0))}")
         return progress_listener(show)
+
+    def sim_pictures(self, jobs: dict, z: Optional[float] = None) -> int:
+        """A picture of each simulation's geometry in figures/sims/, named like its cloud
+        folder (readable name + fingerprint), so every run and its Tidy3D link can be
+        checked by eye. ``jobs``: {label: (simulation, readable name)}. Existing pictures
+        are kept. Returns the number drawn."""
+        from tarang.design import visuals
+        from tarang.utilities.cloud_run import cache_paths
+        if not self.cfg.run.sim_pictures:
+            return 0
+        folder = self.out / "figures" / "sims"
+        n = 0
+        for label, (sim, readable) in jobs.items():
+            d, _ = cache_paths(folder, readable, sim)
+            path = d.with_suffix(".png")
+            if path.exists():
+                continue
+            try:                                     # one line for all, not one per picture
+                visuals.sim_picture(sim, path, f"{label}: {d.name}", z)
+                n += 1
+            except Exception as err:                 # noqa: BLE001 (a picture never stops a run)
+                self.ui.say(f"  (picture of {readable} not drawn: {type(err).__name__}: {err})")
+        if n:
+            self.ui.say(f"  geometry of {n} simulation(s): {folder}")
+        return n
 
     def account_ok(self, cost: Optional[float]) -> bool:
         """False (with the reason) if the Tidy3D account cannot pay for ``cost``:
@@ -550,10 +578,7 @@ def fig_bent_mode(ctx: Context, H: float, W: float, R: float) -> dict:
         st = localmodes.te00(localmodes.cross_section_modes(ctx, H, W, num_modes=2))
         bt = localmodes.te00(localmodes.cross_section_modes(ctx, H, W, bend_radius=R, num_modes=4))
         info.update(shift_nm=1e3 * (bt["yc"] - st["yc"]), n_eff_bent=bt["neff"])
-        return visuals.mode_profiles([("TE00 straight", st), (f"TE00 bent, R = {R:g} µm", bt)],
-                                     H, W, ctx.path("figures", "3b_bent_mode.png"),
-                                     f"Bent mode: shifted {info['shift_nm']:+.1f} nm towards the "
-                                     "outside of the ring", components=False)
+        return visuals.bent_mode(st, bt, H, W, R, ctx.path("figures", "3b_bent_mode.png"))
     visuals.safe(ctx, "bent mode", draw)
     return info
 
@@ -824,6 +849,8 @@ def stage_gap(ctx: Context) -> dict:
                       f"{span:g}° partial ring)", cost, ctx.budget_left):
         return dict(skipped=True)
 
+    ctx.sim_pictures({f"gap {g:g} µm": (d.sim, d._readable_name()) for g, d in devices.items()},
+                     z=H / 2)
     volume = 2 * math.pi * R * W * H
     with ctx.cloud_limit(), ctx.cloud_progress("gap sweep", len(jobs)), \
             warnings.catch_warnings():
@@ -1009,13 +1036,16 @@ def stage_grating(ctx: Context) -> dict:
         if not ui.proceed(f"{label}: {len(points)} {'3D' if is_3d else '2D'} grating "
                           f"simulations ({len(todo)} not computed yet)", cost, ctx.budget_left):
             return None
+        ctx.sim_pictures({f"{label}, P {pt[0]:g}, FF {pt[1]:g}, fibre {pt[2]:g} µm":
+                          (d.sim, d._readable_name()) for pt, d in devs.items()})
         if todo:
             jobs = {pt: (d.sim, d._readable_name()) for pt, d in devs.items()
                     if not d.is_cached(folder)}
             ui.say(f"  submitting {len(jobs)} runs together (they run in parallel) ...")
             cap = float(cfg.run.max_cost_per_run) * len(jobs)
             with ctx.cloud_progress(label, 1):
-                run_batch_cached({f"{pt}": job for pt, job in jobs.items()}, folder, max_cost=cap)
+                run_batch_cached({name: (sim, name) for sim, name in jobs.values()}, folder,
+                                 max_cost=cap)
         out = []
         for pt, d in devs.items():
             wls, eta = d.get_spectrum(folder)
@@ -1113,6 +1143,8 @@ def stage_grating(ctx: Context) -> dict:
             best3d = r3[0]
 
     # ---- figures and table of the final design
+    visuals.safe(ctx, "grating map", visuals.grating_landscape, stage_a, best,
+                 ctx.path("figures", "5b_grating_map.png"), wl, final)
     fdev = device(final["period_um"], final["fill_factor"], final["source_x_um"])
     wls, eta = fdev.get_spectrum(folder)
     summ = spectrum_summary(wls, eta, wl)
@@ -1169,7 +1201,7 @@ def stage_grating(ctx: Context) -> dict:
 
 def grating_device(ctx: Context, period: float, ff: float, sx: float, *, H: float,
                    depth: float, angle: Optional[float] = None, is_3d: bool = False,
-                   mesh: float = 1.0):
+                   mesh: float = 1.0, teeth: Optional[list] = None):
     """The grating-coupler device of this design (2D unless ``is_3d``). ``angle``
     overrides the fibre angle and ``mesh`` scales the mesh steps (tolerance and mesh
     checks); the defaults give exactly the grating stage's simulations."""
@@ -1184,8 +1216,10 @@ def grating_device(ctx: Context, period: float, ff: float, sx: float, *, H: floa
                          top_cladding_height=cfg.stack.cladding_height_um,
                          box_height=cfg.stack.box_height_um, handle_height=3.0,
                          etch_depth=depth, period=round(period, 4), ff=round(ff, 4),
-                         n_teeth=g.n_teeth, w_grating=g.width_um, pol_angle=math.pi / 2,
-                         buffer=3.0, fiber_tilt=g.fiber_tilt, bandwidth_um=g.bandwidth_um)
+                         n_teeth=len(teeth) if teeth else g.n_teeth, w_grating=g.width_um,
+                         pol_angle=math.pi / 2, buffer=3.0, fiber_tilt=g.fiber_tilt,
+                         bandwidth_um=g.bandwidth_um,
+                         teeth=tuple((float(a), float(b)) for a, b in teeth) if teeth else None)
     kw = {} if mesh == 1.0 else dict(fine_steps_per_wvl=int(round(15 * mesh)),
                                      coarse_steps_per_wvl=int(round(10 * mesh)))
     return GratingCoupler.from_config(gcfg, core_medium=ctx.medium(m.core),
@@ -1285,6 +1319,10 @@ STAGES: list[tuple[str, str, str, Callable[[Context], dict]]] = [
     ("grating", "Grating coupler", "cloud", stage_grating),
     ("checks", "Checks: tolerances, mode families, losses, band, grating budget", "cloud",
      lambda ctx: __import__("tarang.design.checks", fromlist=["stage_checks"]).stage_checks(ctx)),
+    ("taper", "Taper: grating width for the fibre and taper length (EME)", "cloud",
+     lambda ctx: __import__("tarang.design.taper", fromlist=["stage_taper"]).stage_taper(ctx)),
+    ("apodise", "Apodised grating (scattering shaped like the fibre mode)", "cloud",
+     lambda ctx: __import__("tarang.design.apodise", fromlist=["stage_apodise"]).stage_apodise(ctx)),
     ("layout", "Layout (GDS) and parameter export", "local", stage_layout),
     ("report", "Report and tables", "local", stage_report),
 ]
@@ -1298,9 +1336,16 @@ DEPENDS = {
     "gap": ("gap",),
     "grating": ("grating",),
     "checks": ("checks",),
+    "taper": ("taper",),
+    "apodise": ("apodise",),
     "layout": ("layout",),
     "report": (),
 }
+
+
+# Version of the figures' drawing: a run made with an older version gets its figures redrawn
+# from saved results when its report is written (checks.redraw_saved_figures).
+FIGURE_VERSION = 2
 
 
 # Settings that only label where a value came from (the values themselves are hashed):

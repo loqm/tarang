@@ -243,15 +243,23 @@ def cache_paths(output_dir: PathLike, readable_name: str, sim: td.Simulation) ->
     return Path(output_dir) / f"{readable_name}_{fp[:FINGERPRINT_LEN]}", fp
 
 
-def _stored_fingerprint(directory: Path) -> Optional[str]:
-    """Fingerprint of the simulation saved in a cache directory, or None."""
+def _data_class(sim):
+    """Result class of a simulation type (Simulation -> SimulationData, EMESimulation ->
+    EMESimulationData, ...)."""
+    return getattr(td, type(sim).__name__ + "Data", td.SimulationData)
+
+
+def _stored_fingerprint(directory: Path, cls=None) -> Optional[str]:
+    """Fingerprint of the simulation saved in a cache directory, or None. ``cls``: its
+    Tidy3D class (default Simulation; EMESimulation for EME runs)."""
+    cls = cls or td.Simulation
     sim_json = directory / SIM_FILE
     data_file = directory / DATA_FILE
     try:
         if sim_json.exists():
-            return sim_fingerprint(td.Simulation.from_file(str(sim_json)))
+            return sim_fingerprint(cls.from_file(str(sim_json)))
         if data_file.exists():
-            return sim_fingerprint(td.Simulation.from_hdf5(str(data_file), group_path="simulation"))
+            return sim_fingerprint(cls.from_hdf5(str(data_file), group_path="simulation"))
     except Exception as exc:  # unreadable or partial file
         logger.warning(f"Could not read the simulation stored in {directory}: {exc}")
     return None
@@ -275,14 +283,15 @@ def find_cached(
         data_file = cand / DATA_FILE
         if not data_file.exists():
             continue
-        stored = _stored_fingerprint(cand)
+        stored = _stored_fingerprint(cand, type(sim))
         if stored == fp:
             return data_file
         if stored is None:
             continue
         try:
-            old = (td.Simulation.from_file(str(cand / SIM_FILE)) if (cand / SIM_FILE).exists()
-                   else td.Simulation.from_hdf5(str(data_file), group_path="simulation"))
+            cls = type(sim)
+            old = (cls.from_file(str(cand / SIM_FILE)) if (cand / SIM_FILE).exists()
+                   else cls.from_hdf5(str(data_file), group_path="simulation"))
             changed = _explain(_diff_top_level(_sim_dict(old), _sim_dict(sim)))
         except Exception:
             changed = "unknown"
@@ -533,7 +542,7 @@ def run_cached(
         if hit is not None:
             logger.info(f"Cache hit (fingerprint {fp[:FINGERPRINT_LEN]}). Loading {hit} ...")
             _emit("cached", name=readable_name, fingerprint=fp[:FINGERPRINT_LEN])
-            return CachedRun(td.SimulationData.from_file(str(hit)), hit, True, 0.0, fp)
+            return CachedRun(_data_class(sim).from_file(str(hit)), hit, True, 0.0, fp)
 
     ensure_api_key()
 
@@ -688,7 +697,7 @@ def run_batch_cached(
                                   estimated_cost=each, status="running", submitted=_now(),
                                   fingerprint=fp[:FINGERPRINT_LEN])
                 _emit("submitted", name=readable, fingerprint=fp[:FINGERPRINT_LEN], cost=each,
-                      task_id=tid, url=task_url(tid))
+                      task_id=tid, url=task_url(tid), key=str(key))
         _emit("running", name=f"batch of {len(pending)}", fingerprint="", cost=cost)
     for task, (key, rec) in reattach.items():
         _, readable = names[task]

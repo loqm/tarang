@@ -198,8 +198,8 @@ each starts with a table of the functions it shows):
 material data cover:
 
 ```
-materials -> cross-section (H x W) -> ring (radius, Q, D_int) -> ring-bus gap -> grating coupler -> checks -> layout -> report
-   local           local                    local                  cloud            cloud        free + cloud  local    local
+materials -> cross-section -> ring -> ring-bus gap -> grating coupler -> checks -> taper -> apodised grating -> layout -> report
+  local          local        local      cloud             cloud        free+cloud  free+cloud    cloud           local     local
 ```
 
 Each stage asks only what it needs (the default is shown; Enter accepts it), then prints
@@ -225,12 +225,14 @@ Below, `D` stands for your design's settings file, e.g. `design_runs/my_ring/des
 | run some stages only | `python -m tarang.design --config D --only gap,grating` |
 | run a stage again (new results beside the old) | `python -m tarang.design --config D --only grating --redo grating` |
 | run the extra checks (tolerances, band, mode families, loss budget) | `python -m tarang.design --config D --only checks` |
+| design the taper and the apodised grating, then the layout and report | `python -m tarang.design --config D --only taper,apodise,layout,report` |
+| redraw a design's figures in the current style (free) | `python -m tarang.design --config D --only report --redo report` |
 | open each figure as it is made | add `--show` |
 | list the stages | `python -m tarang.design --list` |
 | credits: limit, spent, what on, account balance | `python -m tarang.design --config D --credits` |
 | set this design's credit limit to 20 FC | `python -m tarang.design --config D --budget 20` |
 | start the spend count at 0 again (e.g. before a new phase) | `python -m tarang.design --config D --reset-spent` |
-| list every cloud run with its Tidy3D web link | `python -m tarang.design --config D --runs` |
+| list every cloud run with its Tidy3D web link (and draw a picture of each one's geometry) | `python -m tarang.design --config D --runs` |
 | figure formats and resolution | in `D`: `run.figure_formats = ["png", "pdf"]` (also `"svg"`), `run.figure_dpi = 300` |
 
 **Stopping is always safe.** Type `q` at any question, or press Ctrl+C at any time
@@ -246,11 +248,13 @@ is not run. `--budget` changes the limit, `--reset-spent` starts the total at 0 
 (the history stays in `state.json`; `--credits` shows it by stage and date). Neither
 changes your Tidy3D account. `run.max_cost_per_run` caps any single simulation.
 
-**Web links.** Every cloud run is recorded in a `task.json` next to its results, with
-its Tidy3D task id and a link that opens the simulation (geometry, sources, monitors,
-results) in the Tidy3D web interface; the links are printed as runs start and listed in
-`tables/cloud_runs.csv` and the report. `--runs` also finds the links of runs made
-before these records existed.
+**Web links and pictures.** Every cloud run is recorded in a `task.json` next to its
+results, with its Tidy3D task id and a link that opens the simulation (geometry, sources,
+monitors, results) in the Tidy3D web interface; the links are printed as runs start and
+listed in `tables/cloud_runs.csv` and the report. A picture of each run's geometry is saved
+in `figures/sims/`, named like its cloud folder (`run.sim_pictures`). `--runs` also finds
+the links of runs made before these records existed, as long as they were made with the
+Tidy3D account of the current API key (a link only opens in the account that ran it).
 
 | Stage | Asks for | Produces |
 |---|---|---|
@@ -260,6 +264,8 @@ before these records existed.
 | Gap | gaps, over-coupling ratio | coupled power per gap (read where light enters the ring), critical and over-coupled gap, loaded *Q* |
 | Grating coupler | etch, fibre angle, orientation and MFD, smallest feature | spectra of a period × fill-factor map, the period tuned onto your wavelength, fill-factor / period / fibre-position sensitivity, 1 dB and 3 dB bandwidths; optional 3D check |
 | Checks | which checks (each cloud check is priced first) | gap tolerance (K, loaded Q, dip depth), coupled-mode-theory check of the gap, FSR tolerance, ring mode families and crossings, fibre-to-fibre loss budget; optional: coupling across the band, grating angle / film / tooth-width tolerances, back-reflection and directionality, mesh checks |
+| Taper | grating width (or the best for the fibre), taper lengths to try, loss accepted | lateral overlap of the fibre with the grating against its width (effective-index method, free), taper loss against length (one Tidy3D EME run), the shortest taper below the accepted loss; the layout uses both |
+| Apodised grating | fill factors to measure, whether to check in FDTD | scattering strength and phase-matched period of each fill factor (small 2D runs), a tooth list whose scattering follows the fibre's Gaussian, the predicted gain (1D model, before anything else is paid), a 2D FDTD check; the layout uses it when it beats the uniform grating |
 | Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv`, layout figure; `lle/` inputs for a comb (Lugiato-Lefever) solver, incl. pyLLE's dispersion-file format |
 | Report | | `report.md` with every figure, `benchmark_pack/` (and its zip), `design_summary.json`, `tables/cloud_runs.csv` |
 
