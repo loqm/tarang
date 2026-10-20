@@ -33,6 +33,8 @@ class Run:
     figure_formats: list = _f(["png", "pdf"], "Figure files to write: png (raster), pdf and/or svg "
                                               "(vector, for papers and slides)")
     figure_dpi: int = _f(300, "Resolution of png figures", "dpi")
+    sim_pictures: bool = _f(True, "Save a picture of the geometry of every cloud simulation "
+                                  "(figures/sims/, named like its cloud folder)")
 
 
 @dataclass
@@ -151,6 +153,32 @@ class Checks:
 
 
 @dataclass
+class Taper:
+    grating_width_um: Optional[float] = _f(None, "Grating width to use (empty: the width that best "
+                                                 "matches the fibre mode)", "um")
+    widths_um: list = _f([], "Grating widths for the fibre-overlap curve (empty: 0.8-2.2 x MFD)",
+                         "um")
+    run_eme: bool = _f(True, "Taper loss against length with Tidy3D EME (one cloud run, priced "
+                             "first)")
+    lengths_um: list = _f([], "Taper lengths to evaluate (empty: 5-500 um)", "um")
+    max_loss_db: float = _f(0.05, "Largest taper loss accepted when choosing the length", "dB")
+    eme_cells: int = _f(30, "EME cells along the taper (more = closer to a smooth taper)")
+    eme_modes: int = _f(8, "Modes per EME cell (even modes only)")
+    use_in_layout: bool = _f(True, "Use this grating width and taper length in the layout")
+
+
+@dataclass
+class Apodise:
+    fill_factors: list = _f([], "Fill factors whose scattering strength is measured (empty: 0.5 "
+                                "up to the largest the smallest feature allows)")
+    verify: bool = _f(True, "Check the apodised design in 2D FDTD (about 9 small runs: fibre "
+                            "position and period scale around the design)")
+    max_teeth: int = _f(60, "Most teeth of the apodised grating")
+    use_in_layout: bool = _f(True, "Use the apodised grating in the layout when it beats the "
+                                   "uniform one")
+
+
+@dataclass
 class Assumptions:
     n2_m2_w: float = _f(2.4e-19, "Kerr index of the core for the threshold estimate (Si3N4: "
                                  "Ikeda et al., Opt. Express 16, 12987 (2008))", "m^2/W")
@@ -175,8 +203,9 @@ class Layout:
 LEGACY = {"gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1}}
 
 SECTIONS = {"run": Run, "materials": Materials, "stack": Stack, "cross_section": CrossSection,
-            "ring": Ring, "gap": Gap, "grating": Grating, "checks": Checks, "layout": Layout,
-            "assumptions": Assumptions}
+            "ring": Ring, "gap": Gap, "grating": Grating, "checks": Checks, "taper": Taper,
+            "apodise": Apodise,
+            "layout": Layout, "assumptions": Assumptions}
 
 
 @dataclass
@@ -189,6 +218,8 @@ class DesignConfig:
     gap: Gap = field(default_factory=Gap)
     grating: Grating = field(default_factory=Grating)
     checks: Checks = field(default_factory=Checks)
+    taper: Taper = field(default_factory=Taper)
+    apodise: Apodise = field(default_factory=Apodise)
     layout: Layout = field(default_factory=Layout)
     assumptions: Assumptions = field(default_factory=Assumptions)
     given: set = field(default_factory=set, repr=False, compare=False)   # "section.key" read from a file

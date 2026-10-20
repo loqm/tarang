@@ -44,6 +44,7 @@ def get_passive_simulation(
 
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
+    inner_box_recess_um: float = 0.1,  # air inside the ring reaches this deep into the BOX
 ) -> HalfRingResonator:
     """Constructs a truncated half-ring resonator passive simulation wrapped in a
     HalfRingResonator object.
@@ -102,11 +103,21 @@ def get_passive_simulation(
         name="Ring_Outer",
     )
 
+    # The hole that leaves the ring is 0.1 um taller than the core above it; below it
+    # reaches inner_box_recess_um into the BOX (0.1: the original symmetric cylinder, kept
+    # bit-for-bit so earlier results stay valid; 0: a flat BOX, as fabricated).
+    recess = float(inner_box_recess_um)
+    if not np.isfinite(recess) or not 0 <= recess < box_height:
+        raise ValueError("inner_box_recess_um must be >= 0 and smaller than box_height.")
+    if recess == 0.1:
+        hole_center, hole_length = wg_height / 2.0, wg_height + 0.200
+    else:
+        hole_center, hole_length = (wg_height + 0.1 - recess) / 2.0, wg_height + 0.1 + recess
     ring_inner = td.Structure(
         geometry=td.Cylinder(
-            center=(0, 0, wg_height / 2.0),
+            center=(0, 0, hole_center),
             radius=radius - wg_width / 2.0,
-            length=wg_height + 0.200,
+            length=hole_length,
             axis=2,
         ),
         medium=hole_medium,
@@ -214,6 +225,7 @@ def get_active_simulation(
 
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
+    inner_box_recess_um: float = 0.1,  # air inside the ring reaches this deep into the BOX
 ) -> HalfRingResonator:
     """Constructs an active half-ring simulation with mode sources and monitors.
     Return a wrapped device ready for explicit simulation execution.
@@ -233,6 +245,7 @@ def get_active_simulation(
         coarse_steps_per_wvl=coarse_steps_per_wvl,
         wg_length=wg_length,
         run_time=run_time,
+        inner_box_recess_um=inner_box_recess_um,
     )
 
     sim_passive = resonator_obj.sim

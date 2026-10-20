@@ -223,6 +223,49 @@ def mode_profiles(rows: list, H: float, W: float, path: Path, title: str,
     return _save(fig, path)
 
 
+def bent_mode(straight: dict, bent: dict, H: float, W: float, R: float, path: Path) -> Path:
+    """Straight and bent TE00 (|E|^2 maps) and a cut through the middle of the core: the
+    bend pushes the mode towards the outside of the ring by a few nm, too little to see in
+    the maps but clear in the cut and its centroid."""
+    plt = _plt()
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.0), gridspec_kw=dict(width_ratios=[1, 1, 1.25]))
+    shift = 1e3 * (bent["yc"] - straight["yc"])
+    for ax, (lab, m) in zip(axes[:2], (("straight", straight), (f"bent, R = {R:g} µm", bent))):
+        e2 = sum(np.abs(v) ** 2 for v in m["fields"].values())
+        im = ax.pcolormesh(m["y"], m["z"], (e2 / e2.max()).T, shading="auto", cmap="magma",
+                           vmin=0, vmax=1)
+        ax.add_patch(plt.Rectangle((-W / 2, 0), W, H, fill=False, ec="w", lw=1))
+        ax.axvline(m["yc"], color="#56B4E9", lw=1, ls="--")
+        ax.set(xlim=(-W / 2 - 1.2, W / 2 + 1.2), ylim=(-1.0, H + 0.9), aspect="equal",
+               xlabel="y (µm), outside of the ring → +y", ylabel="z (µm)",
+               title=f"TE00 {lab}: n_eff {m['neff']:.5f}")
+        fig.colorbar(im, ax=ax, shrink=0.75, label="|E|² (normalised)")
+    ax = axes[2]
+    cuts = {}
+    for lab, m, col, ls in (("straight", straight, "k", "-"), ("bent", bent, "#D55E00", "--")):
+        e2 = sum(np.abs(v) ** 2 for v in m["fields"].values())
+        iz = int(np.argmin(np.abs(np.asarray(m["z"]) - H / 2)))
+        cut = e2[:, iz] / e2[:, iz].max()
+        cuts[lab] = (np.asarray(m["y"]), cut)
+        ax.plot(m["y"], cut, ls, color=col, lw=1.8, label=f"{lab}: centroid {m['yc'] * 1e3:+.1f} nm")
+        ax.axvline(m["yc"], color=col, ls=ls, lw=0.8)
+    ys, cs = cuts["straight"]
+    diff = np.interp(ys, *cuts["bent"]) - cs           # what the bend moves: out of -y, into +y
+    tw = ax.twinx()
+    tw.fill_between(ys, diff, color="#56B4E9", alpha=0.45, lw=0, label="bent − straight")
+    tw.axhline(0, color="#56B4E9", lw=0.6)
+    lim = max(float(np.abs(diff).max()), 1e-9) * 1.15
+    tw.set(ylim=(-lim, lim), ylabel="bent − straight (right axis)")
+    tw.legend(fontsize=8, loc="lower right")
+    ax.axvspan(-W / 2, W / 2, color="0.9", zorder=0)
+    ax.set(xlim=(-W / 2 - 1.2, W / 2 + 1.2), ylim=(0, 1.05), xlabel="y (µm)",
+           ylabel="|E|² through the middle of the core", title=f"outward shift {shift:+.1f} nm")
+    ax.legend(fontsize=8)
+    fig.suptitle(f"Bent mode: the bend (R = {R:g} µm) shifts TE00 by {shift:+.1f} nm towards the "
+                 "outside of the ring")
+    return _save(fig, path)
+
+
 def supermodes(sm: dict, H: float, W: float, path: Path, theta_est: Optional[float],
                theta_fdtd: Optional[float]) -> Path:
     """Even and odd TE supermodes of the bus and the ring at one gap (cross-section at the
@@ -290,6 +333,30 @@ def sim_views(sim, path: Path, views: list[dict], title: str,
     if notes:
         fig.text(0.01, 0.005, notes, fontsize=8, va="bottom")
     return _save(fig, path)
+
+
+def sim_picture(sim, path: Path, title: str, z: Optional[float] = None) -> Path:
+    """Geometry of one simulation as Tidy3D draws it (structures, sources, monitors,
+    boundaries): the simulation plane for a 2D run; a top view (at height ``z``) and the
+    cross-section x = centre for a 3D run. PNG only, 150 dpi: one per cloud run."""
+    plt = _plt()
+    zero = [i for i, s in enumerate(sim.size) if s == 0]
+    if zero:
+        ax_name = "xyz"[zero[0]]
+        views = [({ax_name: sim.center[zero[0]]}, f"{ax_name} = {sim.center[zero[0]]:g} µm plane")]
+    else:
+        zc = sim.center[2] if z is None else z
+        views = [(dict(z=zc), f"top view at z = {zc:.2f} µm"),
+                 (dict(x=sim.center[0]), f"cross-section at x = {sim.center[0]:g} µm")]
+    fig, axes = plt.subplots(len(views), 1, figsize=(10, 3.6 * len(views)), squeeze=False)
+    for ax, (view, sub) in zip(axes[:, 0], views):
+        sim.plot(ax=ax, **view)
+        ax.set_title(sub, fontsize=9)
+    fig.suptitle(title, fontsize=10)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = _write(fig, path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out
 
 
 def grating_geometry(device, path: Path, title: str) -> Path:
@@ -437,9 +504,10 @@ def gap_field_map(data, path: Path, wavelength_um: float, gap_um: float, title: 
         ax.set_ylabel(f"{axes_[1]} (µm)")
         if zoom:
             yb = y[np.argmax(e2[np.argmin(np.abs(x - x.min() - 0.1 * (x.max() - x.min())))])]
-            ax.set_xlim(-12, 12)
-            ax.set_ylim(yb - 2.5, yb + 4.5)
-            ax.set_title("coupling region")
+            ax.set_xlim(max(-12, float(x.min())), min(12, float(x.max())))
+            ax.set_ylim(max(yb - 2.5, float(y.min())), min(yb + 4.5, float(y.max())))
+            ax.set_title("coupling region (stripes of period λ/2n_eff mean light travelling "
+                         "both ways, i.e. a reflection)", fontsize=9.5)
         else:
             ax.set_title(title)
         fig.colorbar(im, ax=ax, shrink=0.85, label="log₁₀ |E|² (normalised)")
@@ -447,24 +515,35 @@ def gap_field_map(data, path: Path, wavelength_um: float, gap_um: float, title: 
 
 
 # =============================================================== grating
-def grating_landscape(rows: list[dict], best: dict, path: Path, target_um: float) -> Path:
+def grating_landscape(rows: list[dict], best: dict, path: Path, target_um: float,
+                      final: Optional[dict] = None) -> Path:
     """Peak efficiency and efficiency at the design wavelength over (fill factor,
-    period), with the peak wavelength written at every point."""
+    period), with the peak wavelength written at every point. The best point of the map is
+    outlined; the final design (after the later steps), if given, is a star."""
     plt = _plt()
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5.4))
     ff = np.array([r["fill_factor"] for r in rows])
     P = np.array([r["period_um"] for r in rows])
     for ax, key, title in ((axes[0], "peak_efficiency", "Peak efficiency (any wavelength)"),
                            (axes[1], "efficiency_at_target",
                             f"Efficiency at {target_um} µm")):
         v = np.array([r[key] for r in rows])
-        sc = ax.scatter(ff, P, c=v, s=520, marker="s", cmap="viridis", vmin=0,
-                        vmax=max(v.max(), 1e-3))
-        for r in rows:
+        vmax = max(v.max(), 1e-3)
+        sc = ax.scatter(ff, P, c=v, s=520, marker="s", cmap="viridis", vmin=0, vmax=vmax)
+        for r in rows:                         # dark text on the bright end of the colour map
             ax.annotate(f"{r[key] * 100:.0f}%\n{r['peak_wavelength_um'] * 1e3:.0f}",
                         (r["fill_factor"], r["period_um"]), ha="center", va="center",
-                        fontsize=6.5, color="w")
-        ax.plot(best["fill_factor"], best["period_um"], "x", color="red", ms=14, mew=3)
+                        fontsize=6.5, color="k" if r[key] > 0.6 * vmax else "w")
+        ax.scatter([best["fill_factor"]], [best["period_um"]], s=760, marker="s",
+                   facecolors="none", edgecolors="#D55E00", linewidths=2.2,
+                   label="best of this map")
+        if final:
+            ax.scatter([final["fill_factor"]], [final["period_um"]], s=260, marker="*",
+                       color="#D55E00", edgecolors="k", linewidths=0.8, zorder=5,
+                       label=f"final design (FF {final['fill_factor']:g}, "
+                             f"P {final['period_um']:.4f} µm)")
+        ax.legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2,
+                  markerscale=0.45, frameon=False)
         ax.set_xlabel("Fill factor (tooth / period)")
         ax.set_ylabel("Period (µm)")
         ax.set_title(title + "\n(label: efficiency, peak wavelength in nm)", fontsize=10)
@@ -519,8 +598,8 @@ def grating_spectrum(wl, eta, summary: dict, path: Path, title: str) -> Path:
     db = 10 * np.log10(np.clip(eta, 1e-6, None))
     ax.plot(np.asarray(wl) * 1e3, db, lw=2)
     peak_db = 10 * np.log10(max(summary["peak_efficiency"], 1e-6))
-    ax.axhline(peak_db - 1, ls=":", color="0.5")
-    ax.axhline(peak_db - 3, ls=":", color="0.7")
+    ax.axhline(peak_db - 1, ls=":", color="0.45", label="1 dB below the peak")
+    ax.axhline(peak_db - 3, ls="-.", color="0.6", lw=1, label="3 dB below the peak")
     ax.axvline(summary.get("target_um", 1.55) * 1e3, ls="--", color="red", lw=1,
                label="design wavelength")
     if "band_1db_lo_um" in summary:

@@ -15,6 +15,33 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **Taper stage** (`--only taper`). The grating width that best matches the fibre: the
+  lateral overlap η_y of the fibre's Gaussian with the grating's fundamental lateral mode
+  (effective-index method; free), so the 3D efficiency is about η_2D·η_y (for the 1550 nm
+  design the optimum is about 14.5 µm, η_y 99 % against 97 % at 12 µm). The taper length:
+  one Tidy3D EME run of the linear taper (even modes, 30 cells) gives the fundamental-mode
+  transmission against length (EMELengthSweep), and the shortest taper below
+  `taper.max_loss_db` is chosen. The layout and the fibre-to-fibre loss budget use both
+  (`taper.use_in_layout`).
+- **Apodised grating stage** (`--only apodise`). The scattering strength α and the
+  phase-matched period of each fill factor are measured on uniform gratings (small 2D
+  runs: TE0 launched from the waveguide, field 1.5 µm above the grating; the decay of |E|²
+  gives α, its phase slope the Bloch index). The tooth list follows
+  α(x) = A·G²/(2(1 − A∫G²)) so the emitted light has the fibre's Gaussian shape; a 1D
+  emission model (uniform grating: the textbook 80 % ceiling) predicts the gain before the
+  2D FDTD check is priced. When the apodised grating beats the uniform one, the layout uses
+  it (`layout/grating_teeth.csv`, and the teeth as a matrix in `parameters.m`).
+  `GratingConfig(teeth=...)` builds a grating from an explicit tooth list.
+- **Reflections.** The arc-end reflection of the partial ring and the bus reflection are
+  read from the saved gap runs (free; checks stage, report). The reverse grating run is a
+  closed box: a plane behind the source adds the light scattered backwards.
+- **A picture of every cloud run's geometry** in `figures/sims/`, named like its cloud
+  folder; `--runs` draws them for earlier runs too. Batch links name their case
+  (e.g. `angle 11° (gc2D_...)`), so runs with the same name can be told apart.
+- `inner_box_recess_um` for the full- and half-ring builders as well (0.1 keeps the old
+  geometry bit for bit; 0 gives a flat BOX).
+- EME simulations go through the same verified cache as FDTD runs.
+
 - **Every cloud run has a web link and survives Ctrl+C.** Each run writes `task.json`
   (Tidy3D task id, a link that opens the simulation in the Tidy3D web interface, status,
   estimated and billed cost, date) next to its results; links are printed as runs start and
@@ -138,6 +165,16 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Changed
 
+- **Figures.** 3b bent mode with a cut and the bent − straight difference (the 4 nm shift
+  is visible); 4d field map zoom kept inside the data, with the standing-wave stripes
+  explained; 5b grating map: the best point outlined, the final design starred, readable
+  labels; 5d: the 1 dB and 3 dB lines labelled; 7a: a smooth fit of κ²(λ), the K = 1
+  wavelengths marked, the resonance depth drawn from the fit (the sampled points made the
+  peaks look finite); 7b: distinct line styles. Runs made before keep their results and get
+  the new figures, free, when their report is next written.
+- The report ends with "Known limits"; the loss budget includes the taper and the lateral
+  overlap once the taper stage has run.
+
 - **Grating couplers are fed "towards" the waveguide by default.** Before, any `theta_deg`
   was made negative, which always gave a beam travelling away from the waveguide
   (period λ / (n_eff + sin θ)); the usual two-fibre setup (fibres on two holders forming a
@@ -184,6 +221,8 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Fixed
 
+- Runs made with another Tidy3D account are reported as such (their links cannot be found
+  with the current API key) instead of suggesting `--runs` would find them.
 - `--budget`, `--credits` and the other credit commands given only `--out` now use that
   design's saved settings (before, `--budget` with `--out` alone wrote default settings
   into its `design.toml`).

@@ -28,7 +28,8 @@ from typing import Optional
 import numpy as np
 
 from tarang.design import physics
-from tarang.design.stages import (C_UM, Context, _estimate, fig_bent_mode, fig_mode_profiles,
+from tarang.design.stages import (C_UM, FIGURE_VERSION, Context, _estimate, fig_bent_mode,
+                                  fig_mode_profiles,
                                   gap_extras, grating_device, _gap_device)
 
 LOG10E = 10 * math.log10(math.e)
@@ -182,17 +183,64 @@ def mode_families(ctx: Context) -> list[dict]:
     return rows
 
 
+def arc_reflection(ctx: Context, gap: dict) -> list[dict]:
+    """Reflections in the saved gap runs (free, from their mode monitors at the design
+    wavelength). The partial-ring arcs end inside the simulation box, so light that entered
+    the ring is partly reflected at the arc end and comes back: at the ring port
+    'Ring_Out_Right' that is the backward-travelling amplitude, R_arc = |a-|^2 / |a+|^2.
+    In the bus, the backward amplitude at the input monitor gives R_bus (what returns
+    towards the source, both from the bus end and from the ring)."""
+    from tarang.utilities.sweep_helpers import cache_dir as sweep_cache_dir
+    rows = []
+    f0 = C_UM / ctx.cfg.run.wavelength_um
+    folder = Path(gap.get("folder") or ctx.out / "cloud" / "gap_sweep")
+    for g in gap.get("gaps_um") or []:
+        try:
+            d = _gap_device(ctx, g)
+            cache = sweep_cache_dir(folder, d)
+            if not d.is_cached(cache):
+                continue
+            row = reflections(d._run_sim(cache), f0)
+        except Exception:                                         # noqa: BLE001
+            continue
+        rows.append(dict(gap_um=g, **row))
+    return rows
+
+
+def reflections(data, f0: float) -> dict:
+    """Forward and backward power in the ring port and the bus input of one gap run."""
+    def power(mon, direction):
+        a = data[mon].amps.sel(direction=direction, mode_index=0)
+        return float(np.abs(np.asarray(a.sel(f=f0, method="nearest").values)) ** 2)
+    fw, bw = power("Ring_Out_Right", "+"), power("Ring_Out_Right", "-")
+    bus_f, bus_b = power("Through_In", "+"), power("Through_In", "-")
+    return dict(ring_forward=fw, ring_backward=bw,
+                arc_end_reflection=bw / fw if fw > 0 else float("nan"),
+                bus_reflection=bus_b / bus_f if bus_f > 0 else float("nan"))
+
+
 def loss_budget(ctx: Context, grating: Optional[dict]) -> list[dict]:
     """Fibre-to-fibre transmission off resonance at the design wavelength."""
     cfg, ring = ctx.cfg, ctx.results("ring")
     straight = ring["scattering_loss_db_cm"] + ring["absorption_loss_db_cm"]
     length_cm = (cfg.layout.bus_length_um + 2 * cfg.grating.taper_length_um) * 1e-4
+    tp = ctx.state["stages"].get("taper", {}).get("results") or {}
+    if tp and not tp.get("skipped") and tp.get("taper_length_um") and cfg.taper.use_in_layout:
+        length_cm = (cfg.layout.bus_length_um + 2 * tp["taper_length_um"]) * 1e-4
     rows = []
     if grating:
         gc_db = -10 * math.log10(max(grating["efficiency_2d"], 1e-9))
         rows.append(dict(item="grating coupler, input (2D simulation)", loss_db=round(gc_db, 2)))
         rows.append(dict(item="grating coupler, output (same design)", loss_db=round(gc_db, 2)))
-    rows.append(dict(item="tapers, 2 x (not simulated yet: Phase 12B)", loss_db=0.0))
+    if tp.get("eta_y"):
+        ly = -10 * math.log10(max(tp["eta_y"], 1e-9))
+        rows.append(dict(item=f"fibre-grating lateral overlap, 2 x (W = {tp['grating_width_um']:g} µm)",
+                         loss_db=round(2 * ly, 3)))
+    if tp.get("taper_loss_db") is not None:
+        rows.append(dict(item=f"tapers, 2 x {tp['taper_length_um']:g} µm (EME)",
+                         loss_db=round(2 * tp["taper_loss_db"], 3)))
+    else:
+        rows.append(dict(item="tapers, 2 x (not simulated: run the taper stage)", loss_db=0.0))
     rows.append(dict(item=f"propagation, {length_cm * 1e4:.0f} µm at {straight:g} dB/cm",
                      loss_db=round(straight * length_cm, 3)))
     total = sum(r["loss_db"] for r in rows)
@@ -219,6 +267,8 @@ def _run_batch(ctx: Context, jobs: dict, folder: Path, label: str) -> Optional[b
     if not ctx.ui.proceed(f"{label}: {len(jobs)} simulations ({len(todo)} not computed yet)",
                           cost, ctx.budget_left):
         return None
+    ctx.sim_pictures({f"{label}: {k}": (sim, name) for k, (sim, name) in jobs.items()},
+                     z=ctx.results("cross_section")["height_um"] / 2)
     if todo:
         cap = float(ctx.cfg.run.max_cost_per_run) * len(todo)
         with ctx.cloud_limit(), ctx.cloud_progress(label, 1):
@@ -266,43 +316,147 @@ def band_check(ctx: Context, gap: dict) -> Optional[dict]:
     if not curves:
         return None
 
-    def draw():
-        plt = visuals._plt()
-        fig, axes = plt.subplots(1, 3, figsize=(16, 4.6))
-        for i, (k, c) in enumerate(curves.items()):
-            wl = np.array(c["wavelength_um"]) * 1e3
-            K = np.array(c["K"])
-            col = visuals.PALETTE[1] if k == "critical" else visuals.PALETTE[0]
-            axes[0].plot(wl, np.array(c["coupled"]) * 100, "o-", color=col,
-                         label=f"{k}: gap {c['gap_um'] * 1e3:.0f} nm")
-            axes[1].plot(wl, K, "o-", color=col, label=k)
-            dip = ((1 - K) / (1 + K)) ** 2
-            axes[2].plot(wl, -10 * np.log10(np.clip(dip, 1e-6, None)), "o-", color=col, label=k)
-        axes[0].set(xlabel="Wavelength (nm)", ylabel="Coupled power per pass κ² (%)",
-                    title="coupling grows with wavelength (longer evanescent tail)")
-        axes[1].axhline(1, color="0.4", ls="--", lw=1)
-        axes[1].set(xlabel="Wavelength (nm)", ylabel="K = κ² / round-trip loss",
-                    title="coupling regime across the band\n(K > 1 over-coupled, < 1 under-coupled)")
-        axes[2].set(xlabel="Wavelength (nm)", ylabel="Resonance dip depth (dB)",
-                    title="through-port dip ((1 − K)/(1 + K))²")
-        for ax in axes:
-            ax.axvline(cfg.run.wavelength_um * 1e3, color="0.6", ls=":", lw=1)
-            ax.grid(alpha=0.3)
-            ax.legend(fontsize=8)
-        fig.suptitle("Ring-bus coupling against wavelength (loss assumed the same at every "
-                     "wavelength)")
-        return visuals._save(fig, ctx.path("figures", "7a_coupling_vs_wavelength.png"))
-    visuals.safe(ctx, "coupling against wavelength", draw)
+    visuals.safe(ctx, "coupling against wavelength", draw_band, ctx, curves)
     rows = [dict(design=k, gap_um=c["gap_um"], wavelength_um=round(w, 5), coupled_power=p, K=kk)
             for k, c in curves.items() for w, p, kk in zip(c["wavelength_um"], c["coupled"], c["K"])]
     _write_csv(ctx.path("tables", "coupling_vs_wavelength.csv"), rows)
     return dict(curves=curves, recorded_in_gap_runs=recorded)
 
 
+def k_crossings(wl_um, K) -> list[float]:
+    """Wavelengths where K(lambda) crosses 1 (linear interpolation of ln K)."""
+    wl, lk = np.asarray(wl_um, float), np.log(np.clip(np.asarray(K, float), 1e-12, None))
+    out = []
+    for i in range(len(wl) - 1):
+        if lk[i] == 0:
+            out.append(float(wl[i]))
+        elif lk[i] * lk[i + 1] < 0:
+            out.append(float(wl[i] + (wl[i + 1] - wl[i]) * (-lk[i]) / (lk[i + 1] - lk[i])))
+    return out
+
+
+def draw_loss_budget(ctx: Context, lb: list[dict]):
+    """Figure 7c: the fibre-to-fibre loss as accumulated bars."""
+    from tarang.design import visuals
+    plt = visuals._plt()
+    items = lb[:-1]
+    fig, ax = plt.subplots(figsize=(8.5, 0.55 * len(items) + 1.6))
+    left = 0.0
+    for i, r in enumerate(items):
+        ax.barh(i, max(r["loss_db"], 0.0), left=left, color=visuals.PALETTE[i % len(visuals.PALETTE)])
+        ax.text(left + max(r["loss_db"], 0.0) + 0.05, i, f"{r['loss_db']:.2f} dB", va="center",
+                fontsize=8.5)
+        left += max(r["loss_db"], 0.0)
+    ax.set_yticks(range(len(items)), [r["item"] for r in items])
+    ax.invert_yaxis()
+    ax.set_xlabel("Loss (dB), accumulated")
+    ax.set_title(f"Fibre-to-fibre: {lb[-1]['loss_db']:.2f} dB at {ctx.cfg.run.wavelength_um} µm "
+                 "(off resonance)")
+    ax.set_xlim(0, max(left * 1.25, 1))
+    return visuals._save(fig, ctx.path("figures", "7c_loss_budget.png"))
+
+
+def draw_band(ctx: Context, curves: dict):
+    """Figure 7a. ln(kappa^2) is smooth in wavelength (the evanescent decay length grows
+    smoothly), so a quadratic fit through the simulated points gives continuous curves; the
+    resonance depth ((1-K)/(1+K))^2 is unbounded at K = 1, so it is drawn from the fit
+    (finely sampled) rather than by joining the points."""
+    from tarang.design import visuals
+    plt = visuals._plt()
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
+    wl0 = ctx.cfg.run.wavelength_um
+    for n_curve, (k, c) in enumerate(curves.items()):
+        wl = np.array(c["wavelength_um"])
+        k2 = np.array(c["coupled"])
+        K = np.array(c["K"])
+        col = visuals.PALETTE[1] if k == "critical" else visuals.PALETTE[0]
+        p = np.polyfit(wl - wl0, np.log(np.clip(k2, 1e-12, None)), min(2, len(wl) - 1))
+        wf = np.linspace(wl.min(), wl.max(), 600)
+        k2f = np.exp(np.polyval(p, wf - wl0))
+        Kf = k2f * (K[0] / k2[0])                    # same round-trip loss at every wavelength
+        lab = f"{k}: gap {c['gap_um'] * 1e3:.0f} nm"
+        axes[0].plot(wf * 1e3, k2f * 100, "-", color=col, lw=1.6)
+        axes[0].plot(wl * 1e3, k2 * 100, "o", color=col, ms=5, label=lab)
+        axes[1].plot(wf * 1e3, Kf, "-", color=col, lw=1.6)
+        axes[1].plot(wl * 1e3, K, "o", color=col, ms=5, label=k)
+        dip = -10 * np.log10(np.clip(((1 - Kf) / (1 + Kf)) ** 2, 1e-6, None))
+        axes[2].plot(wf * 1e3, dip, "-", color=col, lw=1.6, label=k)
+        for x in k_crossings(wf, Kf):
+            for ax in axes[1:]:
+                ax.axvline(x * 1e3, color=col, ls="--", lw=1)
+            axes[1].annotate(f"K = 1 at {x * 1e3:.0f} nm", (x * 1e3, 1),
+                             xytext=(8, -16 - 14 * n_curve) if n_curve else (8, 10),
+                             textcoords="offset points", color=col, fontsize=8.5,
+                             bbox=dict(boxstyle="round,pad=0.15", fc="w", ec="none", alpha=0.85))
+    axes[0].set(xlabel="Wavelength (nm)", ylabel="Coupled power per pass κ² (%)",
+                title="coupling grows with wavelength (longer evanescent tail)")
+    axes[1].axhline(1, color="0.4", ls=":", lw=1)
+    axes[1].set(xlabel="Wavelength (nm)", ylabel="K = κ² / round-trip loss", yscale="log",
+                title="coupling regime (K > 1 over-coupled, K < 1 under-coupled)")
+    from matplotlib.ticker import FuncFormatter, LogLocator
+    axes[1].yaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 3, 5)))
+    axes[1].yaxis.set_minor_formatter(FuncFormatter(lambda v, _: ""))
+    axes[1].yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    axes[2].set(xlabel="Wavelength (nm)", ylabel="Resonance dip depth (dB)", ylim=(0, 45),
+                title="through-port dip ((1 − K)/(1 + K))², from the fit\n(unbounded at K = 1; "
+                      "shown up to 45 dB)")
+    for ax in axes:
+        ax.axvline(wl0 * 1e3, color="0.6", ls=":", lw=1)
+        ax.grid(alpha=0.3, which="both")
+        ax.legend(fontsize=8)
+    fig.suptitle("Ring-bus coupling against wavelength: 3D FDTD (dots) and a smooth fit (lines); "
+                 "loss taken the same at every wavelength")
+    return visuals._save(fig, ctx.path("figures", "7a_coupling_vs_wavelength.png"))
+
+
+def draw_grating_checks(ctx: Context, spectra: dict, budget: Optional[dict]):
+    """Figure 7b: tolerance spectra and, from the reverse run, where the light goes."""
+    from tarang.design import visuals
+    if not spectra:
+        return None
+    plt = visuals._plt()
+    wl0 = ctx.cfg.run.wavelength_um
+    ncol = 2 if budget else 1
+    fig, axes = plt.subplots(1, ncol, figsize=(7.5 * ncol, 4.8), squeeze=False)
+    ax = axes[0, 0]
+    colours = iter(["#0072B2", "#56B4E9", "#D55E00", "#E69F00", "#009E73", "#CC79A7", "#7F3C8D"])
+    for k, (wls, eta) in spectra.items():
+        style = (dict(color="k", lw=2.6, ls="-") if k == "final" else
+                 dict(color="0.25", lw=1.4, ls="--") if k.startswith("mesh") else
+                 dict(color=next(colours), lw=1.4, ls="-"))
+        ax.plot(np.asarray(wls) * 1e3, 10 * np.log10(np.clip(eta, 1e-6, None)), label=k, **style)
+    ax.axvline(wl0 * 1e3, color="0.6", ls=":")
+    top = max(10 * math.log10(max(max(e), 1e-6)) for _, e in spectra.values())
+    ax.set(xlabel="Wavelength (nm)", ylabel="Coupling efficiency (dB)", ylim=(top - 10, top + 0.5),
+           title="Grating tolerances: fibre angle, film thickness, tooth width, mesh")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=7.5, ncol=2)
+    if budget:
+        ax = axes[0, 1]
+        wl = np.array(budget["wavelength_um"]) * 1e3
+        up = np.array(budget["up"])
+        coupled = np.array(budget["coupled"] if budget.get("coupled") else up)
+        parts = [("up, coupled to the fibre", coupled), ("up, not matched to the fibre", up - coupled),
+                 ("down, into the substrate", np.array(budget["down"])),
+                 ("past the grating", np.array(budget["past"])),
+                 ("reflected into the waveguide", np.array(budget["reflected"]))]
+        if budget.get("scattered_back") is not None:
+            parts.append(("scattered backwards", np.array(budget["scattered_back"])))
+        cols = ["#009E73", "#56B4E9", "#D55E00", "#E69F00", "#CC79A7", "#999999"]
+        ax.stackplot(wl, *[np.clip(p, 0, None) for _, p in parts], labels=[n for n, _ in parts],
+                     colors=cols[:len(parts)], alpha=0.85)
+        ax.axvline(wl0 * 1e3, color="k", ls=":")
+        ax.set(xlabel="Wavelength (nm)", ylabel="Fraction of the waveguide power",
+               ylim=(0, 1.05), title="Where the light goes (launched from the waveguide)")
+        ax.legend(fontsize=7.5, loc="upper right")
+    return visuals._save(fig, ctx.path("figures", "7b_grating_checks.png"))
+
+
 def _reverse_sim(device, ctx: Context):
     """The grating simulation run backwards: TE0 launched in the waveguide towards the
-    grating, with flux planes above (towards the fibre), below (into the substrate), past
-    the grating, and the waveguide mode monitor for the reflection."""
+    grating, inside a closed box of flux planes: above (towards the fibre), below (into the
+    substrate), past the grating and behind the source (light reflected or scattered back),
+    plus the waveguide mode monitor for the reflection into the guided mode."""
     import tidy3d as td
     sim = device.sim
     H = device.config.core_height
@@ -314,19 +468,25 @@ def _reverse_sim(device, ctx: Context):
     src = td.ModeSource(center=(mm.center[0] - 1.5, 0, mm.center[2]), size=(0, td.inf, mm.size[2]),
                         source_time=st, direction="+", mode_spec=mm.mode_spec, mode_index=0,
                         name="waveguide_source")
-    # a closed box of flux planes: top (towards the fibre), bottom (inside the Si handle)
-    # and the right side past the grating, so no power is counted twice; what leaves on the
-    # left goes back along the waveguide (the mode monitor) or is scattered backwards.
+    # a closed box of flux planes: top (towards the fibre), bottom (inside the Si handle),
+    # the right side past the grating and the left side behind the source, so every power
+    # leaving the box is counted once. The source launches only towards +x, so the left
+    # plane sees only light coming back: reflected into the guided mode (the mode monitor)
+    # or scattered backwards (the rest).
+    x_src = src.center[0]
+    x_back = max(x_src - 1.0, x0 + 0.5)
     x_past = min(xg + 1.5, x1 - 0.5)
     z_up, z_down = H + 1.0, -box - 1.0
     fl = dict(freqs=list(mm.freqs))
+    xm, xs = (x_back + x_past) / 2, x_past - x_back
     mons = [mm,
-            td.FluxMonitor(center=((x0 + x_past) / 2, 0, z_up), size=(x_past - x0, td.inf, 0),
-                           name="up", **fl),
-            td.FluxMonitor(center=((x0 + x_past) / 2, 0, z_down), size=(x_past - x0, td.inf, 0),
+            td.FluxMonitor(center=(xm, 0, z_up), size=(xs, td.inf, 0), name="up", **fl),
+            td.FluxMonitor(center=(xm, 0, z_down), size=(xs, td.inf, 0),
                            name="down", normal_dir="-", **fl),
             td.FluxMonitor(center=(x_past, 0, (z_up + z_down) / 2), size=(0, td.inf, z_up - z_down),
-                           name="past", **fl)]
+                           name="past", **fl),
+            td.FluxMonitor(center=(x_back, 0, (z_up + z_down) / 2), size=(0, td.inf, z_up - z_down),
+                           name="back", normal_dir="-", **fl)]
     del z0, z1
     return sim.updated_copy(sources=[src], monitors=mons)
 
@@ -337,26 +497,7 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
     from tarang.design import visuals
     cfg = ctx.cfg
     ch = cfg.checks
-    P, ff, sx = gc["period_um"], gc["fill_factor"], gc["source_x_um"]
-    H, depth = ctx.results("cross_section")["height_um"], gc["etch_depth_um"]
-    full = gc.get("etch") == "full"
-    dH = float(cfg.cross_section.tolerance_height_um)
-    b = float(ch.litho_bias_um)
-    a = float(ch.angle_tolerance_deg)
-    angle = gc["fiber_angle_deg"]
-    variants = {"final": grating_device(ctx, P, ff, sx, H=H, depth=depth)}
-    if ch.grating_extras:
-        variants.update({
-            f"angle {angle - a:g}°": grating_device(ctx, P, ff, sx, H=H, depth=depth, angle=angle - a),
-            f"angle {angle + a:g}°": grating_device(ctx, P, ff, sx, H=H, depth=depth, angle=angle + a),
-            f"film −{dH * 1e3:.0f} nm": grating_device(ctx, P, ff, sx, H=H - dH,
-                                                      depth=(H - dH) if full else depth),
-            f"film +{dH * 1e3:.0f} nm": grating_device(ctx, P, ff, sx, H=H + dH,
-                                                      depth=(H + dH) if full else depth),
-            f"teeth −{b * 1e3:.0f} nm": grating_device(ctx, P, ff - b / P, sx, H=H, depth=depth),
-            f"teeth +{b * 1e3:.0f} nm": grating_device(ctx, P, ff + b / P, sx, H=H, depth=depth)})
-    if ch.mesh_grating:
-        variants["mesh x1.5"] = grating_device(ctx, P, ff, sx, H=H, depth=depth, mesh=1.5)
+    variants = grating_variants(ctx, gc)
     folder = ctx.out / "cloud" / "grating"
     jobs = {k: (d.sim, d._readable_name()) for k, d in variants.items()}
     rev = None
@@ -397,40 +538,7 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
             ctx.ui.say(f"  (power budget not computed: {type(err).__name__}: {err})")
             budget = None
 
-    def draw():
-        if not spectra:
-            return None
-        plt = visuals._plt()
-        ncol = 2 if budget else 1
-        fig, axes = plt.subplots(1, ncol, figsize=(7.5 * ncol, 4.6), squeeze=False)
-        ax = axes[0, 0]
-        for i, (k, (wls, eta)) in enumerate(spectra.items()):
-            ax.plot(np.asarray(wls) * 1e3, 10 * np.log10(np.clip(eta, 1e-6, None)),
-                    lw=2.4 if k == "final" else 1.3, color="k" if k == "final" else
-                    visuals.PALETTE[i % len(visuals.PALETTE)], label=k)
-        ax.axvline(wl0 * 1e3, color="0.6", ls=":")
-        top = max(10 * math.log10(max(max(e), 1e-6)) for _, e in spectra.values())
-        ax.set(xlabel="Wavelength (nm)", ylabel="Coupling efficiency (dB)", ylim=(top - 10, top + 0.5),
-               title="Grating tolerances: fibre angle, film thickness, tooth width")
-        ax.grid(alpha=0.3)
-        ax.legend(fontsize=7.5, ncol=2)
-        if budget:
-            ax = axes[0, 1]
-            wl = np.array(budget["wavelength_um"]) * 1e3
-            parts = [("up, coupled to the fibre", np.array(budget["coupled"] or budget["up"])),
-                     ("up, not matched to the fibre",
-                      np.array(budget["up"]) - np.array(budget["coupled"] or budget["up"])),
-                     ("down, into the substrate", np.array(budget["down"])),
-                     ("past the grating", np.array(budget["past"])),
-                     ("reflected into the waveguide", np.array(budget["reflected"]))]
-            ax.stackplot(wl, *[np.clip(p, 0, None) for _, p in parts], labels=[n for n, _ in parts],
-                         colors=[visuals.PALETTE[i] for i in (2, 5, 1, 4, 3)], alpha=0.85)
-            ax.axvline(wl0 * 1e3, color="k", ls=":")
-            ax.set(xlabel="Wavelength (nm)", ylabel="Fraction of the waveguide power",
-                   ylim=(0, 1.05), title="Where the light goes (launched from the waveguide)")
-            ax.legend(fontsize=7.5, loc="upper right")
-        return visuals._save(fig, ctx.path("figures", "7b_grating_checks.png"))
-    visuals.safe(ctx, "grating checks", draw)
+    visuals.safe(ctx, "grating checks", draw_grating_checks, ctx, spectra, budget)
     _write_csv(ctx.path("tables", "grating_checks.csv"), rows)
     return dict(variants=rows, power_budget=budget)
 
@@ -445,20 +553,29 @@ def _power_budget(data, rev, spectra: dict, wl0: float) -> dict:
     up = np.abs(data["up"].flux.values)[o]
     down = np.abs(data["down"].flux.values)[o]
     past = np.abs(data["past"].flux.values)[o]
-    mname = next(m.name for m in rev.monitors if m.name not in ("up", "down", "past"))
+    mname = next(m.name for m in rev.monitors if m.name not in ("up", "down", "past", "back"))
     refl = (np.abs(data[mname].amps.sel(direction="-", mode_index=0).values) ** 2).ravel()[o]
     wlo = wl[o]
     eta = np.interp(wlo, *spectra["final"]) if "final" in spectra else None
+    back = None
+    try:
+        back = np.abs(data["back"].flux.values)[o]
+    except (KeyError, AttributeError):                # reverse runs from before Phase 12B
+        pass
     budget = dict(wavelength_um=wlo.tolist(), up=up.tolist(), down=down.tolist(),
                   past=past.tolist(), reflected=refl.tolist(),
-                  coupled=None if eta is None else eta.tolist())
+                  coupled=None if eta is None else eta.tolist(),
+                  scattered_back=None if back is None else np.clip(back - refl, 0, None).tolist())
     i0 = int(np.argmin(np.abs(wlo - wl0)))
     budget["at_target"] = dict(up=float(up[i0]), down=float(down[i0]), past=float(past[i0]),
                                reflected=float(refl[i0]),
                                directionality=float(up[i0] / max(up[i0] + down[i0], 1e-12)),
                                coupled=None if eta is None else float(eta[i0]),
                                overlap=None if eta is None else float(eta[i0] / max(up[i0], 1e-12)),
-                               reflection_db=float(10 * math.log10(max(refl[i0], 1e-12))))
+                               reflection_db=float(10 * math.log10(max(refl[i0], 1e-12))),
+                               scattered_back=None if back is None else float(max(back[i0] - refl[i0], 0.0)),
+                               accounted=float(up[i0] + down[i0] + past[i0] +
+                                               (back[i0] if back is not None else refl[i0])))
     return budget
 
 
@@ -509,6 +626,19 @@ def stage_checks(ctx: Context) -> dict:
             ui.table(out["gap_tolerance"], ["design", "case", "gap_um", "K", "Q_loaded", "dip_depth_db"],
                      {"Q_loaded": ".3g"})
             _write_csv(ctx.path("tables", "gap_tolerance.csv"), out["gap_tolerance"])
+    if gap:
+        refl = arc_reflection(ctx, gap)
+        if refl:
+            out["arc_reflection"] = refl
+            worst = max(r["arc_end_reflection"] for r in refl)
+            ui.say(f"\nReflection at the ends of the partial-ring arc (saved gap runs): "
+                   f"{10 * math.log10(max(worst, 1e-12)):.1f} dB at most "
+                   f"({worst * 100:.2g} % of the power in the ring comes back); in the bus "
+                   f"{10 * math.log10(max(max(r['bus_reflection'] for r in refl), 1e-12)):.1f} dB.")
+            ui.say("  The coupled power is the forward-travelling part at the ring port, so the "
+                   "reflection only matters through what couples back into the bus (κ² times "
+                   "that).")
+            _write_csv(ctx.path("tables", "arc_reflection.csv"), refl)
     fsr = fsr_tolerance(ctx)
     if fsr:
         out["fsr_tolerance"] = fsr
@@ -554,7 +684,10 @@ def stage_checks(ctx: Context) -> dict:
             if b:
                 ui.say(f"  At {cfg.run.wavelength_um} µm, light launched from the waveguide: "
                        f"{b['up'] * 100:.0f} % up, {b['down'] * 100:.0f} % into the substrate, "
-                       f"{b['past'] * 100:.0f} % past the grating, reflection {b['reflection_db']:.1f} dB; "
+                       f"{b['past'] * 100:.0f} % past the grating, "
+                       + (f"{b['scattered_back'] * 100:.0f} % scattered back, "
+                          if b.get("scattered_back") is not None else "")
+                       + f"reflection {b['reflection_db']:.1f} dB; "
                        f"directionality {b['directionality'] * 100:.0f} %"
                        + (f", overlap with the fibre {b['overlap'] * 100:.0f} %" if b.get("overlap") else ""))
     if gap and cfg.checks.mesh_gap:
@@ -563,23 +696,135 @@ def stage_checks(ctx: Context) -> dict:
             out["gap_mesh"] = r
             ui.say(f"  critical gap at 1.5x finer mesh: coupled power {r['coupled_fine']:.4e} "
                    f"vs {r['coupled_fit']:.4e} ({r['change_percent']:+.1f} %)")
-    lb = out["loss_budget"]
+    visuals.safe(ctx, "loss budget", draw_loss_budget, ctx, out["loss_budget"])
+    return out
 
-    def draw_budget():
-        plt = visuals._plt()
-        items = lb[:-1]
-        fig, ax = plt.subplots(figsize=(8, 0.55 * len(items) + 1.6))
-        left = 0.0
-        for i, r in enumerate(items):
-            ax.barh(i, r["loss_db"], left=left, color=visuals.PALETTE[i % len(visuals.PALETTE)])
-            ax.text(left + r["loss_db"] + 0.05, i, f"{r['loss_db']:.2f} dB", va="center", fontsize=8.5)
-            left += r["loss_db"]
-        ax.set_yticks(range(len(items)), [r["item"] for r in items])
-        ax.invert_yaxis()
-        ax.set_xlabel("Loss (dB), accumulated")
-        ax.set_title(f"Fibre-to-fibre: {lb[-1]['loss_db']:.2f} dB at {cfg.run.wavelength_um} µm "
-                     "(off resonance)")
-        ax.set_xlim(0, max(left * 1.25, 1))
-        return visuals._save(fig, ctx.path("figures", "7c_loss_budget.png"))
-    visuals.safe(ctx, "loss budget", draw_budget)
+
+# ============================================================================ free redraw
+
+
+def _read_csv(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return {"True": True, "False": False}.get(v, v)
+
+
+def redraw_saved_figures(ctx: Context, force: bool = False) -> list[str]:
+    """Redraw the figures whose drawing improved since this run made them, from its saved
+    tables and cached simulation data only (no cloud run, nothing new to pay). Runs once per
+    figure version (state 'figure_version'); returns the figures redrawn."""
+    from tarang.design import visuals
+    from tarang.design.stages import _best_grating
+    from tarang.grating_coupler.grating_coupler import spectrum_summary
+    if not force and int(ctx.state.get("figure_version", 1)) >= FIGURE_VERSION:
+        return []
+    st = ctx.state.get("stages", {})
+    res = {k: v.get("results") or {} for k, v in st.items()}
+    done: list[str] = []
+    wl0 = ctx.cfg.run.wavelength_um
+    tables = ctx.out / "tables"
+    xs, ring = res.get("cross_section"), res.get("ring")
+    if xs and ring:
+        info = fig_bent_mode(ctx, xs["height_um"], xs["width_um"], ring["radius_um"])
+        if info:
+            done.append("3b_bent_mode")
+    gc = res.get("grating") or {}
+    if gc and not gc.get("skipped"):
+        rows = [{k: _num(v) for k, v in r.items()} for r in _read_csv(tables / "grating_sweep.csv")]
+        stage_a = [r for r in rows if r.get("step") == "A" and r.get("dim") == "2D"]
+        if stage_a:
+            final = dict(fill_factor=gc["fill_factor"], period_um=gc["period_um"])
+            if visuals.safe(ctx, "grating map", visuals.grating_landscape, stage_a,
+                            _best_grating(stage_a), ctx.path("figures", "5b_grating_map.png"), wl0,
+                            final):
+                done.append("5b_grating_map")
+        spec = _read_csv(tables / "grating_spectrum_final.csv")
+        if spec:
+            wl = np.array([float(r["wavelength_um"]) for r in spec])
+            eta = np.array([float(r["efficiency"]) for r in spec])
+            summ = spectrum_summary(wl, eta, wl0)
+            summ["target_um"] = wl0
+            if visuals.safe(ctx, "grating spectrum", visuals.grating_spectrum, wl, eta, summ,
+                            ctx.path("figures", "5d_grating_spectrum.png"),
+                            f"Final grating: P = {gc['period_um']:.4f} µm, FF = "
+                            f"{gc['fill_factor']:.2f}, fibre at {gc['source_x_um']} µm"):
+                done.append("5d_grating_spectrum")
+    band = _read_csv(tables / "coupling_vs_wavelength.csv")
+    if band:
+        curves: dict = {}
+        for r in band:
+            c = curves.setdefault(r["design"], dict(gap_um=float(r["gap_um"]), wavelength_um=[],
+                                                    coupled=[], K=[]))
+            c["wavelength_um"].append(float(r["wavelength_um"]))
+            c["coupled"].append(float(r["coupled_power"]))
+            c["K"].append(float(r["K"]))
+        if visuals.safe(ctx, "coupling against wavelength", draw_band, ctx, curves):
+            done.append("7a_coupling_vs_wavelength")
+    chk = res.get("checks") or {}
+    g = chk.get("grating") or {}
+    if g.get("variants") and gc:
+        spectra = _grating_check_spectra(ctx, gc, [r["case"] for r in g["variants"]])
+        if spectra and visuals.safe(ctx, "grating checks", draw_grating_checks, ctx, spectra,
+                                    g.get("power_budget")):
+            done.append("7b_grating_checks")
+    gap = res.get("gap") or {}
+    if gap and not gap.get("skipped") and gap.get("folder"):
+        fmap = ctx.path("figures", "4d_gap_field.png")
+        before = fmap.stat().st_mtime if fmap.exists() else None
+        gap_extras(ctx, gap)                        # field map (cached data only) and check
+        if fmap.exists() and fmap.stat().st_mtime != before:
+            done.append("4d_gap_field")
+    ctx.state["figure_version"] = FIGURE_VERSION
+    if done:
+        ctx.ui.say("Figures redrawn from saved results (free): " + ", ".join(done))
+    return done
+
+
+def grating_variants(ctx: Context, gc: dict, every: bool = False) -> dict:
+    """The final grating and its check variants {case: device}, as the checks stage runs
+    them (``every``: all of them whatever the settings)."""
+    ch, cfg = ctx.cfg.checks, ctx.cfg
+    P, ff, sx = gc["period_um"], gc["fill_factor"], gc["source_x_um"]
+    H, depth = ctx.results("cross_section")["height_um"], gc["etch_depth_um"]
+    full = gc.get("etch") == "full"
+    dH = float(cfg.cross_section.tolerance_height_um)
+    b = float(ch.litho_bias_um)
+    a = float(ch.angle_tolerance_deg)
+    angle = gc["fiber_angle_deg"]
+    variants = {"final": grating_device(ctx, P, ff, sx, H=H, depth=depth)}
+    if ch.grating_extras or every:
+        variants.update({
+            f"angle {angle - a:g}°": grating_device(ctx, P, ff, sx, H=H, depth=depth, angle=angle - a),
+            f"angle {angle + a:g}°": grating_device(ctx, P, ff, sx, H=H, depth=depth, angle=angle + a),
+            f"film −{dH * 1e3:.0f} nm": grating_device(ctx, P, ff, sx, H=H - dH,
+                                                      depth=(H - dH) if full else depth),
+            f"film +{dH * 1e3:.0f} nm": grating_device(ctx, P, ff, sx, H=H + dH,
+                                                      depth=(H + dH) if full else depth),
+            f"teeth −{b * 1e3:.0f} nm": grating_device(ctx, P, ff - b / P, sx, H=H, depth=depth),
+            f"teeth +{b * 1e3:.0f} nm": grating_device(ctx, P, ff + b / P, sx, H=H, depth=depth)})
+    if ch.mesh_grating or every:
+        variants["mesh x1.5"] = grating_device(ctx, P, ff, sx, H=H, depth=depth, mesh=1.5)
+    return variants
+
+
+def _grating_check_spectra(ctx: Context, gc: dict, cases: list[str]) -> dict:
+    """Spectra of the grating check runs, from their cached data (no new runs)."""
+    folder = ctx.out / "cloud" / "grating"
+    out = {}
+    for case, d in grating_variants(ctx, gc, every=True).items():
+        if case not in cases:
+            continue
+        try:
+            if d.is_cached(folder):
+                out[case] = d.get_spectrum(folder)
+        except Exception:                                         # noqa: BLE001
+            continue
     return out
