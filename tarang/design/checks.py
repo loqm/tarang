@@ -237,8 +237,14 @@ def loss_budget(ctx: Context, grating: Optional[dict]) -> list[dict]:
         rows.append(dict(item=f"fibre-grating lateral overlap, 2 x (W = {tp['grating_width_um']:g} µm)",
                          loss_db=round(2 * ly, 3)))
     if tp.get("taper_loss_db") is not None:
-        rows.append(dict(item=f"tapers, 2 x {tp['taper_length_um']:g} µm (EME)",
+        how = tp.get("length_source") or "EME"
+        rows.append(dict(item=f"tapers, 2 x {tp['taper_length_um']:g} µm ({how})",
                          loss_db=round(2 * tp["taper_loss_db"], 3)))
+    elif tp.get("model_loss_db_at_previous") is not None:
+        rows.append(dict(item=f"tapers, 2 x {tp['previous_length_um']:g} µm (2D model)",
+                         loss_db=round(2 * tp["model_loss_db_at_previous"], 3)))
+    elif tp and not tp.get("skipped"):
+        rows.append(dict(item="tapers, 2 x (no length below the accepted loss)", loss_db=0.0))
     else:
         rows.append(dict(item="tapers, 2 x (not simulated: run the taper stage)", loss_db=0.0))
     rows.append(dict(item=f"propagation, {length_cm * 1e4:.0f} µm at {straight:g} dB/cm",

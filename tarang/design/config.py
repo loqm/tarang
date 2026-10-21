@@ -158,21 +158,26 @@ class Taper:
                                                  "matches the fibre mode)", "um")
     widths_um: list = _f([], "Grating widths for the fibre-overlap curve (empty: 0.8-2.2 x MFD)",
                          "um")
-    run_eme: bool = _f(True, "Taper loss against length with Tidy3D EME (one cloud run, priced "
-                             "first)")
-    lengths_um: list = _f([], "Taper lengths to evaluate (empty: 5-500 um)", "um")
+    run_eme: bool = _f(True, "Also check the taper loss with Tidy3D 3D EME (one cloud run, priced "
+                             "first; the free 2D model always runs)")
+    lengths_um: list = _f([], "Taper lengths for the 3D EME (empty: 10-400 um)", "um")
     max_loss_db: float = _f(0.05, "Largest taper loss accepted when choosing the length", "dB")
-    eme_cells: int = _f(30, "EME cells along the taper (more = closer to a smooth taper)")
-    eme_modes: int = _f(8, "Modes per EME cell (even modes only)")
+    eme_cells: int = _f(120, "EME cells along the taper, graded (more = closer to a smooth "
+                             "taper; 30 is not converged)")
+    eme_modes: int = _f(20, "Modes per EME cell (even modes only; the wide end guides about 11)")
     use_in_layout: bool = _f(True, "Use this grating width and taper length in the layout")
 
 
 @dataclass
 class Apodise:
+    run: bool = _f(False, "Also design an apodised grating (the uniform grating is always designed "
+                          "and used unless this is on, checked in FDTD and better)")
     fill_factors: list = _f([], "Fill factors whose scattering strength is measured (empty: 0.5 "
                                 "up to the largest the smallest feature allows)")
-    verify: bool = _f(True, "Check the apodised design in 2D FDTD (about 9 small runs: fibre "
-                            "position and period scale around the design)")
+    verify: bool = _f(True, "Check the apodised design in 2D FDTD (5 small runs for the period "
+                            "scale and fibre position, then 3 with the peak centred)")
+    min_trench_um: Optional[float] = _f(None, "Narrowest trench between teeth that the full etch "
+                                              "clears (empty: grating.min_feature_um)", "um")
     max_teeth: int = _f(60, "Most teeth of the apodised grating")
     use_in_layout: bool = _f(True, "Use the apodised grating in the layout when it beats the "
                                    "uniform one")

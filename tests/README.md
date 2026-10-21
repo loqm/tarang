@@ -2,12 +2,12 @@
 
 ```bash
 python -m pytest                     # whole suite, ~15-20 min, no FlexCredits
-python -m pytest -m "not slow"       # quick check, ~2-3 min (skips 18 mode-solve / fitting tests)
+python -m pytest -m "not slow"       # quick check, ~2-3 min (skips 19 mode-solve / fitting tests)
 python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `319 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `328 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -395,21 +395,21 @@ cloud for the cloud stages.
 | `test_an_unreachable_account_does_not_hang` | Reading the account gives up after its timeout |
 | `test_budget_with_only_the_folder_keeps_the_saved_settings` | `--out <run> --budget 20` changes only the limit in that run's `design.toml`; without a design the command is refused |
 
-## `test_phase12b.py`: taper, apodised grating, reflections, figures and run pictures (26 tests, Phase 12B)
+## `test_phase12b.py`: taper, apodised grating, reflections, figures and run pictures (35 tests, Phase 12B)
 
 | Test | Checks |
 |---|---|
 | `test_asymmetric_slab_reduces_to_the_symmetric_one` | The slab solver satisfies tan(kd/2) = g/k for equal claddings; air on top lowers n_eff |
 | `test_lateral_overlap_peaks_near_2p7_waists_and_never_exceeds_one` | η_y peaks between 2.4 and 3.0 fibre waists (above 97 %), falls for narrower and wider gratings; the lateral mode is a cosine, continuous at the wall, decaying outside |
 | `test_shortest_taper_length_interpolates_between_the_swept_lengths` | The shortest accepted taper interpolates log(loss); none when no length is good enough |
-| `test_taper_stage_picks_width_and_length_and_the_layout_uses_them` | With a fake EME (T = 1 − e^(−L/40 µm)) the stage picks 13-15 µm and the exact length for 0.05 dB (rounded up to 5 µm); figures and tables written; the layout and the loss budget use them; the cached EME run is not repeated |
-| `test_taper_off_in_layout_keeps_the_previous_values` | `taper.use_in_layout = false` leaves the grating width and taper length as before |
+| `test_taper_stage_picks_width_and_length_and_the_layout_uses_them` | With a fake EME (T = 1 − e^(−L/40 µm), converged) the stage picks 13-15 µm and the exact length for 0.05 dB (rounded up to 10 µm) from the 3D EME; the 2D model and its staircase estimate are reported; figures and tables written; the layout and the loss budget use them; the cached EME run is not repeated |
+| `test_taper_off_in_layout_keeps_the_previous_values` | Without the 3D EME nothing goes to the cloud and the length comes from the 2D model; `taper.use_in_layout = false` leaves the grating width and taper length as before |
 | `test_eme_simulation_is_valid_and_cached_like_any_other` | The EME taper is a valid `EMESimulation` (even-mode symmetry); it is run, cached and reloaded as `EMESimulationData`; lengths follow the scale factors |
 | `test_a_new_stage_after_checks_does_not_repeat_the_checks` | Taper settings change the layout's key, not the checks' (no repeated cloud runs) |
 | `test_scattering_strength_and_bloch_index_are_read_from_the_field_above` | On a synthetic radiated field with the periodic near-field ripple, α to 3 % and n_B to 2e-3, in either time convention |
 | `test_uniform_gratings_reach_80_percent_and_shaping_reaches_more` | The 1D model gives the textbook 80 % for the best uniform grating (at α w ≈ 0.7) and above 95 % when shaped; no gain when every tooth scatters strongly |
 | `test_teeth_scatter_weakly_first_and_strongly_later` | The tooth list starts with the weakest teeth, scatters most just past the beam centre, stops when the beam has ended; each tooth's length is its fill factor times its period |
-| `test_apodise_stage_designs_checks_and_feeds_the_layout` | Scattering runs, design, 2D check (9 runs), choice of the best; periods phase-matched; the layout uses the teeth (parameters, `grating_teeth.csv`, the `.m` matrix, one GDS polygon per tooth) |
+| `test_apodise_stage_designs_checks_and_feeds_the_layout` | Scattering runs, design, 2D check (5 runs; the peak is already on the wavelength), choice of the best; periods phase-matched; the layout uses the teeth (parameters, `grating_teeth.csv`, the `.m` matrix, one GDS polygon per tooth) |
 | `test_apodisation_is_not_run_when_teeth_cannot_scatter_weakly` | Strong teeth only: the model predicts no gain, and the FDTD check is not run (nothing more paid) |
 | `test_apodised_teeth_build_a_valid_simulation_and_uniform_names_are_unchanged` | Explicit teeth are built where they belong; uniform gratings keep their names (and fingerprints) |
 | `test_arc_end_and_bus_reflections_from_mode_amplitudes` | Reflections are \|a−\|²/\|a+\|² at the ring port and the bus input |
@@ -421,5 +421,14 @@ cloud for the cloud stages.
 | `test_batch_links_name_the_case_they_belong_to` | Two runs with the same name are told apart by their case in the link list |
 | `test_runs_without_links_are_explained_and_get_pictures` | A run without a task record is listed as "not in the task list of this account", with the reason, and gets its picture |
 | `test_apodise_stage_reads_periods_right_in_either_time_convention` | The sign convention of the phase slope is fixed by the final uniform design, so the periods are right either way |
-| `test_new_stages_run_through_the_design_session` | `--only taper,apodise` runs both stages as stages 7 and 8 of 10 |
+| `test_new_stages_run_through_the_design_session` | `--only taper,apodise` runs both stages as stages 7 and 8 of 10; the apodised grating is off by default (no cloud run, uniform grating used); turned on later it runs without repeating the taper |
 | `test_every_ring_builder_can_have_a_flat_box_and_keeps_its_old_geometry[...]` (3) | Full, half and partial ring: 0.1 µm gives the old simulation bit for bit, 0 a flat BOX |
+| `test_graded_cells_change_the_width_by_the_same_ratio` | The EME cell boundaries keep w_(i+1)/w_i constant; the cells are short at the narrow end |
+| `test_2d_taper_model_is_converged_and_falls_with_length` (slow) | The 2D taper model with 600 cells agrees with 1200 cells to 0.01 dB, its loss falls with length, and a 20-cell staircase is visibly wrong (the cause of the jumping 3D result of Phase 12B v1) |
+| `test_rise_finds_a_loss_that_increases_with_length` | A falling curve has no rise; the 30-cell EME of the v1 run rises by 0.88 dB |
+| `test_unconverged_eme_falls_back_to_the_2d_model` | A 3D EME whose loss jumps with length is flagged not converged; the length and the loss budget come from the 2D model |
+| `test_only_one_monotonic_branch_of_fill_factors_is_used` | On the v1 table: fill factors whose 2nd order radiates up (0.5, 0.6) or whose decay is too weak to measure (0.9, 0.908) are rejected; the branch is 0.65-0.85; the teeth start weak and stay on it; mixing both branches is refused; the report explains a stage with too few usable points |
+| `test_fit_quality_is_reported_for_a_clean_and_a_two_wave_field` | A second wave above the grating shows up as a phase residual; the 2nd-order test on two v1 points |
+| `test_apodised_peak_is_moved_onto_the_design_wavelength` | A design whose peak is 17 nm long: round 1 finds the period scale that centres it, round 2 (3 runs) uses it, and the chosen grating peaks within 1.5 nm of 1550 nm |
+| `test_run_pictures_load_eme_simulations` | `--runs` loads a saved EME simulation as `EMESimulation` and draws its picture |
+| `test_the_narrowest_trench_limits_the_teeth_and_is_not_paid_for` | With `apodise.min_trench_um = 0.2`, fill factors whose trench would be narrower are not run (no cost) and not used; the teeth's trenches stay at 200 nm or wider; the limit is printed |

@@ -225,7 +225,7 @@ Below, `D` stands for your design's settings file, e.g. `design_runs/my_ring/des
 | run some stages only | `python -m tarang.design --config D --only gap,grating` |
 | run a stage again (new results beside the old) | `python -m tarang.design --config D --only grating --redo grating` |
 | run the extra checks (tolerances, band, mode families, loss budget) | `python -m tarang.design --config D --only checks` |
-| design the taper and the apodised grating, then the layout and report | `python -m tarang.design --config D --only taper,apodise,layout,report` |
+| design the taper and the apodised grating, then the layout and report | `python -m tarang.design --config D --only taper,apodise,layout,report` (set `apodise.run = true` first: the apodised grating is opt-in) |
 | redraw a design's figures in the current style (free) | `python -m tarang.design --config D --only report --redo report` |
 | open each figure as it is made | add `--show` |
 | list the stages | `python -m tarang.design --list` |
@@ -265,7 +265,7 @@ Tidy3D account of the current API key (a link only opens in the account that ran
 | Grating coupler | etch, fibre angle, orientation and MFD, smallest feature | spectra of a period × fill-factor map, the period tuned onto your wavelength, fill-factor / period / fibre-position sensitivity, 1 dB and 3 dB bandwidths; optional 3D check |
 | Checks | which checks (each cloud check is priced first) | gap tolerance (K, loaded Q, dip depth), coupled-mode-theory check of the gap, FSR tolerance, ring mode families and crossings, fibre-to-fibre loss budget; optional: coupling across the band, grating angle / film / tooth-width tolerances, back-reflection and directionality, mesh checks |
 | Taper | grating width (or the best for the fibre), taper lengths to try, loss accepted | lateral overlap of the fibre with the grating against its width (effective-index method, free), taper loss against length (one Tidy3D EME run), the shortest taper below the accepted loss; the layout uses both |
-| Apodised grating | fill factors to measure, whether to check in FDTD | scattering strength and phase-matched period of each fill factor (small 2D runs), a tooth list whose scattering follows the fibre's Gaussian, the predicted gain (1D model, before anything else is paid), a 2D FDTD check; the layout uses it when it beats the uniform grating |
+| Apodised grating (opt-in, `apodise.run`; off: the uniform grating is used and nothing is paid) | fill factors to measure, narrowest trench the full etch clears, whether to check in FDTD | scattering strength and phase-matched period of each fill factor (small 2D runs), a tooth list whose scattering follows the fibre's Gaussian, the predicted gain (1D model, before anything else is paid), a 2D FDTD check; the layout uses it when it beats the uniform grating |
 | Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv`, layout figure; `lle/` inputs for a comb (Lugiato-Lefever) solver, incl. pyLLE's dispersion-file format |
 | Report | | `report.md` with every figure, `benchmark_pack/` (and its zip), `design_summary.json`, `tables/cloud_runs.csv` |
 

@@ -555,16 +555,29 @@ def _taper_section(ctx, tp: dict) -> list[str]:
         L += [f"Grating efficiency with the width: about {e * 100:.1f} % "
               f"({-10 * math.log10(e):.2f} dB) per coupler.", ""]
     L += _fig(ctx, ctx.out / "figures" / "8a_grating_width.png", "grating width")
-    if tp.get("lengths_um"):
-        L += ["**Length.** Tidy3D's eigenmode expansion (EME) of the linear taper from the "
-              "grating width to the waveguide: the local modes of 30 cells joined by their "
-              "overlaps give the transmission of the fundamental mode; rescaling the cells gives "
-              "it for every length in one run.", ""]
+    if tp.get("model_lengths_um") or tp.get("lengths_um"):
+        L += ["**Length.** A linear taper from the grating width to the waveguide loses power "
+              "into higher modes when it is short. Two calculations: a 2D model of the taper "
+              "(effective-index method; the taper cut into many graded cells whose modes are "
+              "joined by their overlaps, converged, free) and Tidy3D's 3D eigenmode expansion "
+              "(EME) of the same taper. EME replaces the taper by a staircase of straight cells; "
+              "too few cells make the loss jump up and down with length, so the 3D result is used "
+              "only when its loss does not rise with length by more than the accepted loss.", ""]
+        if tp.get("lengths_um"):
+            conv = tp.get("eme_converged")
+            L += [f"3D EME: {tp.get('eme_cells', '?')} graded cells x {tp.get('eme_modes', '?')} "
+                  f"modes; " + ("converged" if conv else
+                                (f"**not converged** (the loss rises by {tp.get('eme_rise_db', 0):.2f} dB "
+                                 "with length)" if conv is False else "convergence not checked"))
+                  + (f"; the 2D model predicts a staircase error up to {tp['staircase_error_db']:.3f} dB "
+                     "for this cell count." if tp.get("staircase_error_db") is not None else "."), ""]
         if tp.get("taper_length_um"):
-            L += [f"Shortest taper below {ctx.cfg.taper.max_loss_db:g} dB: "
-                  f"**{tp['taper_length_um']:g} µm** ({tp['taper_loss_db']:.3f} dB); the "
-                  f"{tp['previous_length_um']:g} µm taper used before loses "
-                  f"{tp['loss_db_at_previous_length']:.3f} dB.", ""]
+            L += [f"Taper length used: **{tp['taper_length_um']:g} µm** ({tp.get('length_source', 'EME')}, "
+                  f"{tp['taper_loss_db']:.3f} dB per taper, accepted {ctx.cfg.taper.max_loss_db:g} dB)."]
+            if tp.get("model_loss_db_at_previous") is not None:
+                L += [f"The {tp['previous_length_um']:g} µm taper used before: "
+                      f"{tp['model_loss_db_at_previous']:.3f} dB (2D model)."]
+            L += [""]
         L += _fig(ctx, ctx.out / "figures" / "8b_taper_length.png", "taper length")
     if tp.get("use_in_layout"):
         L += ["The layout uses this width and length (`taper.use_in_layout`).", ""]
@@ -575,7 +588,7 @@ def _apodise_section(ctx, ap: dict) -> list[str]:
     """Section 7c: apodised grating."""
     if not ap or not ap.get("scattering"):
         return []
-    a_lo, a_hi = ap["alpha_range_per_um"]
+    sc = ap["scattering"]
     L = ["## 7c. Apodised grating", "",
          "In a uniform grating every tooth scatters the same fraction of the guided light, so "
          "the light leaves with an exponential profile, which overlaps a Gaussian fibre mode by "
@@ -583,27 +596,48 @@ def _apodise_section(ctx, ap: dict) -> list[str]:
          "α(x) = A·G²(x) / (2(1 − A∫₀ˣG²)), makes the emitted profile the fibre's Gaussian "
          "itself. α and the phase-matched period of each fill factor were measured on uniform "
          "gratings (2D FDTD, light launched from the waveguide, field recorded 1.5 µm above the "
-         "grating: the decay of |E|² gives α, its phase slope the Bloch index).", "",
-         f"Measured α: {a_lo:.3f} to {a_hi:.3f} per µm over fill factors "
-         f"{ap['scattering'][0]['fill_factor']:g} to {ap['scattering'][-1]['fill_factor']:g} "
-         f"(`tables/apodise_scattering.csv`). 1D emission model: the uniform grating overlaps the "
-         f"fibre by {ap['model_uniform'] * 100:.0f} %, the apodised one by "
-         f"{ap['model_apodised'] * 100:.0f} % ({len(ap['teeth'])} teeth, "
-         "`tables/apodised_teeth.csv`).", ""]
+         "grating: the decay of |E|² gives α, its phase slope the Bloch index). Only one branch "
+         "is used, from the strongest scatterer to the largest fill factor (α falls, the Bloch "
+         "index rises), so each α has one fill factor; points are left out when the decay is too "
+         "weak to measure, a fit is poor, or the second diffraction order also radiates up.", ""]
+    out = [r for r in sc if r.get("why")]
+    if out:
+        L += ["Left out: " + "; ".join(f"FF {r['fill_factor']:g} ({r['why']})" for r in out) + ".", ""]
+    if not ap.get("alpha_range_per_um"):
+        L += ["Fewer than three usable fill factors on one branch: no apodised design "
+              "(`tables/apodise_scattering.csv`).", ""]
+        return L
+    a_lo, a_hi = ap["alpha_range_per_um"]
+    br = ap.get("branch") or [r["fill_factor"] for r in sc]
+    L += [f"Used: fill factors {min(br):g} to {max(br):g}, α {a_lo:.3f} to {a_hi:.3f} per µm "
+          f"(`tables/apodise_scattering.csv`). 1D emission model: the uniform grating overlaps the "
+          f"fibre by {ap['model_uniform'] * 100:.0f} %, the apodised one by "
+          f"{ap['model_apodised'] * 100:.0f} % ({len(ap['teeth'])} teeth, "
+          "`tables/apodised_teeth.csv`)."
+          + (f" All teeth are etched through the film; trenches {ap['narrowest_trench_um'] * 1e3:.0f}-"
+             f"{ap['widest_trench_um'] * 1e3:.0f} nm (narrowest allowed "
+             f"{ap['min_trench_um'] * 1e3:.0f} nm, `apodise.min_trench_um`)."
+             if ap.get("narrowest_trench_um") else ""), ""]
     L += _fig(ctx, ctx.out / "figures" / "9a_apodise_design.png", "apodisation design")
     if ap.get("verified"):
+        cen = (f" The period scale {ap['scale_centred']:.4f} puts the peak on the design wavelength "
+               "(round 1); round 2 used it." if ap.get("scale_centred") else "")
         L += [f"**2D FDTD check:** {ap['efficiency_2d'] * 100:.1f} % at "
               f"{ctx.cfg.run.wavelength_um} µm ({-10 * math.log10(max(ap['efficiency_2d'], 1e-9)):.2f} dB), "
               f"peak at {ap['peak_wavelength_nm']} nm, 1 dB band {ap['bandwidth_1db_nm']:.0f} nm; "
               f"uniform {ap['uniform_efficiency_2d'] * 100:.1f} %. Fibre at "
-              f"{ap['source_x_um']} µm, period scale {ap['scale']:g} (`tables/apodised_check.csv`).",
-              ""]
+              f"{ap['source_x_um']} µm, period scale {ap['scale']:g} (`tables/apodised_check.csv`)."
+              + cen, ""]
         L += _fig(ctx, ctx.out / "figures" / "9b_apodised_spectrum.png", "apodised spectrum")
         if ap.get("better_than_uniform") and ctx.cfg.apodise.use_in_layout:
             L += ["The layout uses the apodised grating (`layout/grating_teeth.csv`).", ""]
+        else:
+            L += ["The apodised grating does not beat the uniform one here; the layout keeps the "
+                  "uniform grating.", ""]
     elif ap.get("verified") is False:
         L += ["The available fill factors cannot scatter weakly enough to shape the beam, so the "
-              "apodised design was not run in FDTD; a shallower (partial) etch gives weaker teeth.",
+              "apodised design was not run in FDTD. The narrowest trench the etch clears "
+              "(`apodise.min_trench_um`) sets the weakest tooth.",
               ""]
     return L
 
