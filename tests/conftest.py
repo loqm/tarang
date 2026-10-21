@@ -54,7 +54,8 @@ def fake_result(sim):
     if isinstance(sim, td.EMESimulation):
         from tidy3d.components.data.data_array import EMESMatrixDataArray
         from tidy3d.components.eme.data.dataset import EMESMatrixDataset
-        scales = list(sim.sweep_spec.scale_factors) if sim.sweep_spec else [1.0]
+        raw = np.asarray(sim.sweep_spec.scale_factors) if sim.sweep_spec else np.array([1.0])
+        scales = list(raw[:, 1] if raw.ndim == 2 else raw)     # per-cell scales: a taper cell
         L0 = sim.size[0] - 4.0
         n, m = len(scales), 2
         t = np.sqrt(1 - np.exp(-np.array(scales) * L0 / 40.0))

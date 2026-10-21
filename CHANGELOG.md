@@ -19,17 +19,32 @@ working until v0.2.0; old imports are updated with one command (see
   lateral overlap η_y of the fibre's Gaussian with the grating's fundamental lateral mode
   (effective-index method; free), so the 3D efficiency is about η_2D·η_y (for the 1550 nm
   design the optimum is about 14.5 µm, η_y 99 % against 97 % at 12 µm). The taper length:
-  one Tidy3D EME run of the linear taper (even modes, 30 cells) gives the fundamental-mode
-  transmission against length (EMELengthSweep), and the shortest taper below
-  `taper.max_loss_db` is chosen. The layout and the fibre-to-fibre loss budget use both
-  (`taper.use_in_layout`).
-- **Apodised grating stage** (`--only apodise`). The scattering strength α and the
+  a free 2D model of the linear taper (effective-index method, 600 graded cells joined by
+  mode overlaps, converged) and one Tidy3D EME run (even modes, 120 graded cells x 20
+  modes, EMELengthSweep) give the fundamental-mode transmission against length; the
+  shortest taper below `taper.max_loss_db` is chosen from the 3D EME when its loss does not
+  rise with length (converged), otherwise from the 2D model (about 270 µm for 14.5 → 1 µm
+  at 0.05 dB). The 2D model also predicts the staircase error of the 3D cell count before
+  the run is priced. The layout and the fibre-to-fibre loss budget use both
+  (`taper.use_in_layout`). (In the first version 30 equal cells and 8 modes made the 3D loss
+  jump between 0.2 and 1.1 dB with length; the 2D model reproduces that with the same cells.)
+- **Apodised grating stage** (`--only apodise`; opt-in with `apodise.run = true`, so a first
+  design run uses the uniform grating only and pays nothing here). The scattering strength α and the
   phase-matched period of each fill factor are measured on uniform gratings (small 2D
   runs: TE0 launched from the waveguide, field 1.5 µm above the grating; the decay of |E|²
   gives α, its phase slope the Bloch index). The tooth list follows
   α(x) = A·G²/(2(1 − A∫G²)) so the emitted light has the fibre's Gaussian shape; a 1D
   emission model (uniform grating: the textbook 80 % ceiling) predicts the gain before the
-  2D FDTD check is priced. When the apodised grating beats the uniform one, the layout uses
+  2D FDTD check is priced. Only one monotonic branch of fill factors is used (α falling and
+  the Bloch index rising with fill factor, from the strongest scatterer up); points are
+  rejected when the decay is too weak to measure, the fits are poor, or the second
+  diffraction order also radiates up (its field above the grating spoils the phase). The
+  2D check runs in two rounds: the period scale that puts the peak on the design wavelength
+  (5 runs), then that scale at three fibre positions (3 runs). Every tooth is etched through
+  the film (one full etch, as for the rest of the chip); `apodise.min_trench_um` sets the
+  narrowest trench the etch clears (narrow trenches etch more slowly in ICP-RIE), which
+  limits how weakly a tooth can scatter. Fill factors with narrower trenches are neither run
+  nor used, and the report lists the trench widths of the design. When the apodised grating beats the uniform one, the layout uses
   it (`layout/grating_teeth.csv`, and the teeth as a matrix in `parameters.m`).
   `GratingConfig(teeth=...)` builds a grating from an explicit tooth list.
 - **Reflections.** The arc-end reflection of the partial ring and the bus reflection are
@@ -40,7 +55,8 @@ working until v0.2.0; old imports are updated with one command (see
   (e.g. `angle 11° (gc2D_...)`), so runs with the same name can be told apart.
 - `inner_box_recess_um` for the full- and half-ring builders as well (0.1 keeps the old
   geometry bit for bit; 0 gives a flat BOX).
-- EME simulations go through the same verified cache as FDTD runs.
+- EME simulations go through the same verified cache as FDTD runs, and `--runs` draws their
+  pictures too.
 
 - **Every cloud run has a web link and survives Ctrl+C.** Each run writes `task.json`
   (Tidy3D task id, a link that opens the simulation in the Tidy3D web interface, status,

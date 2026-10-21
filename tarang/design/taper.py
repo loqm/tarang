@@ -23,6 +23,17 @@ Two questions, from first principles:
    fundamental mode, |S21|^2. Rescaling the cell lengths re-uses the same modes, so one run
    gives |S21|^2 against taper length (EMELengthSweep). The mirror plane y = 0 is imposed
    (only the even modes the symmetric taper can excite).
+
+   EME replaces the smooth taper by a staircase of straight cells. Each step scatters a
+   little power into higher modes; for a smooth taper these small amplitudes cancel, but
+   only if every cell is short compared to the beat length between the fundamental and the
+   next even mode. With 30 equal cells the step at the narrow end is 0.45 um on a 1 um
+   waveguide and the scattered amplitudes no longer cancel: the loss then depends on the
+   cell phases and jumps up and down with length. So (a) the cells are graded (constant
+   width ratio per cell: short cells where the width changes fastest relative to itself),
+   and (b) a free 2D model of the same taper (effective-index method, mode matching with
+   many cells) gives the converged curve, predicts the staircase error of the 3D cell
+   count, and is used for the length when the 3D result is not converged.
 """
 from __future__ import annotations
 
@@ -121,12 +132,101 @@ def width_sweep(ctx, widths=None) -> dict:
                 current_width_um=now, current_eta_y=lateral_overlap(n_slab, n_side, now, mfd, wl))
 
 
-# ------------------------------------------------------------------ EME taper
+# ------------------------------------------------------------------ taper cells
+def cell_boundaries(w_wide: float, w_narrow: float, n_cells: int, length: float = 1.0) -> np.ndarray:
+    """Positions (0 ... length) of the cell boundaries of a linear taper, graded so that
+    the width changes by the same ratio in every cell: w_i = W (w/W)^(i/N). Near the
+    narrow end, where a fixed width step is a large change of the mode, the cells are short."""
+    i = np.arange(int(n_cells) + 1) / int(n_cells)
+    wb = w_wide * (w_narrow / w_wide) ** i
+    x = (w_wide - wb) / (w_wide - w_narrow) * length
+    x[0], x[-1] = 0.0, length
+    return x
+
+
+# ------------------------------------------------------------------ 2D model (free)
+def eim_modes(width: float, n_core: float, n_side: float, wl: float, half_domain: float,
+              dy: float = 0.02, n_modes: int = 30):
+    """Even lateral modes of a slab of index n_core and width ``width`` in n_side, on
+    0 <= y <= half_domain (mirror at y = 0, metal wall at the edge), for the in-plane
+    field normal to the walls (TM-like, as the TE mode of the film sees the side walls).
+    Solves d/dy(1/eps dH/dy) + k0^2 H = beta^2 H / eps for H = H_z with finite differences.
+    Returns beta (1/um, propagating modes only), the profiles H (normalised to unit power:
+    integral beta H^2 / eps dy = 1) and eps on the grid."""
+    y = np.arange(dy / 2, half_domain, dy)
+    eps = np.where(y <= width / 2, n_core ** 2, n_side ** 2)
+    k0 = 2 * math.pi / wl
+    w = 0.5 * (1 / eps[1:] + 1 / eps[:-1]) / dy ** 2          # 1/eps between grid points
+    d = np.full(len(y), k0 ** 2)
+    d[:-1] -= w
+    d[1:] -= w                                                 # dH/dy = 0 at both ends
+    # symmetric form: H = sqrt(eps) u turns  A H = beta^2 H / eps  into  S u = beta^2 u
+    ds = d * eps
+    es = w * np.sqrt(eps[1:] * eps[:-1])
+    n = len(y)
+    m = min(int(n_modes), n)
+    S = np.diag(ds) + np.diag(es, 1) + np.diag(es, -1)
+    vals, vecs = np.linalg.eigh(S)                             # ascending
+    vals, vecs = vals[::-1][:m], vecs[:, ::-1][:, :m]
+    keep = vals > 0
+    beta = np.sqrt(vals[keep])
+    H = vecs[:, keep] * np.sqrt(eps)[:, None]
+    for i in range(H.shape[1]):
+        H[:, i] /= math.sqrt(np.sum(beta[i] / eps * H[:, i] ** 2) * dy)
+        if H[0, i] < 0:
+            H[:, i] *= -1
+    return beta, H, eps
+
+
+def eim_taper(n_slab: float, n_side: float, w_wide: float, w_narrow: float, wl: float, lengths,
+              n_cells: int = 600, n_modes: int = 30, margin: float = 2.0, dy: float = 0.02) -> dict:
+    """Transmission of the fundamental mode through a linear taper (2D, effective-index
+    method): the taper is cut into ``n_cells`` graded cells (cell_boundaries), each a straight
+    section of its mid width; the modes of neighbouring cells are joined by their overlaps
+    (transmission t_ij = (<E_j, H_i> + <E_i, H_j>) / 2, reflections neglected) and propagate
+    with exp(i beta L) in between. The same cells and modes serve every length."""
+    half = w_wide / 2 + margin
+    xb = cell_boundaries(w_wide, w_narrow, n_cells)
+    wb = w_wide + (w_narrow - w_wide) * xb
+    widths = 0.5 * (wb[1:] + wb[:-1])
+    fracs = np.diff(xb)
+    secs = [eim_modes(v, n_slab, n_side, wl, half, dy, n_modes) for v in [w_wide, *widths, w_narrow]]
+    T = []
+    for (b1, h1, e1), (b2, h2, e2) in zip(secs[:-1], secs[1:]):
+        T.append(0.5 * dy * ((h2.T / e2) @ h1 * b1[None, :] + (h2.T / e1) @ h1 * b2[:, None]))
+    trans = []
+    for L in lengths:
+        a = np.zeros(len(secs[0][0]), complex)
+        a[0] = 1.0
+        a = T[0] @ a
+        for k in range(len(widths)):
+            a = T[k + 1] @ (np.exp(1j * secs[k + 1][0] * fracs[k] * float(L)) * a)
+        trans.append(float(abs(a[0]) ** 2))
+    trans = np.clip(np.array(trans), 1e-12, None)
+    return dict(length_um=[float(v) for v in lengths], transmission=trans.tolist(),
+                loss_db=(-10 * np.log10(trans)).tolist(), cells=int(n_cells), modes=int(n_modes))
+
+
+def rise_db(curve: dict) -> float:
+    """Largest increase of the loss with length (0 for a curve that only falls): a smooth
+    taper's loss falls with length (apart from a small ripple), so a large rise means the
+    EME staircase is not converged."""
+    L = np.array(curve["length_um"], float)
+    loss = np.array(curve["loss_db"], float)[np.argsort(L)]
+    best, rise = math.inf, 0.0
+    for v in loss:
+        rise = max(rise, v - best)
+        best = min(best, v)
+    return float(rise)
+
+
+# ------------------------------------------------------------------ EME taper (3D, cloud)
 def eme_taper(ctx, w_wide: float, w_narrow: float, length0: float, scale_factors,
-              n_cells: int = 30, n_modes: int = 8, steps: int = 15):
+              n_cells: int = 120, n_modes: int = 20, steps: int = 15):
     """Tidy3D EMESimulation of a linear taper from w_wide (x = 0) to w_narrow (x = length0)
-    with short straight sections at both ends; one EME run, cell lengths rescaled by
-    ``scale_factors`` (lengths = length0 * scale)."""
+    with short straight sections at both ends, the taper cut into ``n_cells`` graded cells
+    (cell_boundaries); one EME run, the taper cells rescaled by ``scale_factors`` (taper
+    length = length0 * scale; the straight sections keep their length)."""
     import tidy3d as td
     cfg = ctx.cfg
     H = ctx.results("cross_section")["height_um"]
@@ -154,11 +254,15 @@ def eme_taper(ctx, w_wide: float, w_narrow: float, length0: float, scale_factors
                                      size=(2 * straight, w_narrow, H)), medium=core,
                      name="waveguide")]
     ms = td.EMEModeSpec(num_modes=int(n_modes), target_neff=ctx.n(cfg.materials.core))
+    inner = cell_boundaries(w_wide, w_narrow, n_cells, length0)[1:-1]
     grid = td.EMECompositeGrid(
         subgrids=[td.EMEUniformGrid(num_cells=1, mode_spec=ms),
-                  td.EMEUniformGrid(num_cells=int(n_cells), mode_spec=ms),
+                  td.EMEExplicitGrid(mode_specs=[ms] * int(n_cells),
+                                     boundaries=[float(v) for v in inner]),
                   td.EMEUniformGrid(num_cells=1, mode_spec=ms)],
         subgrid_boundaries=[0.0, length0])
+    # per cell: the straight end sections keep their length, the taper cells are scaled
+    scales = [[1.0] + [float(s)] * int(n_cells) + [1.0] for s in scale_factors]
     z_lo, z_hi = -1.5, H + 1.5
     return td.EMESimulation(
         center=(length0 / 2, 0, (z_lo + z_hi) / 2),
@@ -167,7 +271,7 @@ def eme_taper(ctx, w_wide: float, w_narrow: float, length0: float, scale_factors
         grid_spec=td.GridSpec.auto(min_steps_per_wvl=int(steps), wavelength=wl),
         symmetry=(0, -1, 0),                    # even modes only (E across the width even)
         boundary_spec=td.BoundarySpec.all_sides(td.PECBoundary()),
-        sweep_spec=td.EMELengthSweep(scale_factors=[float(s) for s in scale_factors]))
+        sweep_spec=td.EMELengthSweep(scale_factors=scales))
 
 
 def taper_transmission(data, length0: float, scale_factors) -> dict:
@@ -214,7 +318,8 @@ def shortest_length(curve: dict, max_loss_db: float) -> Optional[float]:
 
 
 # ------------------------------------------------------------------ the design stage
-DEFAULT_LENGTHS = [5, 10, 15, 20, 30, 40, 60, 80, 100, 150, 200, 300, 400, 500]
+DEFAULT_LENGTHS = [10, 20, 30, 40, 60, 80, 100, 150, 200, 250, 300, 400]
+MODEL_CELLS = 600            # cells of the converged 2D model (600 agrees with 1200 to < 0.01 dB)
 
 
 def _form(ctx) -> None:
@@ -269,41 +374,50 @@ def draw_width(ctx, ws: dict, chosen: float):
     return visuals._save(fig, ctx.path("figures", "8a_grating_width.png"))
 
 
-def draw_length(ctx, curve: dict, chosen: Optional[float], w_wide: float, w_narrow: float,
-                layout_now: float):
+def draw_length(ctx, model: dict, curve: Optional[dict], chosen: Optional[float], source: str,
+                w_wide: float, w_narrow: float, layout_now: float, converged: Optional[bool] = None):
+    """Figure 8b: taper loss against length; the converged 2D model as a line, the 3D EME
+    as points (open when it is not converged)."""
     from tarang.design import visuals
     plt = visuals._plt()
-    fig, ax = plt.subplots(figsize=(8, 4.6))
-    L = np.array(curve["length_um"])
-    loss = np.array(curve["loss_db"])
-    o = np.argsort(L)
-    ax.semilogy(L[o], np.clip(loss[o], 1e-4, None), "o-", color=visuals.PALETTE[0], lw=1.8,
-                label="EME (fundamental mode in → out)")
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    L = np.array(model["length_um"])
+    ax.semilogy(L, np.clip(model["loss_db"], 1e-4, None), "-", color="0.35", lw=1.8,
+                label=f"2D model, effective index ({model['cells']} cells, converged)")
+    if curve:
+        L3 = np.array(curve["length_um"])
+        o = np.argsort(L3)
+        good = converged is not False
+        ax.semilogy(L3[o], np.clip(np.array(curve["loss_db"])[o], 1e-4, None), "o-" if good else "o--",
+                    color=visuals.PALETTE[0], lw=1.5, mfc=visuals.PALETTE[0] if good else "white",
+                    label=f"3D EME, {curve.get('cells', '?')} cells x {curve.get('modes', '?')} modes"
+                          + ("" if good else " (NOT converged)"))
     ax.axhline(ctx.cfg.taper.max_loss_db, color="0.5", ls=":", label=f"accepted loss "
                f"{ctx.cfg.taper.max_loss_db:g} dB")
     if chosen:
-        ax.axvline(chosen, color=visuals.PALETTE[1], ls="--", label=f"shortest accepted: {chosen:.0f} µm")
+        ax.axvline(chosen, color=visuals.PALETTE[1], ls="--", label=f"chosen: {chosen:.0f} µm ({source})")
     ax.axvline(layout_now, color="0.6", ls="-.", lw=1, label=f"layout until now: {layout_now:g} µm")
     ax.set(xlabel="Taper length (µm)", ylabel="Taper loss (dB)",
-           title=f"Linear taper {w_wide:g} → {w_narrow:g} µm (one way)")
+           title=f"Linear taper {w_wide:g} → {w_narrow:g} µm (one way, fundamental mode)")
     ax.grid(alpha=0.3, which="both")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=7.5)
     return visuals._save(fig, ctx.path("figures", "8b_taper_length.png"))
 
 
 def stage_taper(ctx) -> dict:
-    """Grating width (free) and taper length (EME, priced)."""
+    """Grating width (free), taper length from the 2D model (free) and Tidy3D EME (priced)."""
     from tarang.design import visuals
     from tarang.design.checks import _run_batch, _write_csv
     from tarang.utilities.cloud_run import _data_class, find_cached
     _form(ctx)
     cfg, ui = ctx.cfg, ctx.ui
+    wl = cfg.run.wavelength_um
     xs = ctx.results("cross_section")
     w_narrow = xs["width_um"]
     ws = width_sweep(ctx, cfg.taper.widths_um or None)
     chosen_w = float(cfg.taper.grating_width_um) if cfg.taper.grating_width_um else \
         round(ws["best_width_um"] * 2) / 2                     # nearest 0.5 um
-    eta_chosen = lateral_overlap(ws["n_slab"], ws["n_side"], chosen_w, ws["mfd_um"], cfg.run.wavelength_um)
+    eta_chosen = lateral_overlap(ws["n_slab"], ws["n_side"], chosen_w, ws["mfd_um"], wl)
     ui.say(f"Lateral overlap of the fibre with the grating (effective-index method, slab index "
            f"{ws['n_slab']:.4f}): best width {ws['best_width_um']:.1f} µm (η_y "
            f"{ws['best_eta_y'] * 100:.1f} %); {ws['current_width_um']:g} µm gives "
@@ -319,39 +433,80 @@ def stage_taper(ctx) -> dict:
         ui.say(f"  grating efficiency estimate with the width: {gc['efficiency_2d'] * 100:.1f} % x "
                f"{eta_chosen:.3f} = {res['efficiency_3d_estimate'] * 100:.1f} % "
                f"({-10 * math.log10(res['efficiency_3d_estimate']):.2f} dB)")
-    if not cfg.taper.run_eme:
-        return res
+
+    # ---- taper length, 2D model (free, converged)
+    max_loss = float(cfg.taper.max_loss_db)
     lengths = sorted({float(v) for v in (cfg.taper.lengths_um or DEFAULT_LENGTHS)})
     L0 = max(lengths)
-    scales = [v / L0 for v in lengths]
-    sim = eme_taper(ctx, chosen_w, w_narrow, L0, scales, cfg.taper.eme_cells, cfg.taper.eme_modes)
-    name = f"taper_W{chosen_w:g}to{w_narrow:g}um_L{L0:g}um_eme{cfg.taper.eme_cells}x{cfg.taper.eme_modes}"
-    folder = ctx.out / "cloud" / "taper"
-    ok = _run_batch(ctx, {"taper EME": (sim, name)}, folder, "taper loss against length (EME)")
-    hit = find_cached(sim, folder, name)
-    if not ok or hit is None:
-        ui.say("  Taper length not computed (skipped or not run); the layout keeps its taper.")
-        return res
-    data = _data_class(sim).from_file(str(hit))
-    curve = taper_transmission(data, L0, scales)
-    L_ok = shortest_length(curve, float(cfg.taper.max_loss_db))
-    rows = [dict(length_um=l, transmission=t, loss_db=d)
-            for l, t, d in zip(curve["length_um"], curve["transmission"], curve["loss_db"])]
-    ui.table(rows, formats={"transmission": ".4f", "loss_db": ".3f"})
-    _write_csv(ctx.path("tables", "taper_length.csv"), rows)
+    dense = sorted(set(np.round(np.geomspace(5.0, max(L0, 500.0), 60), 1).tolist()) | set(lengths))
+    ns, nside = ws["n_slab"], ws["n_side"]
+    model = eim_taper(ns, nside, chosen_w, w_narrow, wl, dense, n_cells=MODEL_CELLS)
+    L_2d = shortest_length(model, max_loss)
+    L_2d = None if L_2d is None else float(math.ceil(L_2d / 10.0) * 10.0)   # round up to 10 um
     layout_now = float(cfg.grating.taper_length_um)
-    loss_now = loss_at(curve, layout_now)
-    chosen_L = None if L_ok is None else float(math.ceil(L_ok / 5.0) * 5.0)   # round up to 5 um
-    res.update(lengths_um=curve["length_um"], loss_db=curve["loss_db"],
-               taper_length_um=chosen_L,
-               taper_loss_db=loss_at(curve, chosen_L) if chosen_L else None,
-               loss_db_at_previous_length=loss_now, previous_length_um=layout_now)
+    res.update(model_lengths_um=model["length_um"], model_loss_db=model["loss_db"],
+               model_length_um=L_2d, model_loss_db_at_length=loss_at(model, L_2d) if L_2d else None,
+               previous_length_um=layout_now, model_loss_db_at_previous=loss_at(model, layout_now))
+    ui.say(f"  Taper length, 2D model (effective index, {model['cells']} graded cells, free): "
+           + (f"shortest below {max_loss:g} dB: {L_2d:.0f} µm ({res['model_loss_db_at_length']:.3f} dB)"
+              if L_2d else f"no length up to {max(dense):g} µm below {max_loss:g} dB")
+           + f"; the {layout_now:g} µm taper so far: {res['model_loss_db_at_previous']:.3f} dB.")
+    _write_csv(ctx.path("tables", "taper_length_model.csv"),
+               [dict(length_um=a, loss_db=b) for a, b in zip(model["length_um"], model["loss_db"])])
+    chosen_L, source, curve, converged = L_2d, "2D model", None, None
+
+    # ---- 3D EME (priced): the same cells, checked against the 2D staircase error first
+    if cfg.taper.run_eme:
+        nc, nm = int(cfg.taper.eme_cells), int(cfg.taper.eme_modes)
+        stair = eim_taper(ns, nside, chosen_w, w_narrow, wl, lengths, n_cells=nc, n_modes=min(nm, 30))
+        ref = [loss_at(model, v) for v in lengths]
+        err = float(np.max(np.abs(np.array(stair["loss_db"]) - np.array(ref))))
+        res["staircase_error_db"] = err
+        ui.say(f"  3D EME with {nc} cells x {nm} modes: the same staircase in the 2D model differs from "
+               f"the converged curve by up to {err:.3f} dB over {min(lengths):g}-{L0:g} µm"
+               + (" (more cells, eme_cells, would bring it below the accepted loss)."
+                  if err > max_loss else "."))
+        scales = [v / L0 for v in lengths]
+        sim = eme_taper(ctx, chosen_w, w_narrow, L0, scales, nc, nm)
+        name = f"taper_W{chosen_w:g}to{w_narrow:g}um_L{L0:g}um_eme{nc}x{nm}g"
+        folder = ctx.out / "cloud" / "taper"
+        ok = _run_batch(ctx, {"taper EME": (sim, name)}, folder, "taper loss against length (EME)")
+        hit = find_cached(sim, folder, name)
+        if ok and hit is not None:
+            data = _data_class(sim).from_file(str(hit))
+            curve = taper_transmission(data, L0, scales)
+            curve.update(cells=nc, modes=nm)
+            rise = rise_db(curve)
+            converged = rise <= max_loss
+            rows = [dict(length_um=l, transmission=t, loss_db=d, model_2d_db=loss_at(model, l))
+                    for l, t, d in zip(curve["length_um"], curve["transmission"], curve["loss_db"])]
+            ui.table(rows, formats={"transmission": ".4f", "loss_db": ".3f", "model_2d_db": ".3f"})
+            _write_csv(ctx.path("tables", "taper_length.csv"), rows)
+            L_3d = shortest_length(curve, max_loss)
+            L_3d = None if L_3d is None else float(math.ceil(L_3d / 10.0) * 10.0)
+            res.update(lengths_um=curve["length_um"], loss_db=curve["loss_db"], eme_cells=nc,
+                       eme_modes=nm, eme_rise_db=rise, eme_converged=converged, eme_length_um=L_3d,
+                       loss_db_at_previous_length=loss_at(curve, layout_now))
+            if not converged:
+                ui.say(f"  The 3D loss rises by {rise:.2f} dB somewhere with increasing length: the EME "
+                       "staircase is not converged (more eme_cells / eme_modes). The length is taken "
+                       "from the 2D model.")
+            elif L_3d:
+                chosen_L, source = L_3d, "3D EME"
+                ui.say(f"  3D EME: shortest below {max_loss:g} dB: {L_3d:.0f} µm "
+                       f"({loss_at(curve, L_3d):.3f} dB).")
+            else:
+                ui.say(f"  3D EME: no swept length below {max_loss:g} dB (longest {L0:g} µm); the "
+                       "length is taken from the 2D model.")
+        else:
+            ui.say("  3D EME not run; the length is taken from the 2D model.")
     if chosen_L:
-        ui.say(f"  Shortest taper with loss below {cfg.taper.max_loss_db:g} dB: {chosen_L:.0f} µm "
-               f"({res['taper_loss_db']:.3f} dB); the {layout_now:g} µm taper of the layout so far "
-               f"loses {loss_now:.3f} dB.")
+        loss_c = loss_at(curve, chosen_L) if source == "3D EME" else loss_at(model, chosen_L)
+        res.update(taper_length_um=chosen_L, taper_loss_db=loss_c, length_source=source)
+        ui.say(f"  Taper length used: {chosen_L:.0f} µm ({source}, {loss_c:.3f} dB per taper).")
     else:
-        ui.say(f"  No swept length reaches {cfg.taper.max_loss_db:g} dB; add longer lengths "
-               "(taper.lengths_um) and rerun this stage.")
-    visuals.safe(ctx, "taper length", draw_length, ctx, curve, chosen_L, chosen_w, w_narrow, layout_now)
+        res.update(taper_length_um=None, taper_loss_db=None, length_source=None)
+        ui.say("  No taper length reaches the accepted loss; the layout keeps its taper.")
+    visuals.safe(ctx, "taper length", draw_length, ctx, model, curve, chosen_L, source, chosen_w,
+                 w_narrow, layout_now, converged)
     return res

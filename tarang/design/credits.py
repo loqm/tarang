@@ -115,6 +115,19 @@ def main(cfg, out: Path, budget=None, reset=False, show=True, runs=False) -> Non
               + (f" ({drawn} drawn now)" if drawn else ""))
 
 
+def load_simulation(path: Path):
+    """A saved simulation.json of any Tidy3D simulation type (FDTD, EME, mode solver): the
+    file's "type" field names the class."""
+    import json
+
+    import tidy3d as td
+    kind = json.loads(Path(path).read_text(encoding="utf-8")).get("type", "Simulation")
+    cls = getattr(td, kind, None)
+    if cls is None or not hasattr(cls, "from_file"):
+        cls = td.Simulation
+    return cls.from_file(str(path))
+
+
 def draw_run_pictures(out: Path, rows: list) -> int:
     """A geometry picture (figures/sims/<cloud folder name>.png) for every run that has a
     saved simulation.json and no picture yet; returns how many were drawn."""
@@ -127,8 +140,7 @@ def draw_run_pictures(out: Path, rows: list) -> int:
         if dst.exists() or not src.exists():
             continue
         try:
-            import tidy3d as td
-            visuals.sim_picture(td.Simulation.from_file(str(src)), dst, r["name"])
+            visuals.sim_picture(load_simulation(src), dst, r["name"])
             n += 1
         except Exception as err:                      # noqa: BLE001
             print(f"  (picture of {r['name']} not drawn: {type(err).__name__}: {err})")

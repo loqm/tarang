@@ -120,8 +120,8 @@ def describe_sim(sim, wavelength_um: float) -> list[str]:
 
 
 def _load_sim(path):
-    import tidy3d as td
-    return td.Simulation.from_file(str(path))
+    from tarang.design.credits import load_simulation
+    return load_simulation(path)
 
 
 def _describe_file(path, wl: float, ui=None) -> list[str]:

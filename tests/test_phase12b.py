@@ -75,16 +75,26 @@ def test_shortest_taper_length_interpolates_between_the_swept_lengths():
 
 
 # ---- the taper stage --------------------------------------------------------------- #
-def test_taper_stage_picks_width_and_length_and_the_layout_uses_them(tmp_path, fake_web):
+@pytest.fixture
+def fast_taper_model(monkeypatch):
+    """A coarser converged 2D taper model (the stage runs it on every call)."""
+    from tarang.design import taper
+    monkeypatch.setattr(taper, "MODEL_CELLS", 240)
+
+
+def test_taper_stage_picks_width_and_length_and_the_layout_uses_them(tmp_path, fake_web,
+                                                                      fast_taper_model):
     from tarang.design import checks, layout, taper
     ctx = _ctx(tmp_path, run__max_total_cost=5.0)
     ctx.stage = "taper"
     res = taper.stage_taper(ctx)
     assert 13.0 <= res["grating_width_um"] <= 15.0 and res["eta_y"] > res["eta_y_before"]
-    # fake EME: T = 1 - exp(-L / 40 um); 0.05 dB -> L = 40 ln(1/(1 - 10^-0.005)), rounded up to 5
+    # fake EME: T = 1 - exp(-L / 40 um); 0.05 dB -> L = 40 ln(1/(1 - 10^-0.005)), rounded up to 10
     expect = -40 * math.log(1 - 10 ** (-0.005))
-    assert res["taper_length_um"] == pytest.approx(math.ceil(expect / 5) * 5)
+    assert res["eme_converged"] and res["length_source"] == "3D EME"
+    assert res["taper_length_um"] == pytest.approx(math.ceil(expect / 10) * 10)
     assert res["taper_loss_db"] <= 0.05 + 1e-9
+    assert res["model_length_um"] > 0 and res["staircase_error_db"] < 0.1
     assert (ctx.out / "figures" / "8a_grating_width.png").exists()
     assert (ctx.out / "figures" / "8b_taper_length.png").exists()
     assert (ctx.out / "tables" / "taper_length.csv").exists()
@@ -102,11 +112,13 @@ def test_taper_stage_picks_width_and_length_and_the_layout_uses_them(tmp_path, f
     assert fake_web.names().count("batch_start") == n
 
 
-def test_taper_off_in_layout_keeps_the_previous_values(tmp_path, fake_web):
+def test_taper_off_in_layout_keeps_the_previous_values(tmp_path, fake_web, fast_taper_model):
     from tarang.design import layout, taper
     ctx = _ctx(tmp_path, taper__use_in_layout=False, taper__run_eme=False)
+    n = fake_web.names().count("batch_start")
     res = taper.stage_taper(ctx)
-    assert "taper_length_um" not in res
+    assert fake_web.names().count("batch_start") == n                  # nothing on the cloud
+    assert res["length_source"] == "2D model" and res["taper_length_um"] == res["model_length_um"]
     ctx.state["stages"]["taper"] = {"results": res}
     p = layout.device_parameters(ctx)
     assert p["grating_width_um"] == 12.0 and p["taper_length_um"] == ctx.cfg.grating.taper_length_um
@@ -193,7 +205,7 @@ def test_teeth_scatter_weakly_first_and_strongly_later():
 
 
 def _apod_ctx(tmp_path):
-    ctx = _ctx(tmp_path, run__max_total_cost=10.0)
+    ctx = _ctx(tmp_path, run__max_total_cost=10.0, apodise__run=True)
     ctx.state["stages"]["grating"]["results"].update(fiber_tilt="towards")
     return ctx
 
@@ -422,19 +434,30 @@ def test_apodise_stage_reads_periods_right_in_either_time_convention(tmp_path, f
         assert r["period_matched_um"] == pytest.approx(r["period_run_um"], rel=1e-3)
 
 
-def test_new_stages_run_through_the_design_session(tmp_path, fake_web, monkeypatch):
+def test_new_stages_run_through_the_design_session(tmp_path, fake_web, monkeypatch, fast_taper_model):
     from tarang.design import apodise as ap, run
     from tarang.design.ui import Prompter
     monkeypatch.setattr(ap, "read_line", lambda data, f0: _line_field(0.3, 1.6, 1.1))
     ctx = _ctx(tmp_path, run__max_total_cost=10.0)
     ctx.save_state()
     out = io.StringIO()
+    # first design run: the apodised grating is off by default; only the uniform one is used
+    n = fake_web.names().count("batch_start")
     done = run(ctx.cfg, ctx.out, interactive=False, only=["taper", "apodise"],
                prompter=Prompter(False, out=out))
     st = done.state["stages"]
     assert st["taper"]["results"]["taper_length_um"] > 0
-    assert st["apodise"]["results"]["verified"] is False             # strong teeth only here
+    assert st["apodise"]["results"] == {"disabled": True}
+    assert fake_web.names().count("batch_start") == n + 1             # the taper EME only
     assert "[7/10] Taper" in out.getvalue() and "[8/10] Apodised grating" in out.getvalue()
+    assert "not requested" in out.getvalue()
+    # later: turned on, it runs in the same session; the taper is not repeated
+    done.cfg.apodise.run = True
+    out2 = io.StringIO()
+    again = run(done.cfg, ctx.out, interactive=False, prompter=Prompter(False, out=out2),
+                only=["taper", "apodise"])
+    assert "Taper: grating width for the fibre and taper length (EME): done earlier" in out2.getvalue()
+    assert again.state["stages"]["apodise"]["results"]["verified"] is False   # strong teeth here
 
 
 @pytest.mark.parametrize("module", ["full_ring_resonator", "half_ring_resonator",
@@ -457,3 +480,171 @@ def test_every_ring_builder_can_have_a_flat_box_and_keeps_its_old_geometry(modul
     assert zmin == pytest.approx(0.0, abs=1e-9)                      # no pocket in the BOX
     old = next(s for s in legacy.sim.structures if s.name == "Ring_Inner_Hole").geometry
     assert old.bounds[0][2] == pytest.approx(-0.1)
+
+
+# ---- Phase 12B v2: converged taper, robust apodisation, EME pictures ----------------- #
+def test_graded_cells_change_the_width_by_the_same_ratio():
+    from tarang.design import taper
+    x = taper.cell_boundaries(14.5, 1.0, 40, 300.0)
+    assert x[0] == 0 and x[-1] == 300.0 and np.all(np.diff(x) > 0)
+    w = 14.5 + (1.0 - 14.5) * x / 300.0
+    assert np.allclose(w[1:] / w[:-1], (1 / 14.5) ** (1 / 40))
+    assert np.diff(x)[0] > 5 * np.diff(x)[-1]                  # short cells at the narrow end
+
+
+@pytest.mark.slow
+def test_2d_taper_model_is_converged_and_falls_with_length():
+    from tarang.design import taper
+    L = [10, 30, 60, 100, 200, 300]
+    fine = taper.eim_taper(1.8511, 1.444, 14.5, 1.0, 1.55, L, n_cells=600)
+    finer = taper.eim_taper(1.8511, 1.444, 14.5, 1.0, 1.55, L, n_cells=1200)
+    assert np.allclose(fine["loss_db"], finer["loss_db"], atol=0.01)
+    assert taper.rise_db(fine) < 0.005                         # falls with length
+    assert fine["loss_db"][0] > 3 and fine["loss_db"][-1] < 0.06
+    # a coarse staircase is what made the 3D EME jump with length
+    coarse = taper.eim_taper(1.8511, 1.444, 14.5, 1.0, 1.55, L, n_cells=20, n_modes=8)
+    assert np.max(np.abs(np.array(coarse["loss_db"]) - fine["loss_db"])) > 0.05
+
+
+def test_rise_finds_a_loss_that_increases_with_length():
+    from tarang.design import taper
+    assert taper.rise_db(dict(length_um=[10, 20, 30], loss_db=[3.0, 1.0, 0.5])) == 0
+    measured = [7.919, 6.498, 5.85, 6.429, 2.41, 1.964, 0.715, 0.895, 0.201, 0.871, 0.461,
+                1.081, 0.418, 0.309]                           # the 30-cell EME of Phase 12B v1
+    L = [5, 10, 15, 20, 30, 40, 60, 80, 100, 150, 200, 300, 400, 500]
+    assert taper.rise_db(dict(length_um=L, loss_db=measured)) == pytest.approx(0.88, abs=0.01)
+
+
+def test_unconverged_eme_falls_back_to_the_2d_model(tmp_path, fake_web, fast_taper_model, monkeypatch):
+    from tarang.design import checks, taper
+    real = taper.taper_transmission
+
+    def jumpy(data, L0, scales):
+        c = real(data, L0, scales)
+        loss = [0.2 + (0.8 if i % 2 else 0.0) for i in range(len(c["loss_db"]))]
+        return dict(length_um=c["length_um"], transmission=[10 ** (-v / 10) for v in loss], loss_db=loss)
+    monkeypatch.setattr(taper, "taper_transmission", jumpy)
+    ctx = _ctx(tmp_path, run__max_total_cost=5.0)
+    res = taper.stage_taper(ctx)
+    assert res["eme_converged"] is False and res["eme_rise_db"] == pytest.approx(0.8)
+    assert res["length_source"] == "2D model" and res["taper_length_um"] == res["model_length_um"]
+    ctx.state["stages"]["taper"] = {"results": res}
+    items = " ".join(r["item"] for r in checks.loss_budget(ctx, ctx.results("grating")))
+    assert "(2D model)" in items and "not simulated" not in items
+
+
+def _v1_scattering():
+    """The fill-factor table of the Phase 12B v1 run (1550 nm, full etch, air top)."""
+    tab = [(0.5, 0.0236, 1.3653, 1.2923), (0.55, 0.0365, 1.2925, 1.2487), (0.6, 0.0450, 1.4744, 1.2079),
+           (0.65, 0.0938, 1.5048, 1.1697), (0.7, 0.0762, 1.5582, 1.1338), (0.75, 0.0520, 1.6187, 1.1001),
+           (0.8, 0.0294, 1.6767, 1.0683), (0.85, 0.0088, 1.7303, 1.0383), (0.9, 1e-6, 1.7806, 1.0100),
+           (0.908, 1e-6, 1.7879, 1.0056)]
+    return [dict(fill_factor=f, alpha_per_um=a, n_bloch=n, period_run_um=p, window_um=27 * p,
+                 fit_rms=0.05, phase_rms_rad=0.1) for f, a, n, p in tab]
+
+
+def test_only_one_monotonic_branch_of_fill_factors_is_used(tmp_path):
+    from tarang.design import apodise as ap, report
+    rows = ap.validate(_v1_scattering(), 1.55, 1.0, 1.0, 1.8511)
+    why = {r["fill_factor"]: r["why"] for r in rows}
+    assert "2nd order" in why[0.5] and "2nd order" in why[0.6]
+    assert "too weak" in why[0.9] and "too weak" in why[0.908]
+    branch = ap.weak_branch(rows)
+    assert [r["fill_factor"] for r in branch] == [0.65, 0.7, 0.75, 0.8, 0.85]
+    alpha = dict((r["fill_factor"], r["alpha_per_um"]) for r in branch)
+    ffs = [r["fill_factor"] for r in branch]
+    teeth, ffl = ap.build_teeth(lambda f: float(np.interp(f, ffs, [alpha[v] for v in ffs])),
+                                lambda f: 1.1, ffs, 9.0, 5.32, 0.97, 0.0088, 0.0938)
+    assert min(ffl) >= 0.65 and ffl[0] == pytest.approx(0.85)      # weakest teeth first
+    # the report explains a stage that found too few usable points (no crash)
+    text = "\n".join(report._apodise_section(_ctx(tmp_path), dict(scattering=rows, skipped=True,
+                                                                     verified=False)))
+    assert "Fewer than three usable" in text and "FF 0.9 (decay too weak" in text
+    with pytest.raises(ValueError):                                  # both branches mixed
+        ap.build_teeth(lambda f: [0.02, 0.09, 0.03][[0.5, 0.65, 0.85].index(f)] if f in (0.5, 0.65, 0.85)
+                       else 0.05, lambda f: 1.1, [0.5, 0.65, 0.85], 9.0, 5.32, 0.97, 0.02, 0.09)
+
+
+def test_fit_quality_is_reported_for_a_clean_and_a_two_wave_field():
+    from tarang.design import apodise as ap
+    x, comps = _line_field(0.05, 1.62, 1.1)
+    clean = ap.alpha_and_index(x, comps, 1.1, 1.55)
+    assert clean["phase_rms_rad"] < 0.05 and clean["fit_rms"] < 0.05
+    x2, c2 = _line_field(0.05, 1.62, 1.1)
+    k0 = 2 * math.pi / 1.55
+    other = {k: v + 0.8 * np.abs(v) * np.exp(-1j * 0.95 * k0 * x2) for k, v in c2.items()}
+    messy = ap.alpha_and_index(x2, other, 1.1, 1.55)
+    assert messy["phase_rms_rad"] > clean["phase_rms_rad"] + 0.2
+    assert ap.second_order_up(1.3653, 1.2923, 1.55, 1.0) and not ap.second_order_up(1.6187, 1.1001, 1.55, 1.0)
+
+
+def test_apodised_peak_is_moved_onto_the_design_wavelength(tmp_path, fake_web, monkeypatch):
+    from tarang.design import apodise as ap
+    from tarang.grating_coupler.grating_coupler import GratingCoupler
+
+    def fake_line(data, f0):
+        teeth = [s for s in data.simulation.structures if s.name and s.name.startswith("Tooth_")]
+        b = teeth[0].geometry.bounds
+        P = teeth[1].geometry.bounds[0][0] - b[0][0]
+        ff = (b[1][0] - b[0][0]) / P
+        return _line_field(0.02 + 0.6 * (0.9 - ff), 1.55 / P + math.sin(math.radians(12)), P)
+    monkeypatch.setattr(ap, "read_line", fake_line)
+    designed = {}
+    real_build = ap.build_teeth
+
+    def build(*a, **k):
+        teeth, ffl = real_build(*a, **k)
+        designed["teeth"] = teeth
+        return teeth, ffl
+    monkeypatch.setattr(ap, "build_teeth", build)
+
+    def spectrum(self, folder):
+        wl = np.linspace(1.45, 1.65, 801)
+        if not self.config.teeth:
+            return wl, 0.313 * np.exp(-((wl - 1.55) / 0.03) ** 2)
+        scale = self.config.teeth[-1][1] / designed["teeth"][-1][1]
+        peak = 1.567 + 0.97 * (scale - 1.0)                 # 17 nm long at the designed periods
+        return wl, 0.40 * np.exp(-((wl - peak) / 0.03) ** 2)
+    monkeypatch.setattr(GratingCoupler, "get_spectrum", spectrum)
+    res = ap.stage_apodise(_apod_ctx(tmp_path))
+    assert res["verified"]
+    assert res["scale_centred"] == pytest.approx(1 - 0.017 / 0.97, abs=2e-3)
+    assert len(res["check"]) == 8                                   # 5 + 3 with the peak centred
+    assert abs(res["peak_wavelength_nm"] - 1550) < 1.5
+    assert res["scale"] == pytest.approx(res["scale_centred"])
+
+
+def test_run_pictures_load_eme_simulations(tmp_path):
+    import tidy3d as td
+    from tarang.design import credits, taper
+    ctx = _ctx(tmp_path)
+    sim = taper.eme_taper(ctx, 14.5, 1.0, 100.0, [0.5, 1.0], n_cells=12, n_modes=4)
+    folder = tmp_path / "cloud" / "taper" / "taper_test_0123456789"
+    folder.mkdir(parents=True)
+    sim.to_file(str(folder / "simulation.json"))
+    assert isinstance(credits.load_simulation(folder / "simulation.json"), td.EMESimulation)
+    n = credits.draw_run_pictures(tmp_path, [dict(folder=str(folder), name="taper_test")])
+    assert n == 1 and (tmp_path / "figures" / "sims" / "taper_test_0123456789.png").exists()
+
+
+def test_the_narrowest_trench_limits_the_teeth_and_is_not_paid_for(tmp_path, fake_web, monkeypatch):
+    from tarang.design import apodise as ap
+    from tarang.grating_coupler.grating_coupler import GratingCoupler
+
+    def fake_line(data, f0):
+        teeth = [s for s in data.simulation.structures if s.name and s.name.startswith("Tooth_")]
+        b = teeth[0].geometry.bounds
+        P = teeth[1].geometry.bounds[0][0] - b[0][0]
+        ff = (b[1][0] - b[0][0]) / P
+        return _line_field(0.02 + 0.6 * (0.9 - ff), 1.55 / P + math.sin(math.radians(12)), P)
+    monkeypatch.setattr(ap, "read_line", fake_line)
+    monkeypatch.setattr(GratingCoupler, "get_spectrum", lambda self, folder: (
+        np.linspace(1.45, 1.65, 101), 0.35 * np.exp(-((np.linspace(1.45, 1.65, 101) - 1.55) / 0.03) ** 2)))
+    ctx = _ctx(tmp_path, run__max_total_cost=10.0, apodise__min_trench_um=0.2, apodise__run=True)
+    ctx.state["stages"]["grating"]["results"].update(fiber_tilt="towards")
+    res = ap.stage_apodise(ctx)
+    runs = [r["fill_factor"] for r in res["scattering"]]
+    assert max(runs) <= 0.82                                         # 0.85-0.908 never run
+    assert all(r["trench_um"] >= 0.2 - 1e-6 for r in res["scattering"])
+    assert res["min_trench_um"] == 0.2 and res["narrowest_trench_um"] >= 0.2 * 0.98
+    assert "Narrowest trench allowed: 200 nm" in ctx.ui.out.getvalue()
