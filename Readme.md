@@ -198,8 +198,8 @@ each starts with a table of the functions it shows):
 material data cover:
 
 ```
-materials -> cross-section -> ring -> ring-bus gap -> grating coupler -> checks -> taper -> apodised grating -> layout -> report
-  local          local        local      cloud             cloud        free+cloud  free+cloud    cloud           local     local
+materials -> cross-section -> ring -> ring-bus gap -> grating coupler -> checks -> taper -> apodised grating -> focusing grating -> layout -> report
+  local          local        local      cloud             cloud        free+cloud  free+cloud  cloud (opt-in)   free (opt-in)     local     local
 ```
 
 Each stage asks only what it needs (the default is shown; Enter accepts it), then prints
@@ -226,6 +226,7 @@ Below, `D` stands for your design's settings file, e.g. `design_runs/my_ring/des
 | run a stage again (new results beside the old) | `python -m tarang.design --config D --only grating --redo grating` |
 | run the extra checks (tolerances, band, mode families, loss budget) | `python -m tarang.design --config D --only checks` |
 | design the taper and the apodised grating, then the layout and report | `python -m tarang.design --config D --only taper,apodise,layout,report` (set `apodise.run = true` first: the apodised grating is opt-in) |
+| design a focusing grating (curved teeth, no long taper) | `python -m tarang.design --config D --only focus,layout,report` (set `focus.run = true` first; opt-in, free unless `focus.check_3d`) |
 | redraw a design's figures in the current style (free) | `python -m tarang.design --config D --only report --redo report` |
 | open each figure as it is made | add `--show` |
 | list the stages | `python -m tarang.design --list` |
@@ -262,10 +263,11 @@ Tidy3D account of the current API key (a link only opens in the account that ran
 | Cross-section | film thickness if fixed, map ranges, tolerances | design map, ranked candidates, tolerance and mesh check of your choice |
 | Ring | FSR target, losses (a published preset, or your own values) | radius, *Q*<sub>int</sub>, bend loss, *D*(λ), *D*<sub>int</sub>, threshold estimate |
 | Gap | gaps, over-coupling ratio | coupled power per gap (read where light enters the ring), critical and over-coupled gap, loaded *Q* |
-| Grating coupler | etch, fibre angle, orientation and MFD, smallest feature | spectra of a period × fill-factor map, the period tuned onto your wavelength, fill-factor / period / fibre-position sensitivity, 1 dB and 3 dB bandwidths; optional 3D check |
+| Grating coupler | etch, fibre angle, orientation and MFD, smallest feature | spectra of a period × fill-factor map (and its efficiency landscape, 5g), the period tuned onto your wavelength, fill-factor / period / fibre-position sensitivity, 1 dB and 3 dB bandwidths; optional 3D check |
 | Checks | which checks (each cloud check is priced first) | gap tolerance (K, loaded Q, dip depth), coupled-mode-theory check of the gap, FSR tolerance, ring mode families and crossings, fibre-to-fibre loss budget; optional: coupling across the band, grating angle / film / tooth-width tolerances, back-reflection and directionality, mesh checks |
 | Taper | grating width (or the best for the fibre), taper lengths to try, loss accepted | lateral overlap of the fibre with the grating against its width (effective-index method, free), taper loss against length (one Tidy3D EME run), the shortest taper below the accepted loss; the layout uses both |
 | Apodised grating (opt-in, `apodise.run`; off: the uniform grating is used and nothing is paid) | fill factors to measure, narrowest trench the full etch clears, whether to check in FDTD | scattering strength and phase-matched period of each fill factor (small 2D runs), a tooth list whose scattering follows the fibre's Gaussian, the predicted gain (1D model, before anything else is paid), a 2D FDTD check; the layout uses it when it beats the uniform grating |
+| Focusing grating (opt-in, `focus.run`) | teeth (uniform, apodised or the better one), tip widths, largest light-cone angle, optional 3D check | curved teeth (confocal ellipses around the waveguide tip) on the straight grating's cross-section, the in-plane focusing efficiency against tip-to-grating distance and tip width (free model, landscape figure), the 3D estimate against the straight grating with its taper; optional 3D FDTD (priced); the GDS gets `*_fgc` cells with it beside the straight-grating `*_gc` cells |
 | Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv`, layout figure; `lle/` inputs for a comb (Lugiato-Lefever) solver, incl. pyLLE's dispersion-file format |
 | Report | | `report.md` with every figure, `benchmark_pack/` (and its zip), `design_summary.json`, `tables/cloud_runs.csv` |
 

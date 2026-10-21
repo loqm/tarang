@@ -184,6 +184,22 @@ class Apodise:
 
 
 @dataclass
+class Focus:
+    run: bool = _f(False, "Also design a focusing grating (curved teeth focus the light into the "
+                          "waveguide; a few-um slab replaces the long taper)")
+    teeth: str = _f("best", "Teeth along the axis: 'uniform', 'apodised', or 'best' (apodised when "
+                            "it was checked and beats the uniform grating)")
+    tip_widths_um: list = _f([], "Waveguide tip widths to try at the focus (empty: 1-4 x the "
+                                 "waveguide width)", "um")
+    max_half_angle_deg: float = _f(20.0, "Largest half-angle of the light cone at the tip (wider "
+                                         "cones are less well described by the model)", "deg")
+    check_3d: bool = _f(False, "Check the focusing grating in 3D FDTD (one run, priced first; "
+                               "several FlexCredits)")
+    use_in_layout: bool = _f(True, "Make the focusing grating the main coupler (loss budget, "
+                                   "layout figure); the GDS has both in any case")
+
+
+@dataclass
 class Assumptions:
     n2_m2_w: float = _f(2.4e-19, "Kerr index of the core for the threshold estimate (Si3N4: "
                                  "Ikeda et al., Opt. Express 16, 12987 (2008))", "m^2/W")
@@ -209,7 +225,7 @@ LEGACY = {"gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1}}
 
 SECTIONS = {"run": Run, "materials": Materials, "stack": Stack, "cross_section": CrossSection,
             "ring": Ring, "gap": Gap, "grating": Grating, "checks": Checks, "taper": Taper,
-            "apodise": Apodise,
+            "apodise": Apodise, "focus": Focus,
             "layout": Layout, "assumptions": Assumptions}
 
 
@@ -225,6 +241,7 @@ class DesignConfig:
     checks: Checks = field(default_factory=Checks)
     taper: Taper = field(default_factory=Taper)
     apodise: Apodise = field(default_factory=Apodise)
+    focus: Focus = field(default_factory=Focus)
     layout: Layout = field(default_factory=Layout)
     assumptions: Assumptions = field(default_factory=Assumptions)
     given: set = field(default_factory=set, repr=False, compare=False)   # "section.key" read from a file

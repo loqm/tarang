@@ -35,7 +35,12 @@ working until v0.2.0; old imports are updated with one command (see
   gives α, its phase slope the Bloch index). The tooth list follows
   α(x) = A·G²/(2(1 − A∫G²)) so the emitted light has the fibre's Gaussian shape; a 1D
   emission model (uniform grating: the textbook 80 % ceiling) predicts the gain before the
-  2D FDTD check is priced. Only one monotonic branch of fill factors is used (α falling and
+  2D FDTD check is priced. α and n_B are fitted to the complex field above the grating as
+  a forward wave decaying from the start plus a backward wave decaying from the end (the
+  light reflected at the grating's end, which also scatters up and makes |E|² fringe), each
+  with its near-field harmonics; on the 1550 nm design this explains the field to within
+  2-13 % for fill factors 0.65-0.908 (a single exponential fit had read 0.094/µm at FF 0.65
+  and zero above FF 0.85). Only one monotonic branch of fill factors is used (α falling and
   the Bloch index rising with fill factor, from the strongest scatterer up); points are
   rejected when the decay is too weak to measure, the fits are poor, or the second
   diffraction order also radiates up (its field above the grating spoils the phase). The
@@ -47,6 +52,25 @@ working until v0.2.0; old imports are updated with one command (see
   nor used, and the report lists the trench widths of the design. When the apodised grating beats the uniform one, the layout uses
   it (`layout/grating_teeth.csv`, and the teeth as a matrix in `parameters.m`).
   `GratingConfig(teeth=...)` builds a grating from an explicit tooth list.
+- **Focusing grating stage** (`--only focus`; opt-in with `focus.run = true`). The teeth of
+  the straight grating (uniform, or apodised when it was checked and is better) are curved
+  into confocal ellipses n_B r − n_top sin θ · r cos φ = Φ around the waveguide tip, so the
+  light scattered into the film converges onto the tip and a few-µm slab replaces the long
+  taper (for the 1550 nm design about 45 µm instead of about 320 µm from the waveguide to
+  the grating's end). The in-plane focusing is computed for free from the angular spectrum
+  of the fibre spot on the arc against the tip's mode (effective-index method) over the
+  tip-to-grating distance and the tip width (a wider tip, with a short taper from the 2D
+  taper model, allows a narrower light cone; `focus.max_half_angle_deg` keeps the cone
+  where the model holds). The layout draws the tip taper, the sector and the curved teeth
+  in extra `*_fgc` cells beside the straight-grating `*_gc` cells (both in `design.gds`, so
+  one mask can carry both; `tables/focusing_teeth.csv`); with `focus.use_in_layout` the
+  focusing grating is the main coupler and the loss budget uses the focusing efficiency
+  instead of the lateral overlap and the long taper. A 3D FDTD of the whole focusing
+  coupler is optional (`focus.check_3d`, priced first).
+- **Efficiency landscapes** (contour maps over two design parameters, from runs already
+  made; every simulated point drawn, the chosen design as a red X): uniform grating, period ×
+  fill factor (5g; older runs get it from their sweep table); apodised grating, fibre
+  position × period scale (9c); focusing grating, tip-to-grating distance × tip width (10a).
 - **Reflections.** The arc-end reflection of the partial ring and the bus reflection are
   read from the saved gap runs (free; checks stage, report). The reverse grating run is a
   closed box: a plane behind the source adds the light scattered backwards.

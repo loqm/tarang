@@ -1145,6 +1145,9 @@ def stage_grating(ctx: Context) -> dict:
     # ---- figures and table of the final design
     visuals.safe(ctx, "grating map", visuals.grating_landscape, stage_a, best,
                  ctx.path("figures", "5b_grating_map.png"), wl, final)
+    from tarang.design import landscapes
+    visuals.safe(ctx, "grating landscape", landscapes.draw_uniform,
+                 ctx.path("figures", "5g_grating_landscape.png"), results, final, wl)
     fdev = device(final["period_um"], final["fill_factor"], final["source_x_um"])
     wls, eta = fdev.get_spectrum(folder)
     summ = spectrum_summary(wls, eta, wl)
@@ -1323,6 +1326,8 @@ STAGES: list[tuple[str, str, str, Callable[[Context], dict]]] = [
      lambda ctx: __import__("tarang.design.taper", fromlist=["stage_taper"]).stage_taper(ctx)),
     ("apodise", "Apodised grating (scattering shaped like the fibre mode)", "cloud",
      lambda ctx: __import__("tarang.design.apodise", fromlist=["stage_apodise"]).stage_apodise(ctx)),
+    ("focus", "Focusing grating (curved teeth, short focusing slab)", "cloud",
+     lambda ctx: __import__("tarang.design.focus", fromlist=["stage_focus"]).stage_focus(ctx)),
     ("layout", "Layout (GDS) and parameter export", "local", stage_layout),
     ("report", "Report and tables", "local", stage_report),
 ]
@@ -1338,6 +1343,7 @@ DEPENDS = {
     "checks": ("checks",),
     "taper": ("taper",),
     "apodise": ("apodise",),
+    "focus": ("focus",),
     "layout": ("layout",),
     "report": (),
 }
@@ -1345,7 +1351,7 @@ DEPENDS = {
 
 # Version of the figures' drawing: a run made with an older version gets its figures redrawn
 # from saved results when its report is written (checks.redraw_saved_figures).
-FIGURE_VERSION = 2
+FIGURE_VERSION = 3
 
 
 # Settings that only label where a value came from (the values themselves are hashed):

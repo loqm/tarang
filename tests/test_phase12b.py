@@ -240,6 +240,7 @@ def test_apodise_stage_designs_checks_and_feeds_the_layout(tmp_path, fake_web, m
     assert res["efficiency_2d"] == pytest.approx(0.40 * math.exp(-((1.55 - 1.5505) / 0.03) ** 2), rel=1e-3)
     assert (ctx.out / "figures" / "9a_apodise_design.png").exists()
     assert (ctx.out / "figures" / "9b_apodised_spectrum.png").exists()
+    assert (ctx.out / "figures" / "9c_apodised_landscape.png").exists()     # Phase 12C
     ctx.state["stages"]["apodise"] = {"results": res}
     p = layout.device_parameters(ctx)
     assert p["grating_apodised"] and p["grating_teeth"] == len(res["teeth"])
@@ -449,7 +450,7 @@ def test_new_stages_run_through_the_design_session(tmp_path, fake_web, monkeypat
     assert st["taper"]["results"]["taper_length_um"] > 0
     assert st["apodise"]["results"] == {"disabled": True}
     assert fake_web.names().count("batch_start") == n + 1             # the taper EME only
-    assert "[7/10] Taper" in out.getvalue() and "[8/10] Apodised grating" in out.getvalue()
+    assert "[7/11] Taper" in out.getvalue() and "[8/11] Apodised grating" in out.getvalue()
     assert "not requested" in out.getvalue()
     # later: turned on, it runs in the same session; the taper is not repeated
     done.cfg.apodise.run = True
@@ -533,48 +534,65 @@ def test_unconverged_eme_falls_back_to_the_2d_model(tmp_path, fake_web, fast_tap
     assert "(2D model)" in items and "not simulated" not in items
 
 
-def _v1_scattering():
-    """The fill-factor table of the Phase 12B v1 run (1550 nm, full etch, air top)."""
-    tab = [(0.5, 0.0236, 1.3653, 1.2923), (0.55, 0.0365, 1.2925, 1.2487), (0.6, 0.0450, 1.4744, 1.2079),
-           (0.65, 0.0938, 1.5048, 1.1697), (0.7, 0.0762, 1.5582, 1.1338), (0.75, 0.0520, 1.6187, 1.1001),
-           (0.8, 0.0294, 1.6767, 1.0683), (0.85, 0.0088, 1.7303, 1.0383), (0.9, 1e-6, 1.7806, 1.0100),
-           (0.908, 1e-6, 1.7879, 1.0056)]
-    return [dict(fill_factor=f, alpha_per_um=a, n_bloch=n, period_run_um=p, window_um=27 * p,
-                 fit_rms=0.05, phase_rms_rad=0.1) for f, a, n, p in tab]
+def _measured_scattering():
+    """The fill-factor table of the 1550 nm design (full etch, air top), from its ten
+    uniform-grating reverse runs analysed with the forward + backward wave fit."""
+    tab = [(0.5, 1e-6, 1.4078, 1.2923, 0.681), (0.55, 0.0776, 1.4636, 1.2487, 0.487),
+           (0.6, 0.0513, 1.4750, 1.2079, 0.240), (0.65, 0.0638, 1.5062, 1.1697, 0.127),
+           (0.7, 0.0625, 1.5583, 1.1338, 0.059), (0.75, 0.0478, 1.6185, 1.1001, 0.030),
+           (0.8, 0.0279, 1.6766, 1.0683, 0.022), (0.85, 0.0132, 1.7289, 1.0383, 0.027),
+           (0.9, 0.0057, 1.7787, 1.0100, 0.050), (0.908, 0.0044, 1.7859, 1.0056, 0.058)]
+    return [dict(fill_factor=f, alpha_per_um=a, n_bloch=n, period_run_um=p, window_um=26 * p,
+                 residual=r) for f, a, n, p, r in tab]
 
 
 def test_only_one_monotonic_branch_of_fill_factors_is_used(tmp_path):
     from tarang.design import apodise as ap, report
-    rows = ap.validate(_v1_scattering(), 1.55, 1.0, 1.0, 1.8511)
+    rows = ap.validate(_measured_scattering(), 1.55, 1.0, 1.0, 1.8511)
     why = {r["fill_factor"]: r["why"] for r in rows}
-    assert "2nd order" in why[0.5] and "2nd order" in why[0.6]
-    assert "too weak" in why[0.9] and "too weak" in why[0.908]
+    assert "2nd order" in why[0.5] and "2nd order" in why[0.6] and "not two waves" in why[0.55]
+    assert all(not why[f] for f in (0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.908))
     branch = ap.weak_branch(rows)
-    assert [r["fill_factor"] for r in branch] == [0.65, 0.7, 0.75, 0.8, 0.85]
+    assert [r["fill_factor"] for r in branch] == [0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.908]
     alpha = dict((r["fill_factor"], r["alpha_per_um"]) for r in branch)
     ffs = [r["fill_factor"] for r in branch]
     teeth, ffl = ap.build_teeth(lambda f: float(np.interp(f, ffs, [alpha[v] for v in ffs])),
-                                lambda f: 1.1, ffs, 9.0, 5.32, 0.97, 0.0088, 0.0938)
-    assert min(ffl) >= 0.65 and ffl[0] == pytest.approx(0.85)      # weakest teeth first
+                                lambda f: 1.1, ffs, 9.0, 5.32, 0.97, 0.0044, 0.0638)
+    assert min(ffl) >= 0.65 and ffl[0] == pytest.approx(0.908)     # weakest teeth first
     # the report explains a stage that found too few usable points (no crash)
-    text = "\n".join(report._apodise_section(_ctx(tmp_path), dict(scattering=rows, skipped=True,
+    few = ap.validate(_measured_scattering()[:4], 1.55, 1.0, 1.0, 1.8511)
+    text = "\n".join(report._apodise_section(_ctx(tmp_path), dict(scattering=few, skipped=True,
                                                                      verified=False)))
-    assert "Fewer than three usable" in text and "FF 0.9 (decay too weak" in text
+    assert "Fewer than three usable" in text and "FF 0.5 (decay too weak" in text
     with pytest.raises(ValueError):                                  # both branches mixed
         ap.build_teeth(lambda f: [0.02, 0.09, 0.03][[0.5, 0.65, 0.85].index(f)] if f in (0.5, 0.65, 0.85)
                        else 0.05, lambda f: 1.1, [0.5, 0.65, 0.85], 9.0, 5.32, 0.97, 0.02, 0.09)
 
 
-def test_fit_quality_is_reported_for_a_clean_and_a_two_wave_field():
+def test_the_wave_reflected_at_the_grating_end_does_not_spoil_the_fit():
+    from tarang.design import apodise as ap
+    L, P, alpha, nb = 33.0, 1.1, 0.01, 1.73                       # a weak grating
+    x, comps = _line_field(alpha, nb, P, L=L)
+    kx = 2 * math.pi / 1.55 * nb - 2 * math.pi / P
+    back = 0.25 * np.exp(-alpha * (L - x)) * np.exp(-1j * kx * x + 0.7j)
+    beat = {k: v + back * (1.0 if k == "Ey" else 0.05) for k, v in comps.items()}
+    e2 = np.abs(beat["Ey"]) ** 2
+    assert e2[(x > 20) & (x < 30)].min() < 0.7 * e2[(x > 20) & (x < 30)].max()   # deep fringes
+    r = ap.alpha_and_index(x, beat, P, 1.55, length=L)
+    assert r["alpha_per_um"] == pytest.approx(alpha, rel=0.05)
+    assert r["n_bloch"] == pytest.approx(nb, abs=2e-3)
+    assert r["residual"] < 0.01 and r["backward_ratio"] == pytest.approx(0.25, rel=0.05)
+
+
+def test_fit_quality_is_reported_for_a_clean_and_a_messy_field():
     from tarang.design import apodise as ap
     x, comps = _line_field(0.05, 1.62, 1.1)
     clean = ap.alpha_and_index(x, comps, 1.1, 1.55)
-    assert clean["phase_rms_rad"] < 0.05 and clean["fit_rms"] < 0.05
-    x2, c2 = _line_field(0.05, 1.62, 1.1)
+    assert clean["residual"] < 0.01
     k0 = 2 * math.pi / 1.55
-    other = {k: v + 0.8 * np.abs(v) * np.exp(-1j * 0.95 * k0 * x2) for k, v in c2.items()}
-    messy = ap.alpha_and_index(x2, other, 1.1, 1.55)
-    assert messy["phase_rms_rad"] > clean["phase_rms_rad"] + 0.2
+    other = {k: v + 0.8 * np.abs(v) * np.exp(-1j * 0.95 * k0 * x) for k, v in comps.items()}
+    messy = ap.alpha_and_index(x, other, 1.1, 1.55)
+    assert messy["residual"] > 0.2                                   # another wave above
     assert ap.second_order_up(1.3653, 1.2923, 1.55, 1.0) and not ap.second_order_up(1.6187, 1.1001, 1.55, 1.0)
 
 

@@ -204,6 +204,26 @@ def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
             shutil.copy2(src, sims_dir / "grating_final.json")
             sim_sections += ["### Final grating-coupler simulation (2D)", ""] + _describe_file(
                 src, wl, ctx.ui) + [""]
+    tp, ap, fc = st.get("taper", {}) or {}, st.get("apodise", {}) or {}, st.get("focus", {}) or {}
+    if tp.get("eme_cells"):
+        cand = sorted(glob.glob(str(ctx.out / "cloud" / "taper" / f"*eme{tp['eme_cells']}x"
+                                     f"{tp['eme_modes']}*" / "simulation.json")))
+        if cand:
+            shutil.copy2(cand[-1], sims_dir / "taper_eme.json")
+            sim_sections += ["### Taper (3D EME)", ""] + _describe_file(cand[-1], wl, ctx.ui) + [""]
+    if ap.get("scattering"):
+        cand = sorted(glob.glob(str(ctx.out / "cloud" / "apodise" / "uniform_reverse_ff0.750*" /
+                                    "simulation.json")))
+        if cand:
+            shutil.copy2(cand[-1], sims_dir / "apodise_uniform_reverse_ff0.75.json")
+    if fc.get("curves"):
+        try:
+            from tarang.design.focus import focusing_sim
+            dev = focusing_sim(ctx, fc)
+            dev.sim.to_file(str(sims_dir / "focusing_grating_3d.json"))
+            sim_sections += ["### Focusing grating (3D FDTD set-up)", ""] + describe_sim(dev.sim, wl) + [""]
+        except Exception as err:                                  # noqa: BLE001
+            sim_sections += [f"(focusing grating simulation not written: {type(err).__name__}: {err})", ""]
     readme = _readme(ctx, st, rows, checks, sim_sections, pth)
     (pack / "README.md").write_text("\n".join(readme), encoding="utf-8")
     zip_path = shutil.make_archive(str(ctx.out / "benchmark_pack"), "zip", root_dir=pack)
@@ -312,11 +332,45 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
                      "up, into the substrate, past the grating, and the back-reflection): "
                      "`tables/grating_checks.csv`.")
         L.append("")
+    tp, ap, fc = st.get("taper", {}) or {}, st.get("apodise", {}) or {}, st.get("focus", {}) or {}
+    if tp.get("grating_width_um"):
+        L += ["## 4b. Grating width and taper", "",
+              f"- Grating width {tp['grating_width_um']:g} µm: lateral overlap of the fibre Gaussian "
+              f"(waist MFD/2) with the grating's fundamental lateral mode, effective-index method "
+              f"(slab index {tp['n_slab']:.4f}): η_y = {tp['eta_y'] * 100:.1f} %.",
+              "- Taper: linear, from the grating width to the waveguide width, Si3N4 film on the "
+              "BOX, air above. Transmission of the fundamental (TE0) mode against length: "
+              "`tables/taper_length.csv` (3D EME, graded cells) and `tables/taper_length_model.csv` "
+              "(2D effective-index mode matching, converged)."
+              + (f" Used: {tp['taper_length_um']:g} µm, {tp['taper_loss_db']:.3f} dB "
+                 f"({tp.get('length_source')})." if tp.get("taper_length_um") else ""),
+              "- To compare: a 3D EME or FDTD of the same taper at a few lengths (e.g. 100, 200, "
+              "300 µm).", ""]
+    if ap.get("verified"):
+        L += ["## 4c. Apodised grating (2D FDTD)", "",
+              "- Explicit tooth list `tables/apodised_teeth.csv` (start and length of every tooth, "
+              "first tooth at x = 0, full etch), otherwise as section 4.",
+              f"- Result: {ap['efficiency_2d'] * 100:.1f} % at {wl} µm, fibre at {ap['source_x_um']} µm"
+              f" (uniform: {ap.get('uniform_efficiency_2d', 0) * 100:.1f} %).", ""]
+    if fc.get("curves"):
+        L += ["## 4d. Focusing grating", "",
+              "- Teeth are curves n_B r − n_top sin θ · r cos φ = Φ around the waveguide tip (polar "
+              "coordinates r, φ from the tip, axis along the grating); Φ and n_B of every tooth "
+              "edge in `tables/focusing_teeth.csv`.",
+              f"- Tip {fc['tip_width_um']:g} µm wide ({fc['tip_taper_um']:g} µm linear taper from the "
+              f"waveguide), first tooth {fc['distance_um']:g} µm from the tip, teeth limited to "
+              f"|y| ≤ {fc['y_max_um']:g} µm.",
+              f"- TARANG's estimate: {fc['efficiency_3d_estimate'] * 100:.1f} % (2D efficiency × "
+              "in-plane focusing model × tip taper)"
+              + (f"; 3D FDTD {fc['efficiency_3d'] * 100:.1f} %" if fc.get("efficiency_3d") is not None
+                 else "") + ". The full 3D set-up is `simulations/focusing_grating_3d.json`.", ""]
+    used = ("a focusing grating (section 4d)" if fc.get("curves") and cfg.focus.run
+            and cfg.focus.use_in_layout else
+            f"a {tp.get('taper_length_um') or cfg.grating.taper_length_um:g} µm linear taper and "
+            "the straight grating")
     L += ["## 5. Layout", "",
-          "`layout/` has the GDS files and `parameters.json` (every dimension). Each grating "
-          f"starts where its {cfg.grating.taper_length_um:g} µm linear taper (from the grating "
-          "width to the waveguide width) ends, as in the simulation; the taper itself is not "
-          "simulated yet.", ""]
+          "`layout/` has the GDS files and `parameters.json` (every dimension). Each end of the "
+          f"bus has {used}, as in the simulations.", ""]
     extra = [(n, d) for n, d in (
         ("gap_tolerance.csv", "critical and over-coupled gap with the waveguide width ± its tolerance"),
         ("coupling_vs_wavelength.csv", "coupling ratio K of both gaps across the band (3D FDTD)"),

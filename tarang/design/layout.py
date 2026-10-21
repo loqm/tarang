@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from pathlib import Path
 
 
@@ -32,6 +33,9 @@ def device_parameters(ctx) -> dict:
     ap = ctx.state["stages"].get("apodise", {}).get("results", {}) or {}
     use_ap = (bool(ap.get("verified")) and bool(ap.get("better_than_uniform"))
               and bool(cfg.apodise.use_in_layout))
+    fc = ctx.state["stages"].get("focus", {}).get("results", {}) or {}
+    have_fc = bool(fc.get("curves")) and bool(cfg.focus.run)
+    use_fc = have_fc and bool(cfg.focus.use_in_layout)
     lay = cfg.layout
     return {
         "name": cfg.run.name,
@@ -60,6 +64,16 @@ def device_parameters(ctx) -> dict:
         "fiber_position_um": ap["source_x_um"] if use_ap else gc.get("source_x_um"),
         "taper_length_um": (tp["taper_length_um"] if use_tp and tp.get("taper_length_um")
                             else cfg.grating.taper_length_um),
+        "grating_focusing": use_fc,               # the main coupler (budget, layout figure)
+        "focus_available": have_fc,               # *_fgc cells are drawn as well
+        "focus_teeth_kind": fc.get("teeth_kind") if have_fc else None,
+        "focus_distance_um": fc.get("distance_um") if have_fc else None,
+        "focus_tip_width_um": fc.get("tip_width_um") if have_fc else None,
+        "focus_tip_taper_um": fc.get("tip_taper_um") if have_fc else None,
+        "focus_half_angle_deg": _r(math.degrees(fc["half_angle_rad"]), 3) if have_fc else None,
+        "focus_y_max_um": fc.get("y_max_um") if have_fc else None,
+        "focus_s": _r(fc.get("s"), 6) if have_fc else None,
+        "focus_teeth_list": fc.get("teeth") if have_fc else None,
         "tone": lay.tone,
         "trench_width_um": lay.trench_width_um,
         "layers": {"waveguide": list(lay.waveguide_layer), "ring": list(lay.ring_layer),
@@ -90,6 +104,18 @@ def export(ctx) -> dict:
         ui.value(cfg, "layout", key)
     ui.value(cfg, "grating", "taper_length_um")
     p = device_parameters(ctx)
+    if p.get("focus_available"):
+        ui.say(f"  Focusing grating ({p['focus_teeth_kind']} teeth): first tooth "
+               f"{p['focus_distance_um']:g} µm from a {p['focus_tip_width_um']:g} µm tip "
+               f"({p['focus_tip_taper_um']:g} µm tip taper), drawn in the *_fgc cells; "
+               + ("it is the main coupler (budget, layout figure)." if p["grating_focusing"] else
+                  "the straight grating stays the main coupler (focus.use_in_layout = false)."))
+    if p.get("grating_period_um"):
+        src = ("taper stage" if p["taper_length_um"] != cfg.grating.taper_length_um
+               else "grating.taper_length_um")
+        ui.say(f"  Grating: straight, {'apodised' if p['grating_apodised'] else 'uniform'}, "
+               f"{p['grating_width_um']:g} µm wide; taper {p['taper_length_um']:g} µm (from the "
+               f"{src}" + ("; the table's value is the fallback)" if src == "taper stage" else ")"))
     out = ctx.out / "layout"
     out.mkdir(parents=True, exist_ok=True)
     files = _write_parameters(p, out)
@@ -104,8 +130,9 @@ def export(ctx) -> dict:
     for f in files:
         ui.say(f"  {f}")
     fig = None
-    gc_file = next((f for f in files if Path(f).name in ("ring_waveguide_gc.gds", "waveguide_gc.gds")),
-                   None)
+    main = ("ring_waveguide_fgc.gds", "waveguide_fgc.gds") if p.get("grating_focusing") else \
+        ("ring_waveguide_gc.gds", "waveguide_gc.gds")
+    gc_file = next((f for f in files if Path(f).name in main), None)
     if gc_file:
         from tarang.design import visuals
         fig = visuals.safe(ctx, "layout", visuals.layout_views, gc_file, p,
@@ -133,7 +160,8 @@ def _lle(ctx):
 
 
 def _write_parameters(p: dict, out: Path) -> list[Path]:
-    flat = {k: v for k, v in p.items() if k not in ("layers", "grating_teeth_list")}
+    flat = {k: v for k, v in p.items() if k not in ("layers", "grating_teeth_list",
+                                                     "focus_teeth_list")}
     teeth = p.get("grating_teeth_list")
     flat.update({f"layer_{k}": v[0] for k, v in p["layers"].items()})
     flat.update({f"datatype_{k}": v[1] for k, v in p["layers"].items()})
@@ -185,10 +213,32 @@ def build_gds(p: dict, out: Path) -> list[Path]:
         cell.add(gdstk.ellipse((0, yc), R + W / 2, inner_radius=R - W / 2, tolerance=tol,
                                **lay["ring"]))
 
-    def coupler(cell, side):
-        """Taper and grating at the right (side = +1) or left (-1) end of the bus."""
+    def focusing(cell, side):
+        """Tip taper, focusing slab and curved teeth (focus at the tip, axis along +x)."""
+        from tarang.design.focus import polygons
+        x0, Lt, wt = L / 2, p["focus_tip_taper_um"], p["focus_tip_width_um"]
+        shapes = []
+        if Lt > 0:
+            shapes.append(gdstk.Polygon([(x0, -W / 2), (x0 + Lt, -wt / 2), (x0 + Lt, wt / 2),
+                                         (x0, W / 2)], **lay["taper"]))
+        F = x0 + Lt
+        g = polygons(p["focus_teeth_list"], p["focus_distance_um"], wt, p["wavelength_um"],
+                     p["focus_s"], math.radians(p["focus_half_angle_deg"]), p["focus_y_max_um"],
+                     n_pts=96)
+        shapes.append(gdstk.Polygon([(F + x, y) for x, y in g["slab"]], **lay["taper"]))
+        shapes += [gdstk.Polygon([(F + x, y) for x, y in t], **lay["grating"]) for t in g["teeth"]]
+        for poly in shapes:
+            if side < 0:
+                poly.mirror((0, 0), (0, 1))
+            cell.add(poly)
+
+    def coupler(cell, side, focus=False):
+        """Taper and grating at the right (side = +1) or left (-1) end of the bus; the
+        focusing grating instead when ``focus``."""
         if not p.get("grating_period_um"):
             return
+        if focus:
+            return focusing(cell, side)
         Lt, Wg = p["taper_length_um"], p["grating_width_um"]
         P, ff, n = p["grating_period_um"], p["grating_fill_factor"], int(p["grating_teeth"])
         x0 = L / 2
@@ -239,25 +289,30 @@ def build_gds(p: dict, out: Path) -> list[Path]:
     lib_all = gdstk.Library(unit=1e-6, precision=1e-9)
     files = []
     gaps = [g for g in (p["gap_critical_um"], p["gap_over_coupled_um"]) if g]
-    variants = {"waveguide": [(None, False)]}
+    variants = {"waveguide": [(None, False, False)]}
+    fgc = bool(p.get("focus_available") and p.get("focus_teeth_list"))
     if gaps:                                   # the ring needs the gap stage's result
-        variants["ring_waveguide"] = [(g, False) for g in gaps]
-        variants["ring_waveguide_gc"] = [(g, True) for g in gaps]
+        variants["ring_waveguide"] = [(g, False, False) for g in gaps]
+        variants["ring_waveguide_gc"] = [(g, True, False) for g in gaps]
+        if fgc:                                # the same with focusing gratings
+            variants["ring_waveguide_fgc"] = [(g, True, True) for g in gaps]
     elif p.get("grating_period_um"):
-        variants["waveguide_gc"] = [(None, True)]
+        variants["waveguide_gc"] = [(None, True, False)]
+        if fgc:
+            variants["waveguide_fgc"] = [(None, True, True)]
     top = gdstk.Cell(f"{p['name']}_TOP")
     y_off = 0.0
     for fname, items in variants.items():
         lib = gdstk.Library(unit=1e-6, precision=1e-9)
-        for gap, with_gc in items:
+        for gap, with_gc, focus in items:
             label = fname + (f"_gap{gap * 1e3:.0f}nm" if gap else "")
             cell = gdstk.Cell(label)
             bus(cell)
             if gap and fname != "waveguide":
                 ring(cell, gap)
             if with_gc:
-                coupler(cell, +1)
-                coupler(cell, -1)
+                coupler(cell, +1, focus)
+                coupler(cell, -1, focus)
             cell = finish(cell)
             lib.add(cell)
             lib_all.add(cell)
