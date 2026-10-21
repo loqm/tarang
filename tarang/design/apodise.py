@@ -60,47 +60,80 @@ def uniform_reverse_sim(ctx, ff: float, period: float, n_teeth: int = 30, z_abov
     return sim.updated_copy(sources=[src], monitors=[line]), dev
 
 
-def alpha_and_index(x_um, e_fields: dict, period: float, wl: float, skip_periods: int = 3,
-                    floor: float = 1e-3, kx_sign: float = 1.0) -> dict:
-    """alpha (field decay, 1/um) and Bloch index from the field on the line above a
-    uniform grating. ``e_fields``: complex arrays of the field components along x. The
-    dominant component's phase gives k_x; |E|^2 averaged over each period gives the decay."""
+def _two_wave(x, E, period: float, length: float, alpha: float, kx: float, harmonics=(-1, 0, 1)):
+    """Least-squares fit of E(x) on the grating to a forward wave decaying from the start
+    and a backward wave decaying from the end (light reflected at the grating's end), each
+    with its spatial harmonics k_x + m K (the near field of the teeth). Linear in the six
+    complex amplitudes for given (alpha, k_x); returns (relative residual, amplitudes)."""
+    K = 2 * math.pi / period
+    cols = []
+    for m in harmonics:
+        cols.append(np.exp((1j * (kx + m * K) - alpha) * x))
+        cols.append(np.exp(-alpha * (length - x) + 1j * (-kx + m * K) * x))
+    A = np.array(cols).T
+    c, *_ = np.linalg.lstsq(A, E, rcond=None)
+    r = E - A @ c
+    return float(np.vdot(r, r).real / max(np.vdot(E, E).real, 1e-300)), c
+
+
+def alpha_and_index(x_um, e_fields: dict, period: float, wl: float, length: Optional[float] = None,
+                    edge_periods: int = 2, kx_sign: float = 1.0) -> dict:
+    """alpha (field decay, 1/um) and Bloch index from the field on the line above a uniform
+    grating of length ``length`` (teeth from x = 0; default: the line is 1 um longer than the
+    grating at both ends). ``e_fields``: complex field components along x; the dominant one
+    is fitted.
+
+    The light above the grating is not one wave: the guided light that reaches the end of
+    the grating is partly reflected, and the backward guided wave also scatters upwards,
+    with k_x of the opposite sign. Their beating makes |E|^2 far from exponential (deep
+    fringes, about lambda / (2 sin theta) apart). So the complex field between
+    ``edge_periods`` periods from each end is fitted to
+
+        E(x) = e^(-alpha x) sum_m A_m e^(i (k_x + m K) x) + e^(-alpha (L - x)) sum_m B_m e^(i (-k_x + m K) x)
+
+    (m = -1, 0, 1: the near-field harmonics of the teeth, K = 2 pi / period), linear in
+    A_m, B_m; alpha and k_x by a grid search and refinement. ``residual`` is the part of
+    the field this model leaves unexplained (|E - fit|^2 / |E|^2): large when another
+    diffraction order also radiates."""
     x = np.asarray(x_um, float)
     comps = {k: np.asarray(v, complex).ravel() for k, v in e_fields.items() if v is not None}
-    e2 = sum(np.abs(v) ** 2 for v in comps.values())
     main = max(comps.values(), key=lambda v: float(np.sum(np.abs(v) ** 2)))
-    # per-period averages, starting a few periods in (the source end is not yet periodic)
-    x0, x1 = x.min(), x.max()
-    edges = np.arange(x0 + skip_periods * period, x1 - period, period)
-    centres, means = [], []
-    for a in edges:
-        m = (x >= a) & (x < a + period)
-        if m.sum() >= 2:
-            centres.append(a + period / 2)
-            means.append(float(e2[m].mean()))
-    centres, means = np.array(centres), np.array(means)
-    ok = means > floor * means.max() if len(means) else np.array([], bool)
-    if ok.sum() < 3:
-        raise ValueError("too few periods above the noise floor to fit the decay")
-    slope, icpt = np.polyfit(centres[ok], np.log(means[ok]), 1)
-    alpha = max(-slope / 2, 1e-6)
-    fit_rms = float(np.sqrt(np.mean((np.log(means[ok]) - (slope * centres[ok] + icpt)) ** 2)))
-    # phase slope over the same region (unwrapped), weighted by intensity
-    sel = (x >= centres[ok][0] - period / 2) & (x <= centres[ok][-1] + period / 2)
-    ph = np.unwrap(np.angle(main[sel]))
-    w = np.abs(main[sel])
-    kx, c0 = np.polyfit(x[sel], ph, 1, w=w)
-    kx = float(kx)
-    res_ph = ph - (kx * x[sel] + c0)
-    phase_rms = float(np.sqrt(np.sum(w ** 2 * res_ph ** 2) / max(np.sum(w ** 2), 1e-30)))
-    window = float(centres[ok][-1] - centres[ok][0] + period)
+    L = float(length) if length is not None else float(x.max() - 1.0)
+    sel = (x >= edge_periods * period) & (x <= L - edge_periods * period)
+    if sel.sum() < 20:
+        raise ValueError("too few points on the grating to fit the field")
+    xs, Es = x[sel], main[sel]
     k0 = 2 * math.pi / wl
-    # kx_sign converts the measured phase slope to the physical k_x along +x (the guided
-    # light's direction); it depends on the solver's time convention, see stage_apodise
+    # starting k_x: the strongest spatial frequency of the radiated light (|k_x| < k0)
+    n_fft = 1 << int(np.ceil(np.log2(len(xs) * 8)))
+    dx = float(np.median(np.diff(xs)))
+    spec = np.abs(np.fft.fft(Es * np.hanning(len(xs)), n_fft))
+    kk = 2 * math.pi * np.fft.fftfreq(n_fft, dx)
+    inside = np.abs(kk) < k0
+    kx0 = float(kk[inside][np.argmax(spec[inside])])
+    sub = slice(None, None, max(1, len(xs) // 400))               # coarse search on fewer points
+    best = None
+    for a in np.linspace(0.0, 0.4, 81):
+        for kx in np.linspace(kx0 - 0.3, kx0 + 0.3, 31):
+            v, _ = _two_wave(xs[sub], Es[sub], period, L, a, kx)
+            if best is None or v < best[0]:
+                best = (v, a, kx)
+    v, a, kx = _two_wave(xs, Es, period, L, best[1], best[2])[0], best[1], best[2]
+    da, dk = 0.005, 0.02
+    for _ in range(4):                                            # refine on all points
+        for a2 in np.linspace(max(a - da, 0.0), a + da, 11):
+            for k2 in np.linspace(kx - dk, kx + dk, 11):
+                v2, _ = _two_wave(xs, Es, period, L, a2, k2)
+                if v2 < v:
+                    v, a, kx = v2, a2, k2
+        da, dk = da / 5, dk / 5
+    v, c = _two_wave(xs, Es, period, L, a, kx)
+    amp = np.abs(c).reshape(-1, 2)                                # rows m = -1, 0, 1; fwd, bwd
+    alpha = max(float(a), 1e-6)
     n_bloch = (kx_sign * kx + 2 * math.pi / period) / k0
-    return dict(alpha_per_um=float(alpha), kx_per_um=kx, n_bloch=float(n_bloch),
-                decay_length_um=float(1 / (2 * alpha)), periods_fitted=int(ok.sum()),
-                window_um=window, fit_rms=fit_rms, phase_rms_rad=phase_rms)
+    return dict(alpha_per_um=alpha, kx_per_um=float(kx), n_bloch=float(n_bloch),
+                decay_length_um=float(1 / (2 * alpha)), window_um=float(xs[-1] - xs[0]),
+                residual=float(v), backward_ratio=float(amp[1, 1] / max(amp[1, 0], 1e-30)))
 
 
 def second_order_up(n_bloch: float, period: float, wl: float, n_top: float,
@@ -113,19 +146,18 @@ def second_order_up(n_bloch: float, period: float, wl: float, n_top: float,
 
 
 def validate(rows: list, wl: float, n_top: float, n_low: float, n_high: float,
-             min_drop: float = 0.2, max_phase_rms: float = 0.6, max_fit_rms: float = 0.35) -> list:
+             min_drop: float = 0.2, max_residual: float = 0.2) -> list:
     """Mark each measured fill factor ``ok`` (with ``why`` when not). A point is rejected when
     the decay is too weak to measure over the grating (intensity drop exp(-2 alpha L) below
-    ``min_drop``), the log-intensity or phase fit is poor, the Bloch index lies outside the
-    two film indices, or the second diffraction order also radiates upward."""
+    ``min_drop``), the forward + backward wave model leaves more than ``max_residual`` of the
+    field unexplained, the Bloch index lies outside the two film indices, or the second
+    diffraction order also radiates upward."""
     for r in rows:
         why = []
         if 2 * r["alpha_per_um"] * r.get("window_um", 0.0) < min_drop:
             why.append("decay too weak to measure")
-        if r.get("fit_rms", 0.0) > max_fit_rms:
-            why.append("intensity not exponential")
-        if r.get("phase_rms_rad", 0.0) > max_phase_rms:
-            why.append("phase not linear")
+        if r.get("residual", 0.0) > max_residual:
+            why.append(f"field not two waves ({r['residual'] * 100:.0f} % unexplained)")
         if not (n_low < r["n_bloch"] < n_high):
             why.append("Bloch index outside the film indices")
         if second_order_up(r["n_bloch"], r["period_run_um"], wl, n_top):
@@ -335,11 +367,12 @@ def stage_apodise(ctx) -> dict:
     if ff0 not in ffs:
         ffs = sorted(ffs + [ff0])
     folder = ctx.out / "cloud" / "apodise"
-    sims = {}
+    sims, lengths = {}, {}
     for f in ffs:
         P = round(p_model(f) * scale, 4)
         sim, dev = uniform_reverse_sim(ctx, f, P)
         sims[f] = (sim, f"uniform_reverse_ff{f:.3f}_p{P:.4f}", P)
+        lengths[f] = P * dev.config.n_teeth
     ui.say(f"Narrowest trench allowed: {trench * 1e3:.0f} nm (apodise.min_trench_um; empty: "
            f"grating.min_feature_um), i.e. fill factor up to about {1 - trench / P0:.3f} at the "
            f"{P0:g} µm period.")
@@ -357,7 +390,7 @@ def stage_apodise(ctx) -> dict:
             continue
         try:
             x, comps = read_line(data, f0)
-            r = alpha_and_index(x, comps, P, wl)
+            r = alpha_and_index(x, comps, P, wl, length=lengths[f])
         except Exception as err:                                  # noqa: BLE001
             ui.say(f"  (FF {f:g}: not analysed: {type(err).__name__}: {err})")
             continue
@@ -539,6 +572,9 @@ def stage_apodise(ctx) -> dict:
     except Exception:                                             # noqa: BLE001
         uni = None
     visuals.safe(ctx, "apodised spectrum", draw_check, ctx, spectra[key], uni, top, eff_u)
+    from tarang.design import landscapes
+    visuals.safe(ctx, "apodised landscape", landscapes.draw_apodised,
+                 ctx.path("figures", "9c_apodised_landscape.png"), vrows, (res["source_x_um"], key[0]), wl)
     return res
 
 

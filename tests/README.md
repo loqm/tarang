@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `328 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `340 passed, 2 skipped`. The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -395,7 +395,7 @@ cloud for the cloud stages.
 | `test_an_unreachable_account_does_not_hang` | Reading the account gives up after its timeout |
 | `test_budget_with_only_the_folder_keeps_the_saved_settings` | `--out <run> --budget 20` changes only the limit in that run's `design.toml`; without a design the command is refused |
 
-## `test_phase12b.py`: taper, apodised grating, reflections, figures and run pictures (35 tests, Phase 12B)
+## `test_phase12b.py`: taper, apodised grating, reflections, figures and run pictures (36 tests, Phase 12B)
 
 | Test | Checks |
 |---|---|
@@ -427,8 +427,25 @@ cloud for the cloud stages.
 | `test_2d_taper_model_is_converged_and_falls_with_length` (slow) | The 2D taper model with 600 cells agrees with 1200 cells to 0.01 dB, its loss falls with length, and a 20-cell staircase is visibly wrong (the cause of the jumping 3D result of Phase 12B v1) |
 | `test_rise_finds_a_loss_that_increases_with_length` | A falling curve has no rise; the 30-cell EME of the v1 run rises by 0.88 dB |
 | `test_unconverged_eme_falls_back_to_the_2d_model` | A 3D EME whose loss jumps with length is flagged not converged; the length and the loss budget come from the 2D model |
-| `test_only_one_monotonic_branch_of_fill_factors_is_used` | On the v1 table: fill factors whose 2nd order radiates up (0.5, 0.6) or whose decay is too weak to measure (0.9, 0.908) are rejected; the branch is 0.65-0.85; the teeth start weak and stay on it; mixing both branches is refused; the report explains a stage with too few usable points |
-| `test_fit_quality_is_reported_for_a_clean_and_a_two_wave_field` | A second wave above the grating shows up as a phase residual; the 2nd-order test on two v1 points |
+| `test_only_one_monotonic_branch_of_fill_factors_is_used` | On the measured 1550 nm table: fill factors 0.5-0.6 (2nd order radiating up, field not two waves) are rejected; the branch is 0.65-0.908; the teeth start weak and stay on it; mixing both branches is refused; the report explains a stage with too few usable points |
+| `test_the_wave_reflected_at_the_grating_end_does_not_spoil_the_fit` | A weak grating whose end reflection makes deep fringes in \|E\|²: α to 5 %, n_B to 2e-3, and the backward/forward ratio are recovered |
+| `test_fit_quality_is_reported_for_a_clean_and_a_messy_field` | An extra, unrelated wave above the grating leaves more than 20 % of the field unexplained; the 2nd-order test on two measured points |
 | `test_apodised_peak_is_moved_onto_the_design_wavelength` | A design whose peak is 17 nm long: round 1 finds the period scale that centres it, round 2 (3 runs) uses it, and the chosen grating peaks within 1.5 nm of 1550 nm |
 | `test_run_pictures_load_eme_simulations` | `--runs` loads a saved EME simulation as `EMESimulation` and draws its picture |
 | `test_the_narrowest_trench_limits_the_teeth_and_is_not_paid_for` | With `apodise.min_trench_um = 0.2`, fill factors whose trench would be narrower are not run (no cost) and not used; the teeth's trenches stay at 200 nm or wider; the limit is printed |
+
+## `test_phase12c.py`: focusing grating, efficiency landscapes (11 tests, Phase 12C)
+
+| Test | Checks |
+|---|---|
+| `test_focusing_peaks_where_the_light_cone_matches_the_tip` | The in-plane focusing efficiency stays in (0, 1], peaks above 97 % at a beam-centre radius of 8-12 µm for a 1 µm tip, further out for a 3 µm tip, and falls when the spot is too far |
+| `test_tip_taper_is_free_for_the_waveguide_itself_and_short_otherwise` | No taper for a tip as wide as the waveguide; 2 → 1 µm needs a few µm below 0.05 dB |
+| `test_teeth_are_phase_matched_ellipses_around_the_tip` | Every tooth edge lies on the axis where the straight grating has it and obeys n_B r − s r cos φ = Φ off the axis; the polygons stay within the sector and the fibre strip; the slab starts at the tip |
+| `test_focusing_is_opt_in_and_free` | Off by default: one line, nothing run |
+| `test_focusing_stage_picks_an_allowed_design_and_writes_its_figures` | The chosen design respects the light-cone limit, its 3D estimate is η_2D × focusing × tip taper, it is far shorter than the straight grating with its taper; figures 10a/10b and the landscape table are written; no cloud run |
+| `test_apodised_teeth_are_curved_when_they_are_better` | With a checked, better apodised grating its teeth (and fibre position, η_2D) are curved; `focus.teeth = "uniform"` overrides |
+| `test_focusing_3d_check_is_a_valid_priced_simulation` | The 3D focusing coupler passes Tidy3D's pre-upload check, has its waveguide, slab, teeth and BOX, stays below 60 M cells; its result is read |
+| `test_layout_and_budget_use_the_focusing_grating` | The `*_fgc` cells have bus + 2 × (tip taper, slab, 30 curved teeth) and the `*_gc` cells keep the straight grating, both in `design.gds`; `parameters.m` has the focusing values; the budget replaces the lateral overlap and long taper by the focusing rows; the report section, check values and benchmark-pack sections 4b/4d exist; with `focus.use_in_layout = false` the straight grating is the main coupler again (the focusing cells stay) |
+| `test_uniform_landscape_takes_the_best_fibre_position_per_design` | 5g groups 2D runs by (period, fill factor) with the best fibre position, leaves 3D runs out, needs 3 points; 9c draws from the apodised check |
+| `test_old_runs_get_the_uniform_landscape_from_their_sweep_table` | A run made before Phase 12C gets 5g drawn from `grating_sweep.csv` at its next report (free) |
+| `test_focusing_stage_runs_through_the_design_session` | `--only focus` runs it as stage 9 of 11 |

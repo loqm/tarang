@@ -288,7 +288,8 @@ def write(ctx) -> dict:
                          ("5c_grating_sensitivity.png", "grating sensitivity"),
                          ("5d_grating_spectrum.png", "grating spectrum"),
                          ("5e_grating_field.png", "grating field"),
-                         ("5f_grating_final_geometry.png", "final grating geometry")):
+                         ("5f_grating_final_geometry.png", "final grating geometry"),
+                         ("5g_grating_landscape.png", "grating efficiency landscape")):
             L += _fig(ctx, ctx.out / "figures" / key, alt)
         eff3d = "-" if gc.get("efficiency_3d") is None else f"{gc['efficiency_3d']:.3f}"
         bw1 = gc.get("bandwidth_1db_nm")
@@ -307,8 +308,9 @@ def write(ctx) -> dict:
                   f"{gc['peak_wavelength_um'] * 1e3:.1f} nm |",
                   f"| 1 dB / 3 dB bandwidth | {bw1:.0f} nm / {gc['bandwidth_3db_nm']:.0f} nm |"]
         L += [f"| 3D efficiency | {eff3d} |", "",
-              "Not included: the taper between the grating and the waveguide (in the GDS, not "
-              "simulated yet), and the 3D beam overlap (the 2D value is usually higher than 3D).",
+              "The grating's width, its taper (section 7b) and its 3D beam overlap enter the "
+              "fibre-to-fibre budget in section 7; the 2D value here is usually higher than a "
+              "full 3D one.",
               ""]
         for note in gc.get("notes") or []:
             L.append(f"- Note: {note}")
@@ -330,6 +332,7 @@ def write(ctx) -> dict:
     L += _checks_section(ctx, st.get("checks", {}))
     L += _taper_section(ctx, st.get("taper", {}))
     L += _apodise_section(ctx, st.get("apodise", {}))
+    L += _focus_section(ctx, st.get("focus", {}))
     L += _lle_section(ctx, lay.get("lle"))
     L += _runs_section(ctx)
 
@@ -345,10 +348,14 @@ def write(ctx) -> dict:
           "(effective-index method, section 7b); no 3D grating run unless the 3D check ran.",
           "- Taper: EME of the straight linear taper (fundamental mode in and out), even modes "
           "only; sidewalls vertical.",
+          "- Focusing grating (when designed): the in-plane focusing is a model (the fibre spot's "
+          "angular spectrum against the tip mode, effective-index method); the 2D cross-section is "
+          "assumed along every radial line. Only the optional 3D FDTD checks both.",
           ""]
 
 
     checks = _check_values(cfg, mat, xs, ring, gap, gc, pth_c)
+    checks += _check_values_12(st)
     table = ctx.path("tables", "check_values.csv")
     with open(table, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["quantity", "value", "unit", "how TARANG computed it"],
@@ -629,6 +636,7 @@ def _apodise_section(ctx, ap: dict) -> list[str]:
               f"{ap['source_x_um']} µm, period scale {ap['scale']:g} (`tables/apodised_check.csv`)."
               + cen, ""]
         L += _fig(ctx, ctx.out / "figures" / "9b_apodised_spectrum.png", "apodised spectrum")
+        L += _fig(ctx, ctx.out / "figures" / "9c_apodised_landscape.png", "apodised landscape")
         if ap.get("better_than_uniform") and ctx.cfg.apodise.use_in_layout:
             L += ["The layout uses the apodised grating (`layout/grating_teeth.csv`).", ""]
         else:
@@ -640,6 +648,73 @@ def _apodise_section(ctx, ap: dict) -> list[str]:
               "(`apodise.min_trench_um`) sets the weakest tooth.",
               ""]
     return L
+
+
+def _focus_section(ctx, fc: dict) -> list[str]:
+    """Section 7d: focusing grating."""
+    if not fc or not fc.get("curves"):
+        return []
+    from math import degrees
+    L = ["## 7d. Focusing grating", "",
+         "Curved teeth (confocal ellipses n_B r − n_top sin θ · r cos φ = const around the "
+         "waveguide tip) keep the fibre beam phase-matched along every direction from the tip, "
+         "so the light scattered into the film converges onto the tip and a few-µm slab "
+         "replaces the long taper. Along the axis the teeth are those of the "
+         f"{fc['teeth_kind']} grating (2D efficiency {fc['efficiency_2d'] * 100:.1f} %). The "
+         "in-plane focusing is computed from the angular spectrum of the fibre spot on the arc "
+         "against the tip's mode (effective-index method), over the distance from the tip to "
+         "the first tooth and the tip width; wide light cones are excluded "
+         f"(half-angle at most {ctx.cfg.focus.max_half_angle_deg:g}°).", "",
+         "| quantity | value |", "|---|---|",
+         f"| tip width / tip taper | {fc['tip_width_um']:g} µm / {fc['tip_taper_um']:g} µm |",
+         f"| tip to first tooth / to beam centre | {fc['distance_um']:g} µm / {fc['r_c_um']:.1f} µm |",
+         f"| sector half-angle | {degrees(fc['half_angle_rad']):.0f}° (teeth within ±{fc['y_max_um']:g} µm) |",
+         f"| in-plane focusing × tip taper | {fc['eta_focus'] * 100:.1f} % × {fc['tip_taper_T'] * 100:.1f} % |",
+         f"| 3D estimate | {fc['efficiency_3d_estimate'] * 100:.1f} % (straight grating with its "
+         f"taper: {fc['efficiency_2d'] * fc['straight_lateral'] * 100:.1f} %) |",
+         f"| waveguide end to grating end | {fc['focusing_length_um']:.0f} µm (straight: "
+         f"{fc['straight_length_um']:.0f} µm) |"]
+    if fc.get("efficiency_3d") is not None:
+        L.append(f"| 3D FDTD | {fc['efficiency_3d'] * 100:.1f} % at {ctx.cfg.run.wavelength_um} µm, "
+                 f"peak at {fc['peak_wavelength_3d_nm']} nm |")
+    L += [""]
+    L += _fig(ctx, ctx.out / "figures" / "10a_focusing_landscape.png", "focusing landscape")
+    L += _fig(ctx, ctx.out / "figures" / "10b_focusing_geometry.png", "focusing geometry")
+    L += ["Curves of every tooth: `tables/focusing_teeth.csv`." +
+          (" The layout uses the focusing grating (`focus.use_in_layout`)." if fc.get("use_in_layout")
+           and ctx.cfg.focus.run else ""), ""]
+    return L
+
+
+def _check_values_12(st: dict) -> list[dict]:
+    """Taper, apodised and focusing gratings in check_values.csv / the benchmark pack."""
+    rows = []
+
+    def add(q, v, unit, how):
+        if v is not None:
+            rows.append({"quantity": q, "value": v, "unit": unit, "how TARANG computed it": how})
+    tp = st.get("taper") or {}
+    if tp.get("grating_width_um"):
+        add("grating width", tp["grating_width_um"], "um", "best lateral overlap of the fibre "
+            "Gaussian with the grating's lateral mode (effective-index method)")
+        add("lateral overlap eta_y", round(tp["eta_y"], 4), "", "same")
+    if tp.get("taper_length_um"):
+        add("taper length", tp["taper_length_um"], "um",
+            f"shortest linear taper below the accepted loss ({tp.get('length_source')})")
+        add("taper loss", round(tp["taper_loss_db"], 4), "dB", tp.get("length_source") or "")
+    ap = st.get("apodise") or {}
+    if ap.get("verified"):
+        add("apodised grating efficiency (2D)", round(ap["efficiency_2d"], 4), "",
+            "2D FDTD of the explicit tooth list (tables/apodised_teeth.csv)")
+    fc = st.get("focus") or {}
+    if fc.get("curves"):
+        add("focusing grating: in-plane focusing", round(fc["eta_focus"], 4), "",
+            "angular spectrum of the fibre spot against the tip mode (model)")
+        add("focusing grating: 3D estimate", round(fc["efficiency_3d_estimate"], 4), "",
+            "eta_2D x focusing x tip taper")
+        if fc.get("efficiency_3d") is not None:
+            add("focusing grating: 3D FDTD", round(fc["efficiency_3d"], 4), "", "3D FDTD")
+    return rows
 
 
 def _lle_section(ctx, lle: dict | None) -> list[str]:

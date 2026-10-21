@@ -227,11 +227,25 @@ def loss_budget(ctx: Context, grating: Optional[dict]) -> list[dict]:
     tp = ctx.state["stages"].get("taper", {}).get("results") or {}
     if tp and not tp.get("skipped") and tp.get("taper_length_um") and cfg.taper.use_in_layout:
         length_cm = (cfg.layout.bus_length_um + 2 * tp["taper_length_um"]) * 1e-4
+    fc = ctx.state["stages"].get("focus", {}).get("results") or {}
+    use_fc = bool(fc.get("curves")) and bool(cfg.focus.run) and bool(cfg.focus.use_in_layout)
+    if use_fc:
+        length_cm = (cfg.layout.bus_length_um + 2 * fc["tip_taper_um"]) * 1e-4
+        ap = ctx.state["stages"].get("apodise", {}).get("results") or {}
+        if fc.get("teeth_kind") == "apodised" and ap.get("efficiency_2d"):
+            grating = dict(grating or {}, efficiency_2d=ap["efficiency_2d"])
     rows = []
     if grating:
         gc_db = -10 * math.log10(max(grating["efficiency_2d"], 1e-9))
         rows.append(dict(item="grating coupler, input (2D simulation)", loss_db=round(gc_db, 2)))
         rows.append(dict(item="grating coupler, output (same design)", loss_db=round(gc_db, 2)))
+    if use_fc:
+        rows.append(dict(item=f"focusing into a {fc['tip_width_um']:g} µm tip, 2 x (in-plane model)",
+                         loss_db=round(-20 * math.log10(max(fc["eta_focus"], 1e-9)), 3)))
+        if fc.get("tip_taper_um"):
+            rows.append(dict(item=f"tip tapers, 2 x {fc['tip_taper_um']:g} µm (2D model)",
+                             loss_db=round(-20 * math.log10(max(fc["tip_taper_T"], 1e-9)), 3)))
+        tp = {}                                   # no long taper, no straight-grating overlap
     if tp.get("eta_y"):
         ly = -10 * math.log10(max(tp["eta_y"], 1e-9))
         rows.append(dict(item=f"fibre-grating lateral overlap, 2 x (W = {tp['grating_width_um']:g} µm)",
@@ -245,7 +259,7 @@ def loss_budget(ctx: Context, grating: Optional[dict]) -> list[dict]:
                          loss_db=round(2 * tp["model_loss_db_at_previous"], 3)))
     elif tp and not tp.get("skipped"):
         rows.append(dict(item="tapers, 2 x (no length below the accepted loss)", loss_db=0.0))
-    else:
+    elif not use_fc:
         rows.append(dict(item="tapers, 2 x (not simulated: run the taper stage)", loss_db=0.0))
     rows.append(dict(item=f"propagation, {length_cm * 1e4:.0f} µm at {straight:g} dB/cm",
                      loss_db=round(straight * length_cm, 3)))
@@ -752,6 +766,11 @@ def redraw_saved_figures(ctx: Context, force: bool = False) -> list[str]:
                             _best_grating(stage_a), ctx.path("figures", "5b_grating_map.png"), wl0,
                             final):
                 done.append("5b_grating_map")
+        from tarang.design import landscapes
+        if visuals.safe(ctx, "grating landscape", landscapes.draw_uniform,
+                        ctx.path("figures", "5g_grating_landscape.png"), rows,
+                        dict(fill_factor=gc["fill_factor"], period_um=gc["period_um"]), wl0):
+            done.append("5g_grating_landscape")
         spec = _read_csv(tables / "grating_spectrum_final.csv")
         if spec:
             wl = np.array([float(r["wavelength_um"]) for r in spec])
@@ -763,6 +782,14 @@ def redraw_saved_figures(ctx: Context, force: bool = False) -> list[str]:
                             f"Final grating: P = {gc['period_um']:.4f} µm, FF = "
                             f"{gc['fill_factor']:.2f}, fibre at {gc['source_x_um']} µm"):
                 done.append("5d_grating_spectrum")
+    ap = res.get("apodise") or {}
+    if ap.get("verified") and (tables / "apodised_check.csv").exists():
+        from tarang.design import landscapes
+        rows = [{k: _num(v) for k, v in r.items()} for r in _read_csv(tables / "apodised_check.csv")]
+        if visuals.safe(ctx, "apodised landscape", landscapes.draw_apodised,
+                        ctx.path("figures", "9c_apodised_landscape.png"), rows,
+                        (ap.get("source_x_um"), ap.get("scale")), wl0):
+            done.append("9c_apodised_landscape")
     band = _read_csv(tables / "coupling_vs_wavelength.csv")
     if band:
         curves: dict = {}

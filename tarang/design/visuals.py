@@ -650,7 +650,7 @@ def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
     import gdstk
     plt = _plt()
     lib = gdstk.read_gds(str(gds_path))
-    cell = next((c for c in lib.cells if "_gc" in c.name), lib.top_level()[0])
+    cell = next((c for c in lib.cells if "_gc" in c.name or "_fgc" in c.name), lib.top_level()[0])
     polys = [np.asarray(q.points) for q in cell.get_polygons()]
     colour = "#3182bd"
     fig = plt.figure(figsize=(15, 8.5))
@@ -668,9 +668,18 @@ def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
     L, W = p["bus_length_um"], p["waveguide_width_um"]
     R = p.get("ring_radius_um") or 0.0
     gap = p.get("gap_critical_um") or 0.5
-    taper = p.get("taper_length_um") or 0.0
-    x0 = L / 2 + taper                            # start of the grating
-    n = int(p.get("grating_teeth") or 0) * (p.get("grating_period_um") or 0.0)
+    focusing = bool(p.get("grating_focusing"))
+    if focusing:                                  # tip taper, then the focus and the sector
+        taper = p.get("focus_tip_taper_um") or 0.0
+        x0 = L / 2 + taper + p["focus_distance_um"]
+        tl = p.get("focus_teeth_list") or []
+        n = (tl[-1][0] + tl[-1][1]) if tl else 0.0
+    else:
+        taper = p.get("taper_length_um") or 0.0
+        x0 = L / 2 + taper                        # start of the grating
+        tl = p.get("grating_teeth_list") or []
+        n = ((tl[-1][0] + tl[-1][1]) if tl else
+             int(p.get("grating_teeth") or 0) * (p.get("grating_period_um") or 0.0))
     top.autoscale()
     ymin, ymax = top.get_ylim()
     top.set_ylim(ymin - 0.12 * (ymax - ymin), ymax + 0.05 * (ymax - ymin))
@@ -682,26 +691,36 @@ def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
     if R:
         top.text(0, W / 2 + gap + R, f"ring R = {R:g} µm", fontsize=9, ha="center",
                  va="center", color="0.25")
-    if taper:
+    if taper and not focusing:                     # a few-µm tip taper is shown in the zoom
         for sgn in (-1, 1):
             top.text(sgn * (L / 2 + taper / 2), -dy, f"taper {taper:g} µm", **label)
     if n:
         for sgn in (-1, 1):
-            top.text(sgn * (x0 + n / 2), -2.2 * dy, "grating", **label)
+            top.text(sgn * (x0 + n / 2), -2.2 * dy,
+                     "focusing grating" if focusing else "grating", **label)
     zooms[0].set_xlim(-6 * W - 3, 6 * W + 3)
     zooms[0].set_ylim(-3 * W, 2 * W + gap + 4)
     zooms[0].set_title(f"coupling region (gap {gap * 1e3:.0f} nm)")
-    gw = p.get("grating_width_um") or 4 * W
+    gw = (2 * p["focus_y_max_um"] if focusing else p.get("grating_width_um")) or 4 * W
     zooms[1].set_xlim(L / 2 - 10, L / 2 + min(taper, 30) + 2)
     zooms[1].set_ylim(-max(3 * W, gw / 4), max(3 * W, gw / 4))
     zooms[1].axvline(L / 2, color="0.5", ls=":", lw=1)
     zooms[1].set_aspect("auto")                    # y stretched: the taper widens slowly
-    zooms[1].set_title(f"waveguide ({W:g} µm) into the taper\n(y axis stretched)")
+    zooms[1].set_title(f"waveguide ({W:g} µm) into the {'tip taper and focusing slab' if focusing else 'taper'}"
+                       "\n(y axis stretched)")
     if n:
         zooms[2].set_xlim(x0 - 15, x0 + n + 5)
         zooms[2].set_ylim(-gw, gw)
-        zooms[2].set_title(f"grating: {p['grating_teeth']} × {p['grating_period_um']:.4f} µm, "
-                           f"FF {p['grating_fill_factor']:.2f}")
+        if focusing:
+            zooms[2].set_xlim(L / 2 + taper - 3, x0 + n + 3)
+            zooms[2].set_aspect("equal")
+            zooms[2].set_title(f"focusing grating: {len(tl)} curved teeth, focus "
+                               f"{p['focus_distance_um']:g} µm before the first")
+        elif tl:
+            zooms[2].set_title(f"apodised grating: {len(tl)} teeth")
+        else:
+            zooms[2].set_title(f"grating: {p['grating_teeth']} × {p['grating_period_um']:.4f} µm, "
+                               f"FF {p['grating_fill_factor']:.2f}")
     return _save(fig, path)
 
 
