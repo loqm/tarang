@@ -333,9 +333,7 @@ def _form(ctx) -> None:
         dict(section="taper", key="max_loss_db", show=lambda c: bool(c.taper.run_eme)),
         dict(section="taper", key="eme_cells", show=lambda c: bool(c.taper.run_eme)),
         dict(section="taper", key="eme_modes", show=lambda c: bool(c.taper.run_eme)),
-        dict(section="taper", key="use_in_layout"),
-        dict(section="run", key="max_cost_per_run"),
-        dict(section="run", key="max_total_cost")])
+        dict(section="taper", key="use_in_layout")])
 
 
 def draw_width(ctx, ws: dict, chosen: float):

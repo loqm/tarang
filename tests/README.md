@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `340 passed, 2 skipped`. The two skips are the real-cloud
+Expected on Windows: `364 passed, 2 skipped` (quick check: `345 passed, 2 skipped, 19 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -421,7 +421,7 @@ cloud for the cloud stages.
 | `test_batch_links_name_the_case_they_belong_to` | Two runs with the same name are told apart by their case in the link list |
 | `test_runs_without_links_are_explained_and_get_pictures` | A run without a task record is listed as "not in the task list of this account", with the reason, and gets its picture |
 | `test_apodise_stage_reads_periods_right_in_either_time_convention` | The sign convention of the phase slope is fixed by the final uniform design, so the periods are right either way |
-| `test_new_stages_run_through_the_design_session` | `--only taper,apodise` runs both stages as stages 7 and 8 of 10; the apodised grating is off by default (no cloud run, uniform grating used); turned on later it runs without repeating the taper |
+| `test_new_stages_run_through_the_design_session` | `--only taper,apodise` runs both stages as stages 7 and 8 of 12; the apodised grating is off by default (no cloud run, uniform grating used); turned on later it runs without repeating the taper |
 | `test_every_ring_builder_can_have_a_flat_box_and_keeps_its_old_geometry[...]` (3) | Full, half and partial ring: 0.1 µm gives the old simulation bit for bit, 0 a flat BOX |
 | `test_graded_cells_change_the_width_by_the_same_ratio` | The EME cell boundaries keep w_(i+1)/w_i constant; the cells are short at the narrow end |
 | `test_2d_taper_model_is_converged_and_falls_with_length` (slow) | The 2D taper model with 600 cells agrees with 1200 cells to 0.01 dB, its loss falls with length, and a 20-cell staircase is visibly wrong (the cause of the jumping 3D result of Phase 12B v1) |
@@ -448,4 +448,33 @@ cloud for the cloud stages.
 | `test_layout_and_budget_use_the_focusing_grating` | The `*_fgc` cells have bus + 2 × (tip taper, slab, 30 curved teeth) and the `*_gc` cells keep the straight grating, both in `design.gds`; `parameters.m` has the focusing values; the budget replaces the lateral overlap and long taper by the focusing rows; the report section, check values and benchmark-pack sections 4b/4d exist; with `focus.use_in_layout = false` the straight grating is the main coupler again (the focusing cells stay) |
 | `test_uniform_landscape_takes_the_best_fibre_position_per_design` | 5g groups 2D runs by (period, fill factor) with the best fibre position, leaves 3D runs out, needs 3 points; 9c draws from the apodised check |
 | `test_old_runs_get_the_uniform_landscape_from_their_sweep_table` | A run made before Phase 12C gets 5g drawn from `grating_sweep.csv` at its next report (free) |
-| `test_focusing_stage_runs_through_the_design_session` | `--only focus` runs it as stage 9 of 11 |
+| `test_focusing_stage_runs_through_the_design_session` | `--only focus` runs it as stage 9 of 12 |
+
+## `test_phase13.py`: credit limits, whole-device circuit model, GUI (24 tests, Phase 13)
+
+| Test | Checks |
+|---|---|
+| `test_limits_are_capped_by_the_account_and_each_other` | The total limit may not exceed spent + balance; a single run may not exceed the total or the balance; no cap when the balance is unknown |
+| `test_price_only_shows_estimates_and_runs_nothing_that_costs` | `--price-only` records every estimate and refuses priced steps; free (cached) steps still run |
+| `test_spend_cap_counts_down_and_skips_what_does_not_fit` | `--spend-cap` falls with each accepted run and skips a run that does not fit |
+| `test_command_line_has_price_only_and_spend_cap` | The command line parses (help) |
+| `test_benchmark_describes_an_eme_simulation` | The benchmark pack describes an EME simulation (cells, length sweep) instead of failing on `run_time` |
+| `test_efficiency_preference_keeps_the_most_efficient` | `apodise.prefer = "efficiency"`: the most efficient design, kept only when above the uniform grating (the 1550 nm case: 29.9 % < 31.3 %, not kept) |
+| `test_bandwidth_preference_takes_the_wider_band_within_half_a_db` | `"bandwidth"`: the 1550 nm apodised grating (0.2 dB less, 53 against 35 nm) is kept; 1 dB less is refused; the widest acceptable design wins |
+| `test_linear_ramp_falls_from_the_weakest_tooth_and_is_phase_matched` | The ramp's fill factor falls from F0 to its floor, each tooth with the phase-matched period of its fill factor |
+| `test_star_product_gives_the_fabry_perot_formula` | Two reflectors through the star product: maxima η²/(1−R)², minima η²/(1+R)²; without reflection exactly η² |
+| `test_ring_numbers_match_the_coupled_mode_picture` | Q_i from the round-trip loss equals `physics.q_intrinsic`; critical coupling: K = 1, Q_L = Q_i/2, zero transmission; K = 1.5: dip ((1−K)/(1+K))² |
+| `test_device_stage_writes_every_resonance_the_spectrum_and_figures` | Resonances across the coupler band, both gaps, off-resonance loss = 2 × (grating, overlap, taper) + bus loss, ripple = 20 log((1+R')/(1−R')), tables and figures 11a/11b written |
+| `test_device_uses_the_coupling_against_wavelength_when_measured` | With a checks-stage κ²(λ) the coupling ratio K changes across the band; without reflection data there is no ripple (noted) |
+| `test_device_resonance_shape_matches_its_q` | The computed resonance's width is its linewidth (2 %) and its depth its dip (0.1 dB) |
+| `test_device_is_a_stage_between_layout_and_report` | Stage order and the `[device]` settings round trip |
+| `test_device_section_in_report_and_check_values` | Report section 7e and the check values (off-resonance loss, loaded Q per gap) |
+| `test_device_off_needs_nothing` | `device.run = false`, or no dispersion solve: skipped, nothing fails |
+| `test_gui_finds_designs_and_reads_their_results` | Design folders are found; stage status, summary, figure groups, tables and files are read |
+| `test_gui_limits_follow_the_same_checks` | Limits set from the GUI are checked like the run's own table and saved in `design.toml` |
+| `test_gui_command_lines` | Estimate = `--yes --price-only`; Run = `--yes --spend-cap`; stages and repeats passed on |
+| `test_gui_new_design_from_an_example` | A new design from `examples/design_sin780.toml` gets its name and wavelength; an existing one is not overwritten |
+| `test_gui_starts_and_stops_a_background_run` | A background run writes its log, a second start is refused, Stop ends it (Ctrl+Break on Windows, Ctrl+C elsewhere) |
+| `test_gui_app_renders_a_design` | The Streamlit app runs headless (AppTest) on a saved design without errors: eight tabs, the run and limit buttons |
+| `test_gui_launcher_explains_a_missing_streamlit` | Without Streamlit, `python -m tarang.gui` says how to install it |
+| `test_apodise_stage_tries_the_ramp_and_keeps_the_preferred_design` | With `apodise.ramp_check` 15 ramp runs (5 rates × 3 positions), table and figure 9d; `prefer = "efficiency"` keeps the more efficient measured recipe, `"bandwidth"` the wider-band ramp; the kept spectrum is saved |

@@ -60,8 +60,11 @@ multinest = [
 layout = [
     "gdstk>=0.9",            # GDS export of designs (python -m tarang.design)
 ]
+gui = [
+    "streamlit>=1.50",       # python -m tarang.gui
+]
 test = [
-    "tarang-photonics[plots,layout]",
+    "tarang-photonics[plots,layout,gui]",
     "pytest>=8",
     "pytest-cov",
 ]

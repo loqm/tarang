@@ -252,14 +252,16 @@ def focusing_sim(ctx, design: dict):
                          name="mode monitor")
     plane = td.FieldMonitor(center=((x_min + x_max) / 2, 0, H / 2), size=(td.inf, td.inf, 0),
                             freqs=[f0], name="field_z_plane")
-    dl = cfg.run.wavelength_um / (2.0 * 12)          # 12 steps per wavelength in the core
+    steps = int(cfg.focus.mesh_steps)
+    dl = cfg.run.wavelength_um / (2.0 * steps)       # cells per wavelength in the core
     override = td.MeshOverrideStructure(
         geometry=td.Box.from_bounds((x_min, -y_half, -0.5), (x_max, y_half, H + 0.5)),
         dl=[dl, dl, dl], enforce=True)
     sim = td.Simulation(
         center=((x_min + x_max) / 2, 0, (z_min + z_max) / 2),
         size=(x_max - x_min, 2 * y_half, z_max - z_min),
-        grid_spec=td.GridSpec.auto(min_steps_per_wvl=8, wavelength=cfg.run.wavelength_um,
+        grid_spec=td.GridSpec.auto(min_steps_per_wvl=max(8, round(steps * 2 / 3)),
+                                   wavelength=cfg.run.wavelength_um,
                                    override_structures=[override]),
         structures=structs, sources=[src], monitors=[mon, plane], run_time=base.sim.run_time,
         boundary_spec=td.BoundarySpec.all_sides(td.PML()), medium=clad)
@@ -286,9 +288,8 @@ def _form(ctx) -> None:
         dict(section="focus", key="tip_widths_um", cast=parse_list, show=on),
         dict(section="focus", key="max_half_angle_deg", show=on),
         dict(section="focus", key="check_3d", show=on),
-        dict(section="focus", key="use_in_layout", show=on),
-        dict(section="run", key="max_cost_per_run", show=on),
-        dict(section="run", key="max_total_cost", show=on)])
+        dict(section="focus", key="mesh_steps", show=lambda c: bool(c.focus.run and c.focus.check_3d)),
+        dict(section="focus", key="use_in_layout", show=on)])
 
 
 def _teeth_choice(ctx) -> tuple[str, list, float, float]:
@@ -399,12 +400,23 @@ def stage_focus(ctx) -> dict:
         wls, eta = dev.get_spectrum(folder)
         sm = spectrum_summary(wls, eta, wl)
         res.update(efficiency_3d=sm["efficiency_at_target"], peak_efficiency_3d=sm["peak_efficiency"],
-                   peak_wavelength_3d_nm=round(sm["peak_wavelength_um"] * 1e3, 1))
+                   peak_wavelength_3d_nm=round(sm["peak_wavelength_um"] * 1e3, 1),
+                   bandwidth_1db_3d_nm=round(sm["bandwidth_1db_nm"], 1), mesh_steps_3d=int(cfg.focus.mesh_steps))
+        _write_spectrum(ctx.path("tables", "focusing_spectrum_3d.csv"), wls, eta)
         ui.say(f"  3D FDTD: {sm['efficiency_at_target'] * 100:.1f} % at {wl} µm (estimate "
                f"{res['efficiency_3d_estimate'] * 100:.1f} %), peak at {res['peak_wavelength_3d_nm']} nm.")
     except Exception as err:                                      # noqa: BLE001
         ui.say(f"  (3D result not read: {type(err).__name__}: {err})")
     return res
+
+
+def _write_spectrum(path, wls, eta) -> None:
+    import csv
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, lineterminator="\n")
+        w.writerow(["wavelength_um", "efficiency", "efficiency_db"])
+        for x, e in zip(wls, eta):
+            w.writerow([round(float(x), 6), float(e), round(10 * math.log10(max(float(e), 1e-12)), 4)])
 
 
 # ------------------------------------------------------------------ figures

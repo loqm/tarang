@@ -206,5 +206,5 @@ def test_focusing_stage_runs_through_the_design_session(tmp_path, fake_web):
     ctx.save_state()
     out = io.StringIO()
     done = run(ctx.cfg, ctx.out, interactive=False, only=["focus"], prompter=Prompter(False, out=out))
-    assert "[9/11] Focusing grating" in out.getvalue()
+    assert "[9/12] Focusing grating" in out.getvalue()
     assert done.state["stages"]["focus"]["results"]["curves"]

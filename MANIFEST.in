@@ -3,6 +3,6 @@
 # and never contains these.
 include pytest.ini environment.yml CHANGELOG.md CONTRIBUTING.md CITATION.cff
 recursive-include tarang *.md
-recursive-include examples *.ipynb *.py
+recursive-include examples *.ipynb *.py *.toml
 recursive-include docs *.svg *.png *.py *.csv
 recursive-include tests *.py *.md

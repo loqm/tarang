@@ -44,9 +44,7 @@ def _form(ctx: Context) -> None:
         dict(section="checks", key="litho_bias_um"),
         dict(section="checks", key="mesh_grating"),
         dict(section="checks", key="mesh_gap"),
-        dict(section="checks", key="mode_families"),
-        dict(section="run", key="max_cost_per_run"),
-        dict(section="run", key="max_total_cost")])
+        dict(section="checks", key="mode_families")])
 
 
 def _done(ctx: Context, name: str) -> Optional[dict]:

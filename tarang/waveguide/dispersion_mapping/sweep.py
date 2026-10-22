@@ -152,17 +152,29 @@ def main():
         else:
             pool = ProcessPoolExecutor(max_workers=a.workers)
             iterator = (fut.result() for fut in as_completed([pool.submit(_work, t) for t in todo]))
-        for i, r in enumerate(iterator, 1):
-            f.write(json.dumps(r) + "\n")
-            f.flush()
-            if "error" in r:
-                msg = f"ERROR {r['error']}"
-            else:
-                msg = (f"D_TE0={r['D_TE0']:8.1f}  guided TE/TM={r['guided_TE']}/{r['guided_TM']}"
-                       f"  n_TE0={r['neff_TE'][0]:.4f}  n_TM0={r['neff_TM'][0]:.4f}")
-            eta = (time.time() - t_start) / i * (len(todo) - i)
-            print(f"[{i:3d}/{len(todo)}] H={r['H']:.3f} W={r['W']:.3f}  {msg}  "
-                  f"({r['secs']:.0f}s, ETA {eta/60:.0f} min)", flush=True)
+        i = 0
+        try:
+            for i, r in enumerate(iterator, 1):
+                f.write(json.dumps(r) + "\n")
+                f.flush()
+                if "error" in r:
+                    msg = f"ERROR {r['error']}"
+                else:
+                    msg = (f"D_TE0={r['D_TE0']:8.1f}  guided TE/TM={r['guided_TE']}/{r['guided_TM']}"
+                           f"  n_TE0={r['neff_TE'][0]:.4f}  n_TM0={r['neff_TM'][0]:.4f}")
+                eta = (time.time() - t_start) / i * (len(todo) - i)
+                print(f"[{i:3d}/{len(todo)}] H={r['H']:.3f} W={r['W']:.3f}  {msg}  "
+                      f"({r['secs']:.0f}s, ETA {eta/60:.0f} min)", flush=True)
+        except KeyboardInterrupt:
+            # Ctrl+C: drop the queued points (finished ones are saved above; a rerun skips
+            # them) instead of letting the pool finish every queued point at exit
+            if a.workers > 1:
+                for proc in list((getattr(pool, "_processes", None) or {}).values()):
+                    proc.terminate()             # a worker inside the mode solver would
+                pool.shutdown(wait=False, cancel_futures=True)    # otherwise run on alone
+            print(f"Stopped: {i} of {len(todo)} points saved; "
+                  "the same command continues.", flush=True)
+            raise
         if a.workers > 1:
             pool.shutdown()
     print("Done. Now run:  python -m tarang.waveguide.dispersion_mapping.maps --data", out)

@@ -313,9 +313,10 @@ def _form(ctx) -> None:
         dict(section="apodise", key="min_trench_um", show=on),
         dict(section="apodise", key="verify", show=on),
         dict(section="apodise", key="max_teeth", show=on),
-        dict(section="apodise", key="use_in_layout", show=on),
-        dict(section="run", key="max_cost_per_run", show=on),
-        dict(section="run", key="max_total_cost", show=on)])
+        dict(section="apodise", key="prefer", show=on,
+             check=lambda v: "" if v in ("efficiency", "bandwidth") else "answer efficiency or bandwidth"),
+        dict(section="apodise", key="ramp_check", show=on),
+        dict(section="apodise", key="use_in_layout", show=on)])
 
 
 def default_fill_factors(period: float, min_feature: float) -> list[float]:
@@ -555,27 +556,139 @@ def stage_apodise(ctx) -> dict:
     _write_csv(ctx.path("tables", "apodised_check.csv"), vrows)
     top = max(vrows, key=lambda r: r["efficiency_at_target"])
     key = next(k for k in results if k[0] == top["scale"] and round(k[1], 2) == top["source_x_um"])
-    final_teeth = [(round(a * key[0], 4), round(b * key[0], 4)) for a, b in teeth]
+    cands = [dict(recipe="measured scattering", eff=top["efficiency_at_target"],
+                  bw=top["bandwidth_1db_nm"], peak=top["peak_efficiency"],
+                  peak_nm=top["peak_wavelength_nm"], source_x_um=round(key[1], 2), scale=key[0],
+                  teeth=[(round(a * key[0], 4), round(b * key[0], 4)) for a, b in teeth],
+                  spectrum=spectra[key])]
+    s_ramp = res.get("scale_centred", 1.0)
+    if cfg.apodise.ramp_check:
+        ramp = ramp_check(ctx, fgrid, period_ff, s_ramp, best["x_c"], P0, ff0, H, depth, gfolder)
+        if ramp:
+            res["ramp"] = {k: v for k, v in ramp.items() if k != "spectra"}
+            b = ramp["best"]
+            cands.append(dict(recipe=f"linear ramp R = {b['R_per_um']:g}/µm", eff=b["efficiency_at_target"],
+                              bw=b["bandwidth_1db_nm"], peak=b["peak_efficiency"],
+                              peak_nm=b["peak_wavelength_nm"], source_x_um=b["source_x_um"],
+                              scale=s_ramp, teeth=b["teeth"], spectrum=ramp["spectra"][b["key"]]))
     eff_u = gc["efficiency_2d"]
-    res.update(verified=True, check=vrows, efficiency_2d=top["efficiency_at_target"],
-               peak_efficiency=top["peak_efficiency"], peak_wavelength_nm=top["peak_wavelength_nm"],
-               bandwidth_1db_nm=top["bandwidth_1db_nm"], source_x_um=round(key[1], 2), scale=key[0],
-               teeth=final_teeth, uniform_efficiency_2d=eff_u,
-               better_than_uniform=top["efficiency_at_target"] > eff_u)
-    ui.say(f"  Apodised: {top['efficiency_at_target'] * 100:.1f} % at {wl} µm "
-           f"({-10 * math.log10(max(top['efficiency_at_target'], 1e-9)):.2f} dB), peak at "
-           f"{top['peak_wavelength_nm']} nm; uniform: {eff_u * 100:.1f} %."
-           + ("" if res["better_than_uniform"] else " The layout keeps the uniform grating."))
+    bw_u = gc.get("bandwidth_1db_nm") or 0.0
+    prefer = str(cfg.apodise.prefer).lower()
+    chosen, better = choose(cands, eff_u, bw_u, prefer)
+    res.update(verified=True, check=vrows, efficiency_2d=chosen["eff"], recipe=chosen["recipe"],
+               peak_efficiency=chosen["peak"], peak_wavelength_nm=chosen["peak_nm"],
+               bandwidth_1db_nm=chosen["bw"], source_x_um=chosen["source_x_um"],
+               scale=chosen["scale"], teeth=chosen["teeth"], uniform_efficiency_2d=eff_u,
+               uniform_bandwidth_1db_nm=bw_u, prefer=prefer, better_than_uniform=better,
+               candidates=[{k: v for k, v in c.items() if k not in ("teeth", "spectrum")} for c in cands])
+    from tarang.design.focus import _write_spectrum
+    _write_spectrum(ctx.path("tables", "apodised_spectrum.csv"), *chosen["spectrum"])
+    why = ("higher efficiency at the design wavelength" if prefer == "efficiency" else
+           "a wider 1 dB band with at most 0.5 dB less at the design wavelength")
+    ui.say(f"  Apodised ({chosen['recipe']}): {chosen['eff'] * 100:.1f} % at {wl} µm "
+           f"({-10 * math.log10(max(chosen['eff'], 1e-9)):.2f} dB), peak at {chosen['peak_nm']} nm, "
+           f"1 dB band {chosen['bw']:.0f} nm; uniform: {eff_u * 100:.1f} %, {bw_u:.0f} nm. "
+           + (f"The layout uses it ({why}; apodise.prefer = '{prefer}')." if better else
+              f"The layout keeps the uniform grating (apodise.prefer = '{prefer}': {why})."))
     try:
         uni_dev = grating_device(ctx, P0, ff0, gc["source_x_um"], H=H, depth=depth)
         uni = uni_dev.get_spectrum(gfolder)
     except Exception:                                             # noqa: BLE001
         uni = None
-    visuals.safe(ctx, "apodised spectrum", draw_check, ctx, spectra[key], uni, top, eff_u)
+    top_row = dict(efficiency_at_target=chosen["eff"])
+    visuals.safe(ctx, "apodised spectrum", draw_check, ctx, chosen["spectrum"], uni, top_row, eff_u)
     from tarang.design import landscapes
     visuals.safe(ctx, "apodised landscape", landscapes.draw_apodised,
-                 ctx.path("figures", "9c_apodised_landscape.png"), vrows, (res["source_x_um"], key[0]), wl)
+                 ctx.path("figures", "9c_apodised_landscape.png"), vrows, (round(key[1], 2), key[0]), wl)
     return res
+
+
+def choose(cands: list, eff_u: float, bw_u: float, prefer: str) -> tuple[dict, bool]:
+    """The apodised design to keep and whether it beats the uniform grating: 'efficiency' =
+    highest efficiency at the design wavelength; 'bandwidth' = widest 1 dB band among
+    designs at most 0.5 dB below the uniform grating at the design wavelength."""
+    floor = eff_u * 10 ** (-0.05)
+    if prefer == "bandwidth":
+        ok = [c for c in cands if c["eff"] >= floor]
+        if ok:
+            c = max(ok, key=lambda c: (c["bw"], c["eff"]))
+            return c, c["bw"] > bw_u
+        return max(cands, key=lambda c: c["eff"]), False
+    c = max(cands, key=lambda c: c["eff"])
+    return c, c["eff"] > eff_u
+
+
+RAMP_RATES = (0.004, 0.008, 0.012, 0.016, 0.024)      # 1/um
+
+
+def ramp_teeth(f0: float, f_min: float, rate: float, n: int, period_ff, scale: float = 1.0) -> list:
+    """Linear fill-factor ramp F(x) = F0 - R x (Marchetti et al., Sci. Rep. 7, 16670 (2017)),
+    clipped to [f_min, F0]; every tooth gets the phase-matched period of its fill factor."""
+    teeth, x = [], 0.0
+    for _ in range(int(n)):
+        f = min(max(f0 - rate * x, f_min), f0)
+        p = period_ff(f) * scale
+        teeth.append((round(x, 4), round(f * p, 4)))
+        x += p
+    return teeth
+
+
+def ramp_check(ctx, fgrid, period_ff, scale, x_c, P0, ff0, H, depth, folder) -> Optional[dict]:
+    """Second recipe: linear ramps from the weakest usable tooth (largest fill factor), at
+    five ramp rates and three fibre positions, in 2D FDTD (priced). Figure 9d."""
+    from tarang.design import visuals
+    from tarang.design.checks import _run_batch, _write_csv
+    from tarang.design.stages import grating_device
+    from tarang.grating_coupler.grating_coupler import spectrum_summary
+    cfg, ui = ctx.cfg, ctx.ui
+    n = int(ctx.results("grating")["n_teeth"])
+    f0, f_min = float(np.max(fgrid)), float(np.min(fgrid))
+    devs = {}
+    for R in RAMP_RATES:
+        tl = ramp_teeth(f0, f_min, R, n, period_ff, scale)
+        for dx in (-1.5, 0.0, 1.5):
+            sx = round(x_c + dx, 2)
+            devs[(R, sx)] = (grating_device(ctx, P0, ff0, sx, H=H, depth=depth, teeth=tl), tl)
+    ui.say(f"  Linear ramp (Marchetti et al. 2017): fill factor from {f0:g} falling at "
+           f"{', '.join(f'{r:g}' for r in RAMP_RATES)} per µm (down to {f_min:g}), {n} teeth, fibre at "
+           f"{x_c - 1.5:.1f}/{x_c:.1f}/{x_c + 1.5:.1f} µm.")
+    ok = _run_batch(ctx, {f"ramp {k[0]:g}/µm, fibre {k[1]:g} µm": (d.sim, d._readable_name())
+                          for k, (d, _) in devs.items()}, folder, "apodised grating: linear ramps (2D)")
+    if not ok:
+        return None
+    rows, spectra = [], {}
+    for (R, sx), (d, tl) in devs.items():
+        try:
+            wls, eta = d.get_spectrum(folder)
+        except Exception:                                         # noqa: BLE001
+            continue
+        sm = spectrum_summary(wls, eta, cfg.run.wavelength_um)
+        spectra[(R, sx)] = (wls, eta)
+        rows.append(dict(R_per_um=R, source_x_um=sx, efficiency_at_target=sm["efficiency_at_target"],
+                         peak_efficiency=sm["peak_efficiency"],
+                         peak_wavelength_nm=round(sm["peak_wavelength_um"] * 1e3, 1),
+                         bandwidth_1db_nm=round(sm["bandwidth_1db_nm"], 1)))
+    if not rows:
+        return None
+    ui.table(sorted(rows, key=lambda r: -r["efficiency_at_target"]),
+             formats={"efficiency_at_target": ".3f", "peak_efficiency": ".3f"})
+    _write_csv(ctx.path("tables", "apodised_ramp.csv"), rows)
+    b = max(rows, key=lambda r: r["efficiency_at_target"])
+    key = (b["R_per_um"], b["source_x_um"])
+    best = dict(b, key=key, teeth=devs[key][1])
+    from tarang.design import landscapes
+    visuals.safe(ctx, "ramp landscape", landscapes.draw, ctx.path("figures", "9d_apodised_ramp_landscape.png"),
+                 [dict(points=[dict(x=r["source_x_um"], y=r["R_per_um"], z=r["efficiency_at_target"])
+                               for r in rows],
+                       title=f"Efficiency at {cfg.run.wavelength_um} µm", xlabel="Fibre position on the grating (µm)",
+                       ylabel="Ramp rate R (1/µm)", chosen=(key[1], key[0]), chosen_label="best ramp",
+                       note="F(x) = F0 − R x, each tooth phase-matched; 2D FDTD"),
+                  dict(points=[dict(x=r["source_x_um"], y=r["R_per_um"], z=r["peak_efficiency"])
+                               for r in rows],
+                       title="Peak efficiency (any wavelength)", xlabel="Fibre position on the grating (µm)",
+                       ylabel="Ramp rate R (1/µm)", chosen=(key[1], key[0]), chosen_label="best ramp")],
+                 "Apodised grating, linear fill-factor ramp: efficiency landscape")
+    return dict(rows=rows, best=best, spectra=spectra, f0=f0, f_min=f_min, rates=list(RAMP_RATES))
 
 
 def draw_design(ctx, rows, teeth, ffs_t, model, best, w_x, a0, uni_eta):

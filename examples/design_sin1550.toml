@@ -1,0 +1,227 @@
+# Example: Si3N4 microring at 1550 nm with grating couplers (TARANG design).
+# 700 nm Si3N4 film on 4 um thermal oxide, air top cladding, gratings etched through the
+# film (full etch), SMF-28 fibre at 12 degrees. Copy it into a new folder and start with
+#     python -m tarang.design --config <folder>/design.toml
+# or pick it under 'New design' in the GUI (python -m tarang.gui). Every line can be
+# changed; a line you delete is asked for again. Values marked 'your process' are
+# placeholders for your own fabrication numbers.
+
+[run]
+# Name of this design (used for file names)
+name = "sin1550_ring"
+# Design wavelength (the pump) [um]
+wavelength_um = 1.55
+# Material-fit band half-width (default: 0.13 x wavelength) [um]
+# band_um =
+# Largest cost of any single cloud run [FlexCredits]
+max_cost_per_run = 2.0
+# Budget for all cloud stages together [FlexCredits]
+max_total_cost = 15.0
+# Parallel processes for local mode solving (about 1 GB RAM each)
+workers = 2
+# Figure files to write: png (raster), pdf and/or svg (vector, for papers and slides)
+figure_formats = ["png", "pdf"]
+# Resolution of png figures [dpi]
+figure_dpi = 300
+# Save a picture of the geometry of every cloud simulation (figures/sims/, named like its cloud folder)
+sim_pictures = true
+
+[materials]
+# Core material: a key in tarang/media/media.json or a path to your own CSV (columns wl [um], n, k)
+core = "si3n4"
+# Buried oxide under the core (key or CSV path)
+box = "sio2"
+# Top cladding (key or CSV path; air for an air-clad device)
+cladding = "air"
+# Silicon wafer under the BOX (grating coupler only; 'none' leaves it out)
+handle = "si_franta"
+
+[stack]
+# Core film thickness if already fixed (e.g. the wafer you ordered); leave empty to map heights [um]
+core_height_um = 0.7
+# Buried oxide thickness [um]
+box_height_um = 4.0
+# Top cladding thickness (ignored for air) [um]
+cladding_height_um = 2.0
+
+[cross_section]
+# Core heights to map (default: around the fixed film, or 0.32-0.58 x wavelength) [um]
+# heights_um =
+# Core widths to map (default: 0.39-1.16 x wavelength) [um]
+# widths_um =
+# Mesh steps per wavelength for the map (>= 50)
+map_steps = 50
+# Mesh steps per wavelength for the chosen geometry (>= 70)
+decision_steps = 70
+# Fabrication tolerance of the width (+/-) [um]
+tolerance_width_um = 0.05
+# Fabrication tolerance of the film thickness (+/-) [um]
+tolerance_height_um = 0.02
+# Chosen core height (picked from the map) [um]
+# height_um =
+# Chosen core width (picked from the map) [um]
+# width_um =
+
+[ring]
+# Target free spectral range [GHz]
+fsr_ghz = 200.0
+# Ring radius (default: from the FSR target and the group index) [um]
+# radius_um =
+# Loss values to start from, each from a publication: typical_ebl, annealed_low_loss, state_of_the_art (see the assumptions table); your own values below replace them
+loss_preset = "typical_ebl"
+# Straight-waveguide scattering loss (default: from loss_preset) [dB/cm]
+# scattering_loss_db_cm =
+# Material absorption loss (default: from loss_preset) [dB/cm]
+# absorption_loss_db_cm =
+# Bend loss from a local bent-mode solve (free)
+bend_check = true
+
+[gap]
+# Ring-bus gaps to simulate (default: 0.19-0.52 x wavelength) [um]
+# gaps_um =
+# Span of the partial ring simulated next to the bus [deg]
+span_angle_deg = 45.0
+# Over-coupling ratio K = Q_int/Q_c for the second gap (1 = critical only)
+over_coupling = 1.5
+# How the coupled power is measured: 'ring_port' (power entering the ring arc; no extra run), 'bus_only' (through power relative to a run of the bus alone; one extra run) or 'source' (through power relative to the source; biased by numerical losses on the bus)
+reference = "ring_port"
+# FDTD mesh steps per wavelength in the waveguide
+fine_steps = 15
+# FDTD mesh steps per wavelength elsewhere
+coarse_steps = 10
+# Wavelengths recorded at the ring ports (across +/-8 % of the design frequency: coupling against wavelength; 1 = the design wavelength only)
+band_points = 11
+# BOX pocket inside the ring (air cut into the BOX by the partial-ring builder; 0 = flat BOX, 0.1 = runs made before Phase 12) [um]
+ring_inner_box_recess_um = 0.0
+
+[grating]
+# Grating etch: 'full' (teeth etched through the film, one lithography step) or 'partial'
+etch = "full"
+# Etch depth for a partial etch [um]
+# etch_depth_um =
+# Fibre angle from vertical [deg]
+fiber_angle_deg = 12.0
+# Which way the fibre beam travels along the grating: 'towards' the waveguide (fibres on two holders form a V) or 'away' from it
+fiber_tilt = "towards"
+# Fibre mode-field diameter [um]
+mfd_um = 10.4
+# Number of grating periods
+n_teeth = 30
+# Grating width (transverse) [um]
+width_um = 12.0
+# Fill factors (tooth / period) to try (default: 0.5-0.9 for a full etch, 0.4-0.8 for a partial etch)
+# fill_factors =
+# Period multiples tried per fill factor (of its phase-matched period)
+detuning = [0.95, 1.0, 1.05]
+# Fixed periods to try for every fill factor instead (default: use detuning) [um]
+# periods_um =
+# Fibre positions on the grating surface to try (default: five positions across the grating) [um]
+# source_x_um =
+# Smallest tooth or groove your lithography can make [um]
+min_feature_um = 0.1
+# Spectrum half-width around the wavelength [um]
+bandwidth_um = 0.1
+# Retune the period onto the wavelength (then refine fill factor and fibre position)
+retune = true
+# Centre the efficiency peak on the wavelength (False: keep the design with the highest efficiency at the wavelength)
+centre_peak = true
+# Also simulate the best design in 3D (several times the 2D cost)
+check_3d = false
+# Linear taper from the grating width to the waveguide [um]
+taper_length_um = 300.0
+
+[checks]
+# Coupling against wavelength (critical and over-coupled gaps; 2 cloud runs, none if the gap runs recorded the band)
+band = true
+# Grating extras (back-reflection into the waveguide, fibre angle +/- tolerance, film thickness and tooth width +/- tolerance, and where the light goes; about 8 small 2D runs)
+grating_extras = true
+# Fibre angle tolerance of your holders (+/-) [deg]
+angle_tolerance_deg = 1.0
+# Lithography width error of teeth and gaps (+/-) [um]
+litho_bias_um = 0.02
+# Grating mesh check (final grating again at 1.5x finer mesh; 1 small 2D run)
+mesh_grating = true
+# Gap mesh check (critical gap again at 1.5x finer mesh; 1 3D run, about 5x the cost of a gap run)
+mesh_gap = false
+# Ring mode families (other guided modes of the bent waveguide and how often they cross TE00; local, free)
+mode_families = true
+
+[taper]
+# Grating width to use (empty: the width that best matches the fibre mode) [um]
+# grating_width_um =
+# Grating widths for the fibre-overlap curve (empty: 0.8-2.2 x MFD) [um]
+# widths_um =
+# Also check the taper loss with Tidy3D 3D EME (one cloud run, priced first; the free 2D model always runs)
+run_eme = true
+# Taper lengths for the 3D EME (empty: 10-400 um) [um]
+# lengths_um =
+# Largest taper loss accepted when choosing the length [dB]
+max_loss_db = 0.05
+# EME cells along the taper, graded (more = closer to a smooth taper; 30 is not converged)
+eme_cells = 120
+# Modes per EME cell (even modes only; the wide end guides about 11)
+eme_modes = 20
+# Use this grating width and taper length in the layout
+use_in_layout = true
+
+[apodise]
+# Also design an apodised grating (the uniform grating is always designed and used unless this is on, checked in FDTD and better)
+run = true
+# Fill factors whose scattering strength is measured (empty: 0.5 up to the largest the smallest feature allows)
+# fill_factors =
+# Check the apodised design in 2D FDTD (5 small runs for the period scale and fibre position, then 3 with the peak centred)
+verify = true
+# Narrowest trench between teeth that the full etch clears (empty: grating.min_feature_um) [um]
+min_trench_um = 0.2
+# Most teeth of the apodised grating
+max_teeth = 60
+# What 'better than the uniform grating' means: 'efficiency' (higher at the design wavelength) or 'bandwidth' (wider 1 dB band, at most 0.5 dB lower at the design wavelength)
+prefer = "efficiency"
+# Also try the linear fill-factor ramp of Marchetti et al. (Sci. Rep. 7, 16670, 2017) as a second recipe (about 15 small 2D runs)
+ramp_check = false
+# Use the apodised grating in the layout when it beats the uniform one
+use_in_layout = true
+
+[focus]
+# Also design a focusing grating (curved teeth focus the light into the waveguide; a few-um slab replaces the long taper)
+run = true
+# Teeth along the axis: 'uniform', 'apodised', or 'best' (apodised when it was checked and beats the uniform grating)
+teeth = "best"
+# Waveguide tip widths to try at the focus (empty: 1-4 x the waveguide width) [um]
+# tip_widths_um =
+# Largest half-angle of the light cone at the tip (wider cones are less well described by the model) [deg]
+max_half_angle_deg = 20.0
+# Check the focusing grating in 3D FDTD (one run, priced first; several FlexCredits)
+check_3d = false
+# Mesh cells per wavelength in the core for the 3D check (12: about 1 FC; 15 matches the 2D design, about twice the cost)
+mesh_steps = 12
+# Make the focusing grating the main coupler (loss budget, layout figure); the GDS has both in any case
+use_in_layout = true
+
+[layout]
+# Straight bus length between the tapers [um]
+bus_length_um = 400.0
+# Polygon tone ('structure': polygons are the core; 'trench': they are the etched trenches around it, positive resist)
+tone = "structure"
+# Trench width for tone = 'trench' [um]
+trench_width_um = 3.0
+# GDS [layer, datatype] of bus waveguides
+waveguide_layer = [1, 0]
+# GDS [layer, datatype] of the ring
+ring_layer = [1, 0]
+# GDS [layer, datatype] of the grating tapers
+taper_layer = [1, 0]
+# GDS [layer, datatype] of the grating teeth
+grating_layer = [1, 0]
+
+[device]
+# Model the whole device (free, local): fibre-to-fibre transmission of grating + taper + bus + ring + taper + grating from the stages' results
+run = true
+# Include the gratings' back-reflection (Fabry-Perot ripple between the two couplers; from the checks stage's reverse run)
+reflections = true
+# Half-width of the close-up around the pump, in ring FSRs
+zoom_fsr = 1.5
+
+[assumptions]
+# Kerr index of the core for the threshold estimate (Si3N4: Ikeda et al., Opt. Express 16, 12987 (2008)) [m^2/W]
+n2_m2_w = 2.4e-19
