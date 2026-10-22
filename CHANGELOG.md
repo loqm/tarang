@@ -15,6 +15,35 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **Design goal** (`run.goal`, asked first): `comb_ring` (as before) or `loss_test`, test
+  waveguides for propagation loss. Stages of the other goal are left out (the ring and gap
+  for `loss_test`; their settings do not affect the other stages' saved results). With
+  `loss_test` and a given cross-section the map is skipped; otherwise the map ranks
+  single-mode cross-sections.
+- **Test-waveguide stage** (`waveguides`, local, free): bend loss against radius (local
+  bent-mode solve) and the smallest spiral radius (bend loss below a tenth of the expected
+  loss); the precision of the cutback fit, σ_α = σ / √Σ(L − L̄)² with σ the coupling scatter
+  per structure, and the lengths that reach `waveguides.target_precision` (for 0.4 dB/cm and
+  0.3 dB scatter: 0, 3, 5.5 and 10.5 cm for ±10 %); figure 3w. The whole-device stage then
+  gives the expected cutback line and every structure's spectrum with its Fabry-Perot
+  ripple (figure 11a, `tables/device_cutback.csv`).
+- **Cutback spirals in the GDS**: double Archimedean spirals (two interleaved arms, a centre
+  S-bend at the smallest radius, leads to the couplers), each of exactly the requested
+  length (`layout/spirals.csv`), with the couplers at both ends.
+- **Reference waveguide beside every ring**: `waveguide_gc.gds` (the same couplers without a
+  ring) is now drawn for ring designs too (`layout.reference`); measuring it gives the
+  coupler loss. Before, it was drawn only when no gap had been designed.
+- **Couplers on the mask** (`layout.coupler`): `auto` (as before), `uniform`, `apodised`,
+  `focusing`, or `all` (uniform `*_gc`, apodised `*_agc` and focusing `*_fgc` side by side);
+  the loss budget and the whole-device model follow the main coupler.
+- **Gap variants** (`layout.gap_offsets_um`): extra rings with the gap moved by these amounts.
+- **Back-reflection of the kept apodised grating** (`apodise.reflection_check`, one small 2D
+  reverse run, priced first); the whole-device ripple uses the reflection of the grating
+  actually drawn.
+- **Recommendations** in each stage's results (`recommend`: the options, the recommended one
+  and why), for the GUI. `cross_section.stop_after_map` stops after the map so a candidate
+  can be chosen, then the stage is run again.
+
 - **Design GUI** (`python -m tarang.gui`, extra `[gui]`: Streamlit). In the browser, on your
   own computer: pick or create a design (defaults or an example file), see the FlexCredits
   spent and left and the Tidy3D balance, change the two credit limits (checked like the
@@ -298,6 +327,14 @@ working until v0.2.0; old imports are updated with one command (see
   defaults, and therefore FDTD costs, are unchanged.
 
 ### Fixed
+
+- **Bend loss in tight bends** (ring stage, test waveguides): the solver's highest-index
+  TE-like solution in a tight bend is a whispering-gallery mode of the substrate, not the
+  waveguide mode, and was reported as the bend loss (about 9000 dB/cm at R = 15 µm for a
+  700 × 1000 nm guide). The bent TE00 is now picked by its overlap with the straight one,
+  in a domain that reaches past the radiation caustic; losses below 0.001 dB/cm are
+  reported as below the solver's resolution. Rings of the existing 1550 nm design
+  (R = 107.5 µm) were not affected.
 
 - Stopping a design run (q, Ctrl+C, the GUI's Stop) while the local mode solver maps the
   cross-section left the solver's worker processes running until every queued point was

@@ -316,6 +316,7 @@ def _form(ctx) -> None:
         dict(section="apodise", key="prefer", show=on,
              check=lambda v: "" if v in ("efficiency", "bandwidth") else "answer efficiency or bandwidth"),
         dict(section="apodise", key="ramp_check", show=on),
+        dict(section="apodise", key="reflection_check", show=on),
         dict(section="apodise", key="use_in_layout", show=on)])
 
 
@@ -580,9 +581,22 @@ def stage_apodise(ctx) -> dict:
                bandwidth_1db_nm=chosen["bw"], source_x_um=chosen["source_x_um"],
                scale=chosen["scale"], teeth=chosen["teeth"], uniform_efficiency_2d=eff_u,
                uniform_bandwidth_1db_nm=bw_u, prefer=prefer, better_than_uniform=better,
-               candidates=[{k: v for k, v in c.items() if k not in ("teeth", "spectrum")} for c in cands])
+               candidates=[{k: v for k, v in c.items() if k not in ("teeth", "spectrum")} for c in cands],
+               recommend=dict(choices=[{k: v for k, v in c.items() if k not in ("teeth", "spectrum")}
+                                       for c in cands],
+                              recommended=dict(recipe=chosen["recipe"], use_in_layout=better),
+                              why=("higher efficiency at the design wavelength" if prefer == "efficiency"
+                                   else "wider 1 dB band, at most 0.5 dB below the uniform grating")))
     from tarang.design.focus import _write_spectrum
     _write_spectrum(ctx.path("tables", "apodised_spectrum.csv"), *chosen["spectrum"])
+    if cfg.apodise.reflection_check:
+        rb = reflection(ctx, chosen, P0, ff0, H, depth, gfolder)
+        if rb:
+            res["power_budget"] = rb
+            t = rb["at_target"]
+            ui.say(f"  Back-reflection of the kept apodised grating into the waveguide at {wl} µm: "
+                   f"{t['reflection_db']:.1f} dB (uniform grating: see the checks stage); "
+                   f"{t['up'] * 100:.0f} % up, {t['down'] * 100:.0f} % into the substrate.")
     why = ("higher efficiency at the design wavelength" if prefer == "efficiency" else
            "a wider 1 dB band with at most 0.5 dB less at the design wavelength")
     ui.say(f"  Apodised ({chosen['recipe']}): {chosen['eff'] * 100:.1f} % at {wl} µm "
@@ -601,6 +615,30 @@ def stage_apodise(ctx) -> dict:
     visuals.safe(ctx, "apodised landscape", landscapes.draw_apodised,
                  ctx.path("figures", "9c_apodised_landscape.png"), vrows, (round(key[1], 2), key[0]), wl)
     return res
+
+
+def reflection(ctx, chosen: dict, P0, ff0, H, depth, folder) -> Optional[dict]:
+    """The kept apodised grating run backwards (TE0 from the waveguide, closed box of flux
+    planes, as the checks stage does for the uniform grating): where the light goes and the
+    reflection into the guided mode against wavelength. One small 2D run, priced first."""
+    from tarang.design.checks import _load, _power_budget, _reverse_sim, _run_batch
+    from tarang.design.stages import grating_device
+    dev = grating_device(ctx, P0, ff0, round(chosen["source_x_um"], 2), H=H, depth=depth,
+                         teeth=[tuple(t) for t in chosen["teeth"]])
+    rev = _reverse_sim(dev, ctx)
+    name = dev._readable_name() + "_reverse"
+    if not _run_batch(ctx, {"reverse": (rev, name)}, folder,
+                      "apodised grating: back-reflection (reverse run, 2D)"):
+        return None
+    data = _load(rev, folder, name)
+    if data is None:
+        return None
+    try:
+        b = _power_budget(data, rev, {"final": chosen["spectrum"]}, ctx.cfg.run.wavelength_um)
+    except Exception as err:                                      # noqa: BLE001
+        ctx.ui.say(f"  (reflection of the apodised grating not read: {type(err).__name__}: {err})")
+        return None
+    return b
 
 
 def choose(cands: list, eff_u: float, bw_u: float, prefer: str) -> tuple[dict, bool]:

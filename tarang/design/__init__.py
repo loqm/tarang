@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from tarang.design.config import DesignConfig
-from tarang.design.stages import STAGE_NAMES, STAGES, Context, settings_key
+from tarang.design.stages import STAGE_NAMES, STAGES, Context, applies, settings_key
 from tarang.design.ui import Prompter, Stop
 
 __all__ = ["DesignConfig", "run", "STAGE_NAMES"]
@@ -50,10 +50,21 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
         ui.say("  " + note)
     _show_assumptions(cfg, ui)
     stale = False
+    from tarang.design.stages import GOALS
+    ui.form(cfg, "What to design", [dict(
+        section="run", key="goal",
+        check=lambda v: "" if v in GOALS else "answer comb_ring or loss_test")])
+    if cfg.run.goal not in GOALS:
+        raise ValueError(f"run.goal must be one of {GOALS}, not {cfg.run.goal!r}")
     try:
         credit_limits(ctx)
         for i, (name, title, kind, func) in enumerate(STAGES, 1):
             if name not in only:
+                continue
+            if not applies(name, cfg):
+                if name in set(only) - {"report"} and len(only) < len(STAGE_NAMES):
+                    ui.say(f"\n[{i}/{len(STAGES)}] {title}: not part of a '{cfg.run.goal}' design "
+                           "(run.goal); skipped")
                 continue
             saved = ctx.state["stages"].get(name)
             key = settings_key(cfg, name)
@@ -69,6 +80,10 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
             ctx.state["stages"][name] = {"key": settings_key(cfg, name), "results": results}
             ctx.save_state()
             stale = True                         # later stages must follow this one
+            if (results or {}).get("awaiting_choice"):
+                ui.say("\nStopped for your choice (see the candidates above); run again to "
+                       "continue.")
+                break
     except Stop:
         ui.say("\nStopped. Settings so far are in design.toml; run the same command again to "
                "continue.")

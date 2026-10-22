@@ -21,40 +21,115 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
+
+
+COUPLER_SETTINGS = ("auto", "uniform", "apodised", "focusing", "all")
+SUFFIX = {"uniform": "gc", "apodised": "agc", "focusing": "fgc"}
+
+
+def coupler_plan(ctx) -> dict:
+    """Which couplers the mask gets and which one is the main coupler (loss budget, layout
+    figure, whole-device model), from layout.coupler and what the stages designed.
+    Returns kinds (list of (cell suffix, kind)), main, straight (the straight grating used
+    when the main coupler is straight) and notes."""
+    cfg = ctx.cfg
+    st = ctx.state["stages"]
+    gc = (st.get("grating") or {}).get("results") or {}
+    ap = (st.get("apodise") or {}).get("results") or {}
+    fc = (st.get("focus") or {}).get("results") or {}
+    have_u = bool(gc.get("period_um"))
+    have_a = bool(ap.get("verified")) and bool(ap.get("teeth"))
+    have_f = bool(fc.get("curves")) and bool(cfg.focus.run)
+    use_a = have_a and bool(ap.get("better_than_uniform")) and bool(cfg.apodise.use_in_layout)
+    use_f = have_f and bool(cfg.focus.use_in_layout)
+    setting = str(getattr(cfg.layout, "coupler", "auto") or "auto").lower()
+    notes = []
+    straight = "apodised" if use_a else "uniform"
+    kinds = [straight] + (["focusing"] if have_f else [])
+    main = "focusing" if use_f else straight
+    if setting == "uniform":
+        straight, kinds, main = "uniform", ["uniform"], "uniform"
+    elif setting == "apodised":
+        if have_a:
+            straight, kinds, main = "apodised", ["apodised"], "apodised"
+        else:
+            notes.append("layout.coupler = apodised, but no checked apodised grating exists "
+                         "(apodise.run): the uniform grating is drawn")
+            straight, kinds, main = "uniform", ["uniform"], "uniform"
+    elif setting == "focusing":
+        if have_f:
+            kinds, main = ["focusing"], "focusing"
+        else:
+            notes.append("layout.coupler = focusing, but no focusing grating was designed "
+                         "(focus.run): the straight grating is drawn")
+            kinds, main = [straight], straight
+    elif setting == "all":
+        kinds = ["uniform"] + (["apodised"] if have_a else []) + (["focusing"] if have_f else [])
+    elif setting != "auto":
+        notes.append(f"layout.coupler = {setting!r} is not one of {', '.join(COUPLER_SETTINGS)}; "
+                     "'auto' is used")
+    if not have_u:
+        kinds, main = [], None
+    # cell suffix: the straight grating is *_gc (uniform or apodised) unless both are drawn
+    pairs = [("agc" if (k == "apodised" and "uniform" in kinds) else SUFFIX[k] if k != "apodised"
+              else "gc", k) for k in kinds]
+    return dict(kinds=pairs, main=main, straight=straight, setting=setting, notes=notes)
+
 
 def device_parameters(ctx) -> dict:
     """All layout dimensions, from the earlier stages and the layout settings."""
     cfg = ctx.cfg
-    xs, ring = ctx.results("cross_section"), ctx.results("ring")
-    gap = ctx.state["stages"].get("gap", {}).get("results", {})
-    gc = ctx.state["stages"].get("grating", {}).get("results", {})
-    tp = ctx.state["stages"].get("taper", {}).get("results", {}) or {}
+    st = ctx.state["stages"]
+    xs = ctx.results("cross_section")
+    ring = (st.get("ring") or {}).get("results") or {}
+    gap = (st.get("gap") or {}).get("results") or {}
+    gc = (st.get("grating") or {}).get("results") or {}
+    tp = (st.get("taper") or {}).get("results") or {}
     use_tp = bool(tp) and not tp.get("skipped") and bool(cfg.taper.use_in_layout)
-    ap = ctx.state["stages"].get("apodise", {}).get("results", {}) or {}
-    use_ap = (bool(ap.get("verified")) and bool(ap.get("better_than_uniform"))
-              and bool(cfg.apodise.use_in_layout))
-    fc = ctx.state["stages"].get("focus", {}).get("results", {}) or {}
-    have_fc = bool(fc.get("curves")) and bool(cfg.focus.run)
-    use_fc = have_fc and bool(cfg.focus.use_in_layout)
+    ap = (st.get("apodise") or {}).get("results") or {}
+    fc = (st.get("focus") or {}).get("results") or {}
+    wg = (st.get("waveguides") or {}).get("results") or {}
+    plan = coupler_plan(ctx)
+    kinds = [k for _, k in plan["kinds"]]
+    use_ap = plan["straight"] == "apodised" and "apodised" in kinds
+    have_fc = "focusing" in kinds
+    use_fc = plan["main"] == "focusing"
     lay = cfg.layout
+    goal = str(getattr(cfg.run, "goal", "comb_ring"))
+    gaps = [g for g in (gap.get("critical_gap_um"), gap.get("over_coupled_gap_um")) if g]
+    variants = sorted({round(g + d, 4) for g in gaps for d in [0.0, *map(float, lay.gap_offsets_um)]
+                       if g + d > 0.05})
     return {
         "name": cfg.run.name,
+        "goal": goal,
         "wavelength_um": cfg.run.wavelength_um,
         "core_material": cfg.materials.core,
         "core_height_um": xs["height_um"],
         "waveguide_width_um": xs["width_um"],
-        "ring_radius_um": ring["radius_um"],
+        "ring_radius_um": ring.get("radius_um") if goal == "comb_ring" else None,
         "ring_width_um": xs["width_um"],
-        "gap_critical_um": _r(gap.get("critical_gap_um")),
-        "gap_over_coupled_um": _r(gap.get("over_coupled_gap_um")),
-        "over_coupling_ratio": gap.get("over_coupling"),
+        "gap_critical_um": _r(gap.get("critical_gap_um")) if goal == "comb_ring" else None,
+        "gap_over_coupled_um": _r(gap.get("over_coupled_gap_um")) if goal == "comb_ring" else None,
+        "over_coupling_ratio": gap.get("over_coupling") if goal == "comb_ring" else None,
+        "gap_variants_um": variants if goal == "comb_ring" else [],
+        "reference_waveguide": bool(lay.reference) or goal == "loss_test",
+        "couplers": [list(k) for k in plan["kinds"]],
+        "main_coupler": plan["main"],
+        "coupler_setting": plan["setting"],
+        "cutback_lengths_cm": [float(x) for x in wg.get("lengths_cm", [])] if goal == "loss_test" else [],
+        "spiral_bend_radius_um": wg.get("bend_radius_um") if goal == "loss_test" else None,
+        "spiral_pitch_um": wg.get("spiral_pitch_um") if goal == "loss_test" else None,
         "bus_length_um": lay.bus_length_um,
         "grating_period_um": gc.get("period_um"),
         "grating_fill_factor": gc.get("fill_factor"),
         "grating_tooth_length_um": _r(gc["period_um"] * gc["fill_factor"]) if gc.get("period_um") else None,
         "grating_teeth": len(ap["teeth"]) if use_ap else gc.get("n_teeth"),
+        "uniform_teeth": gc.get("n_teeth"),
         "grating_apodised": use_ap,
-        "grating_teeth_list": [list(t) for t in ap["teeth"]] if use_ap else None,
+        "grating_teeth_list": ([list(t) for t in ap["teeth"]] if "apodised" in kinds and ap.get("teeth")
+                               else None),
+        "apodised_fiber_position_um": ap.get("source_x_um") if "apodised" in kinds else None,
         "grating_width_um": (tp["grating_width_um"] if use_tp and tp.get("grating_width_um")
                              else gc.get("width_um")),
         "grating_etch": gc.get("etch"),
@@ -96,7 +171,13 @@ def export(ctx) -> dict:
         dict(section="layout", key="trench_width_um", show=lambda c: c.layout.tone == "trench"),
         *[dict(section="layout", key=k, cast=parse_list) for k in
           ("waveguide_layer", "ring_layer", "taper_layer", "grating_layer")],
-        dict(section="grating", key="taper_length_um")])
+        dict(section="grating", key="taper_length_um"),
+        dict(section="layout", key="coupler", check=lambda v: "" if str(v).lower() in COUPLER_SETTINGS
+             else "answer " + ", ".join(COUPLER_SETTINGS)),
+        dict(section="layout", key="reference",
+             show=lambda c: str(getattr(c.run, "goal", "comb_ring")) == "comb_ring"),
+        dict(section="layout", key="gap_offsets_um", cast=parse_list,
+             show=lambda c: str(getattr(c.run, "goal", "comb_ring")) == "comb_ring")])
     for key in ("bus_length_um", "tone", "trench_width_um", "waveguide_layer", "ring_layer",
                 "taper_layer", "grating_layer"):
         if key == "trench_width_um" and cfg.layout.tone != "trench":
@@ -104,6 +185,14 @@ def export(ctx) -> dict:
         ui.value(cfg, "layout", key)
     ui.value(cfg, "grating", "taper_length_um")
     p = device_parameters(ctx)
+    for note in coupler_plan(ctx)["notes"]:
+        ui.say("  Note: " + note)
+    ui.say("  Couplers on the mask: " + (", ".join(f"{k} (*_{s})" for s, k in p["couplers"]) or "none")
+           + (f"; main coupler: {p['main_coupler']}" if p.get("main_coupler") else "")
+           + f" (layout.coupler = {p['coupler_setting']!r}).")
+    if p.get("gap_variants_um") and len(p["gap_variants_um"]) > 2:
+        ui.say("  Ring variants at gaps " + ", ".join(f"{g * 1e3:.0f}" for g in p["gap_variants_um"])
+               + " nm (layout.gap_offsets_um).")
     if p.get("focus_available"):
         ui.say(f"  Focusing grating ({p['focus_teeth_kind']} teeth): first tooth "
                f"{p['focus_distance_um']:g} µm from a {p['focus_tip_width_um']:g} µm tip "
@@ -130,13 +219,19 @@ def export(ctx) -> dict:
     for f in files:
         ui.say(f"  {f}")
     fig = None
-    main = ("ring_waveguide_fgc.gds", "waveguide_fgc.gds") if p.get("grating_focusing") else \
-        ("ring_waveguide_gc.gds", "waveguide_gc.gds")
-    gc_file = next((f for f in files if Path(f).name in main), None)
-    if gc_file:
-        from tarang.design import visuals
-        fig = visuals.safe(ctx, "layout", visuals.layout_views, gc_file, p,
-                           ctx.path("figures", "6_layout.png"))
+    from tarang.design import visuals
+    suf = next((a for a, k in p.get("couplers") or [] if k == p.get("main_coupler")), "gc")
+    if p.get("goal") == "loss_test":
+        sp = next((f for f in files if Path(f).name == f"spiral_cutback_{suf}.gds"), None)
+        if sp:
+            fig = visuals.safe(ctx, "cutback layout", visuals.cutback_views, sp,
+                               out / f"waveguide_{suf}.gds", p, ctx.path("figures", "6_layout.png"))
+    else:
+        main = (f"ring_waveguide_{suf}.gds", f"waveguide_{suf}.gds")
+        gc_file = next((f for f in files if Path(f).name in main), None)
+        if gc_file:
+            fig = visuals.safe(ctx, "layout", visuals.layout_views, gc_file, p,
+                               ctx.path("figures", "6_layout.png"))
     if p.get("grating_period_um") and p.get("fiber_tilt"):
         ui.say(f"  Fibres: {p['fiber_angle_deg']}° from vertical, beam travelling "
                f"{p['fiber_tilt']} the waveguide at both couplers"
@@ -150,8 +245,10 @@ def export(ctx) -> dict:
 
 
 def _lle(ctx):
-    """LLE inputs (lle/); a failure here never stops the layout."""
+    """LLE inputs (lle/); a failure here never stops the layout. Rings only."""
     from tarang.design import lle
+    if str(getattr(ctx.cfg.run, "goal", "comb_ring")) != "comb_ring":
+        return None
     try:
         return lle.export(ctx)
     except Exception as err:                                      # noqa: BLE001
@@ -161,7 +258,8 @@ def _lle(ctx):
 
 def _write_parameters(p: dict, out: Path) -> list[Path]:
     flat = {k: v for k, v in p.items() if k not in ("layers", "grating_teeth_list",
-                                                     "focus_teeth_list")}
+                                                     "focus_teeth_list", "couplers")}
+    flat["couplers"] = " ".join(f"{a}:{b}" for a, b in p.get("couplers") or [])
     teeth = p.get("grating_teeth_list")
     flat.update({f"layer_{k}": v[0] for k, v in p["layers"].items()})
     flat.update({f"datatype_{k}": v[1] for k, v in p["layers"].items()})
@@ -173,6 +271,8 @@ def _write_parameters(p: dict, out: Path) -> list[Path]:
     for k, v in flat.items():
         if v is None:
             lines.append(f"p.{k} = [];")
+        elif isinstance(v, (list, tuple)):
+            lines.append(f"p.{k} = [" + " ".join(str(x) for x in v) + "];")
         elif isinstance(v, str):
             lines.append(f"p.{k} = '{v}';")
         else:
@@ -200,6 +300,8 @@ def _write_parameters(p: dict, out: Path) -> list[Path]:
 # ------------------------------------------------------------------------------- GDS
 def build_gds(p: dict, out: Path) -> list[Path]:
     import gdstk
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
 
     W, R, L = p["waveguide_width_um"], p["ring_radius_um"], p["bus_length_um"]
     lay = {k: {"layer": v[0], "datatype": v[1]} for k, v in p["layers"].items()}
@@ -232,20 +334,33 @@ def build_gds(p: dict, out: Path) -> list[Path]:
                 poly.mirror((0, 0), (0, 1))
             cell.add(poly)
 
-    def coupler(cell, side, focus=False):
-        """Taper and grating at the right (side = +1) or left (-1) end of the bus; the
-        focusing grating instead when ``focus``."""
+    def coupler(cell, side, kind="uniform", end=None):
+        """Taper and grating at the right (side = +1) or left (-1) end of the bus (or at the
+        waveguide end ``end`` = (x, y), the waveguide arriving along +x for side +1 and -x
+        for side -1). kind: 'uniform', 'apodised' or 'focusing'."""
         if not p.get("grating_period_um"):
             return
-        if focus:
-            return focusing(cell, side)
+        sub = gdstk.Cell("_tmp")
+        if kind == "focusing":
+            focusing(sub, +1)
+        else:
+            straight(sub, kind)
+        for poly in sub.polygons:
+            if side < 0:
+                poly.mirror((0, 0), (0, 1))
+            if end is not None:
+                poly.translate(end[0] - side * L / 2, end[1])
+            cell.add(poly)
+
+    def straight(cell, kind):
         Lt, Wg = p["taper_length_um"], p["grating_width_um"]
-        P, ff, n = p["grating_period_um"], p["grating_fill_factor"], int(p["grating_teeth"])
+        P, ff = p["grating_period_um"], p["grating_fill_factor"]
+        n = int(p.get("uniform_teeth") or p["grating_teeth"])
         x0 = L / 2
         taper = gdstk.Polygon([(x0, -W / 2), (x0 + Lt, -Wg / 2), (x0 + Lt, Wg / 2), (x0, W / 2)],
                               **lay["taper"])
         g0 = x0 + Lt
-        tl = p.get("grating_teeth_list")
+        tl = p.get("grating_teeth_list") if kind == "apodised" else None
         if tl:                             # apodised: explicit teeth from x = 0 at the grating start
             ends = [a + b for a, b in tl]
             L_g = tl[-1][0] + (tl[-1][0] - tl[-2][0] if len(tl) > 1 else tl[-1][1])
@@ -268,8 +383,6 @@ def build_gds(p: dict, out: Path) -> list[Path]:
             shapes += [gdstk.rectangle((g0 + i * P + ff * P, -Wg / 2), (g0 + (i + 1) * P, Wg / 2),
                                        **lay["grating"]) for i in range(n)]
         for poly in [taper, *shapes]:
-            if side < 0:
-                poly.mirror((0, 0), (0, 1))
             cell.add(poly)
 
     def finish(cell):
@@ -277,7 +390,7 @@ def build_gds(p: dict, out: Path) -> list[Path]:
             return cell
         t = p["trench_width_um"]
         out_cell = gdstk.Cell(cell.name)
-        allpolys = cell.polygons
+        allpolys = cell.get_polygons()
         grown = gdstk.offset(allpolys, t, join="miter", tolerance=tol)
         trench = gdstk.boolean(grown, allpolys, "not", precision=tol)
         layer = lay["waveguide"]
@@ -288,36 +401,54 @@ def build_gds(p: dict, out: Path) -> list[Path]:
 
     lib_all = gdstk.Library(unit=1e-6, precision=1e-9)
     files = []
-    gaps = [g for g in (p["gap_critical_um"], p["gap_over_coupled_um"]) if g]
-    variants = {"waveguide": [(None, False, False)]}
-    fgc = bool(p.get("focus_available") and p.get("focus_teeth_list"))
-    if gaps:                                   # the ring needs the gap stage's result
-        variants["ring_waveguide"] = [(g, False, False) for g in gaps]
-        variants["ring_waveguide_gc"] = [(g, True, False) for g in gaps]
-        if fgc:                                # the same with focusing gratings
-            variants["ring_waveguide_fgc"] = [(g, True, True) for g in gaps]
-    elif p.get("grating_period_um"):
-        variants["waveguide_gc"] = [(None, True, False)]
-        if fgc:
-            variants["waveguide_fgc"] = [(None, True, True)]
+    kinds = [tuple(k) for k in (p.get("couplers") or [])]
+    gaps = [g for g in (p.get("gap_variants_um") or [])] or \
+        [g for g in (p.get("gap_critical_um"), p.get("gap_over_coupled_um")) if g]
+    variants: dict = {"waveguide": [dict(label="waveguide")]}
+    if gaps and R:                                  # the ring needs the gap stage's result
+        variants["ring_waveguide"] = [dict(label=f"ring_waveguide_gap{g * 1e3:.0f}nm", gap=g)
+                                      for g in gaps]
+        for suf, kind in kinds:
+            variants[f"ring_waveguide_{suf}"] = [
+                dict(label=f"ring_waveguide_{suf}_gap{g * 1e3:.0f}nm", gap=g, kind=kind) for g in gaps]
+    if kinds and (p.get("reference_waveguide") or not (gaps and R)):
+        for suf, kind in kinds:
+            variants[f"waveguide_{suf}"] = [dict(label=f"waveguide_{suf}", kind=kind)]
+    lengths = [x for x in (p.get("cutback_lengths_cm") or []) if x > 0]
+    if lengths and kinds and p.get("spiral_bend_radius_um"):
+        for suf, kind in kinds:
+            variants[f"spiral_cutback_{suf}"] = [
+                dict(label=f"spiral_{x:g}cm_{suf}".replace(".", "p"), kind=kind, spiral_cm=x)
+                for x in lengths]
     top = gdstk.Cell(f"{p['name']}_TOP")
     y_off = 0.0
+    spiral_info = []
     for fname, items in variants.items():
         lib = gdstk.Library(unit=1e-6, precision=1e-9)
-        for gap, with_gc, focus in items:
-            label = fname + (f"_gap{gap * 1e3:.0f}nm" if gap else "")
-            cell = gdstk.Cell(label)
-            bus(cell)
-            if gap and fname != "waveguide":
-                ring(cell, gap)
-            if with_gc:
-                coupler(cell, +1, focus)
-                coupler(cell, -1, focus)
+        for it in items:
+            cell = gdstk.Cell(it["label"])
+            kind = it.get("kind")
+            if it.get("spiral_cm"):
+                r0 = 2 * float(p["spiral_bend_radius_um"])
+                pts, info = spiral_path(it["spiral_cm"] * 1e4, r0, float(p["spiral_pitch_um"]))
+                cell.add(gdstk.FlexPath(pts, W, tolerance=tol, **lay["waveguide"]))
+                info.update(label=it["label"], kind=kind)
+                spiral_info.append(info)
+                coupler(cell, +1, kind, end=tuple(pts[-1]))
+                coupler(cell, -1, kind, end=tuple(pts[0]))
+            else:
+                bus(cell)
+                if it.get("gap"):
+                    ring(cell, it["gap"])
+                if kind:
+                    coupler(cell, +1, kind)
+                    coupler(cell, -1, kind)
             cell = finish(cell)
             lib.add(cell)
             lib_all.add(cell)
-            top.add(gdstk.Reference(cell, (0, y_off)))
-            y_off -= (2 * R + 4 * W + 50.0) if gap else 50.0
+            (x0b, y0b), (x1b, y1b) = cell.bounding_box() or ((0, 0), (0, 0))
+            top.add(gdstk.Reference(cell, (0, y_off - y1b)))
+            y_off -= (y1b - y0b) + 50.0
         path = out / f"{fname}.gds"
         lib.write_gds(path)
         files.append(path)
@@ -325,4 +456,78 @@ def build_gds(p: dict, out: Path) -> list[Path]:
     path = out / "design.gds"
     lib_all.write_gds(path)
     files.append(path)
+    if spiral_info:
+        with open(out / "spirals.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["label", "kind", "length_um", "turns", "r0", "r_out",
+                                              "min_bend_radius_um"], lineterminator="\n",
+                               extrasaction="ignore")
+            w.writeheader()
+            w.writerows(spiral_info)
+        files.append(out / "spirals.csv")
     return files
+
+
+def _arc(cx, cy, r, a0, a1, n=None):
+    n = n or max(16, int(abs(a1 - a0) * r / 0.5))
+    a = np.linspace(a0, a1, n)
+    return np.stack([cx + r * np.cos(a), cy + r * np.sin(a)], axis=1)
+
+
+def _arm(r0, a, theta, n):
+    t = np.linspace(0.0, theta, n)
+    r = r0 + a * t
+    return np.stack([r * np.cos(t), r * np.sin(t)], axis=1)
+
+
+def _length(pts) -> float:
+    return float(np.sum(np.hypot(*np.diff(pts, axis=0).T)))
+
+
+def _spiral(r0, pitch, turns, lead):
+    """Points of the double spiral: arm B inwards, centre S-bend (two half circles of radius
+    r0 / 2), arm A outwards; each arm then turns (radius r0 / 2) onto a straight lead along
+    x: the waveguide enters at the left lead (heading +x) and leaves at the right one."""
+    a = 2 * pitch / (2 * math.pi)                 # each arm grows by 2 pitches per turn
+    theta = 2 * math.pi * turns
+    n = max(64, int(theta * (r0 + a * theta) / 1.0))
+    A = _arm(r0, a, theta, n)                     # outwards, counter-clockwise
+    rb = r0 / 2
+    s_bend = np.concatenate([_arc(-r0 / 2, 0, rb, math.pi, 0.0),        # over the top
+                             _arc(r0 / 2, 0, rb, math.pi, 2 * math.pi)])  # under the bottom
+    rA = r0 + a * theta
+    exit_a = _arc(rA + rb, 0.0, rb, math.pi, math.pi / 2)    # heading +y -> +x
+    xe = rA + rb
+    lead_a = np.array([[xe, rb], [xe + lead, rb]])
+    B = -A[::-1]                                  # arm B, run inwards
+    exit_b = -exit_a[::-1]
+    lead_b = -lead_a[::-1]
+    pts = np.concatenate([lead_b, exit_b, B, s_bend, A, exit_a, lead_a])
+    keep = np.concatenate([[True], np.hypot(*np.diff(pts, axis=0).T) > 1e-6])
+    return pts[keep], dict(r0=r0, r_out=rA, turns=turns)
+
+
+def spiral_path(length_um: float, r0_min: float, pitch: float, lead: float = 20.0):
+    """A double spiral of the given total length (from the start of one lead to the end of
+    the other), smallest bend radius r0_min / 2: the whole number of turns that fits,
+    then the centre radius r0 raised until the length is reached. Returns (points, info)."""
+    def total(r0, turns):
+        return _length(_spiral(r0, pitch, turns, lead)[0])
+    turns = 0
+    while total(r0_min, turns + 1) <= length_um:
+        turns += 1
+    lo, hi = r0_min, r0_min
+    if total(lo, turns) > length_um:              # shorter than the smallest spiral: as is
+        pts, info = _spiral(lo, pitch, turns, lead)
+    else:
+        while total(hi, turns) < length_um:
+            hi *= 1.5
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            if total(mid, turns) < length_um:
+                lo = mid
+            else:
+                hi = mid
+        pts, info = _spiral(hi, pitch, turns, lead)
+    info.update(length_um=round(_length(pts), 2), min_bend_radius_um=round(info["r0"] / 2, 3),
+                r0=round(info["r0"], 3), r_out=round(info["r_out"], 3))
+    return pts, info

@@ -23,6 +23,9 @@ def _f(default=None, help: str = "", unit: str = ""):
 @dataclass
 class Run:
     name: str = _f("design", "Name of this design (used for file names)")
+    goal: str = _f("comb_ring", "What to design: 'comb_ring' (ring resonator for frequency combs, "
+                                "with its bus and couplers) or 'loss_test' (test waveguides for "
+                                "propagation loss: cutback spirals with couplers)")
     wavelength_um: float = _f(1.55, "Design wavelength (the pump)", "um")
     band_um: Optional[float] = _f(None, "Material-fit band half-width (default: 0.13 x "
                                         "wavelength)", "um")
@@ -64,6 +67,8 @@ class CrossSection:
     decision_steps: int = _f(70, "Mesh steps per wavelength for the chosen geometry (>= 70)")
     tolerance_width_um: float = _f(0.05, "Fabrication tolerance of the width (+/-)", "um")
     tolerance_height_um: float = _f(0.02, "Fabrication tolerance of the film thickness (+/-)", "um")
+    stop_after_map: bool = _f(False, "Stop after the map so a candidate can be chosen (the GUI "
+                                     "uses this), then run the stage again")
     height_um: Optional[float] = _f(None, "Chosen core height (picked from the map)", "um")
     width_um: Optional[float] = _f(None, "Chosen core width (picked from the map)", "um")
 
@@ -184,6 +189,9 @@ class Apodise:
                                    "band, at most 0.5 dB lower at the design wavelength)")
     ramp_check: bool = _f(False, "Also try the linear fill-factor ramp of Marchetti et al. (Sci. "
                                  "Rep. 7, 16670, 2017) as a second recipe (about 15 small 2D runs)")
+    reflection_check: bool = _f(True, "Also simulate how much light the kept apodised grating "
+                                      "reflects back into the waveguide (one small 2D run; the "
+                                      "whole-device model uses it for the ripple)")
     use_in_layout: bool = _f(True, "Use the apodised grating in the layout when it beats the "
                                    "uniform one")
 
@@ -222,6 +230,28 @@ class Layout:
     ring_layer: list = _f([1, 0], "GDS [layer, datatype] of the ring")
     taper_layer: list = _f([1, 0], "GDS [layer, datatype] of the grating tapers")
     grating_layer: list = _f([1, 0], "GDS [layer, datatype] of the grating teeth")
+    coupler: str = _f("auto", "Couplers drawn on the mask: 'auto' (the best one designed, with "
+                              "the focusing grating beside it when designed), 'uniform', "
+                              "'apodised', 'focusing', or 'all' (every kind designed, side by side)")
+    reference: bool = _f(True, "Also draw a straight waveguide with the same couplers (no ring): "
+                               "measuring it gives the coupler loss to divide out")
+    gap_offsets_um: list = _f([], "Extra ring variants with the gap changed by these amounts "
+                                  "(e.g. -0.05, 0.05: fabrication may shift the gap)", "um")
+
+
+@dataclass
+class Waveguides:
+    lengths_cm: list = _f([0, 1, 2, 4], "Cutback lengths (0 = the straight reference; longer "
+                                        "ones are drawn as spirals)", "cm")
+    coupler_scatter_db: float = _f(0.3, "Scatter of the measured coupling from one structure to "
+                                        "the next (fibre placement, cleanliness)", "dB")
+    target_precision: float = _f(0.1, "Relative precision wanted on the measured loss (0.1 = 10 %)")
+    bend_radius_um: Optional[float] = _f(None, "Smallest bend radius of the spirals (empty: the "
+                                               "smallest whose bend loss is below a tenth of the "
+                                               "expected propagation loss)", "um")
+    bend_radii_um: list = _f([], "Bend radii to check (empty: 5-100 um, scaled with the "
+                                 "wavelength)", "um")
+    spiral_gap_um: float = _f(4.0, "Gap between neighbouring turns of a spiral", "um")
 
 
 @dataclass
@@ -243,7 +273,7 @@ LEGACY = {"gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
 
 SECTIONS = {"run": Run, "materials": Materials, "stack": Stack, "cross_section": CrossSection,
             "ring": Ring, "gap": Gap, "grating": Grating, "checks": Checks, "taper": Taper,
-            "apodise": Apodise, "focus": Focus,
+            "apodise": Apodise, "focus": Focus, "waveguides": Waveguides,
             "layout": Layout, "device": Device, "assumptions": Assumptions}
 
 
@@ -260,6 +290,7 @@ class DesignConfig:
     taper: Taper = field(default_factory=Taper)
     apodise: Apodise = field(default_factory=Apodise)
     focus: Focus = field(default_factory=Focus)
+    waveguides: Waveguides = field(default_factory=Waveguides)
     layout: Layout = field(default_factory=Layout)
     device: Device = field(default_factory=Device)
     assumptions: Assumptions = field(default_factory=Assumptions)

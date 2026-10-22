@@ -2,12 +2,12 @@
 
 ```bash
 python -m pytest                     # whole suite, ~15-20 min, no FlexCredits
-python -m pytest -m "not slow"       # quick check, ~2-3 min (skips 19 mode-solve / fitting tests)
+python -m pytest -m "not slow"       # quick check, ~2-3 min (skips 20 mode-solve / fitting tests)
 python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `364 passed, 2 skipped` (quick check: `345 passed, 2 skipped, 19 deselected`). The two skips are the real-cloud
+Expected on Windows: `389 passed, 2 skipped` (quick check: `369 passed, 2 skipped, 20 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -421,7 +421,7 @@ cloud for the cloud stages.
 | `test_batch_links_name_the_case_they_belong_to` | Two runs with the same name are told apart by their case in the link list |
 | `test_runs_without_links_are_explained_and_get_pictures` | A run without a task record is listed as "not in the task list of this account", with the reason, and gets its picture |
 | `test_apodise_stage_reads_periods_right_in_either_time_convention` | The sign convention of the phase slope is fixed by the final uniform design, so the periods are right either way |
-| `test_new_stages_run_through_the_design_session` | `--only taper,apodise` runs both stages as stages 7 and 8 of 12; the apodised grating is off by default (no cloud run, uniform grating used); turned on later it runs without repeating the taper |
+| `test_new_stages_run_through_the_design_session` | `--only taper,apodise` runs both stages as stages 8 and 9 of 13; the apodised grating is off by default (no cloud run, uniform grating used); turned on later it runs without repeating the taper |
 | `test_every_ring_builder_can_have_a_flat_box_and_keeps_its_old_geometry[...]` (3) | Full, half and partial ring: 0.1 µm gives the old simulation bit for bit, 0 a flat BOX |
 | `test_graded_cells_change_the_width_by_the_same_ratio` | The EME cell boundaries keep w_(i+1)/w_i constant; the cells are short at the narrow end |
 | `test_2d_taper_model_is_converged_and_falls_with_length` (slow) | The 2D taper model with 600 cells agrees with 1200 cells to 0.01 dB, its loss falls with length, and a 20-cell staircase is visibly wrong (the cause of the jumping 3D result of Phase 12B v1) |
@@ -448,7 +448,7 @@ cloud for the cloud stages.
 | `test_layout_and_budget_use_the_focusing_grating` | The `*_fgc` cells have bus + 2 × (tip taper, slab, 30 curved teeth) and the `*_gc` cells keep the straight grating, both in `design.gds`; `parameters.m` has the focusing values; the budget replaces the lateral overlap and long taper by the focusing rows; the report section, check values and benchmark-pack sections 4b/4d exist; with `focus.use_in_layout = false` the straight grating is the main coupler again (the focusing cells stay) |
 | `test_uniform_landscape_takes_the_best_fibre_position_per_design` | 5g groups 2D runs by (period, fill factor) with the best fibre position, leaves 3D runs out, needs 3 points; 9c draws from the apodised check |
 | `test_old_runs_get_the_uniform_landscape_from_their_sweep_table` | A run made before Phase 12C gets 5g drawn from `grating_sweep.csv` at its next report (free) |
-| `test_focusing_stage_runs_through_the_design_session` | `--only focus` runs it as stage 9 of 12 |
+| `test_focusing_stage_runs_through_the_design_session` | `--only focus` runs it as stage 10 of 13 |
 
 ## `test_phase13.py`: credit limits, whole-device circuit model, GUI (24 tests, Phase 13)
 
@@ -478,3 +478,27 @@ cloud for the cloud stages.
 | `test_gui_app_renders_a_design` | The Streamlit app runs headless (AppTest) on a saved design without errors: eight tabs, the run and limit buttons |
 | `test_gui_launcher_explains_a_missing_streamlit` | Without Streamlit, `python -m tarang.gui` says how to install it |
 | `test_apodise_stage_tries_the_ramp_and_keeps_the_preferred_design` | With `apodise.ramp_check` 15 ramp runs (5 rates × 3 positions), table and figure 9d; `prefer = "efficiency"` keeps the more efficient measured recipe, `"bandwidth"` the wider-band ramp; the kept spectrum is saved |
+
+## `test_phase14a.py`: design goal, test waveguides, mask contents (25 tests, Phase 14A)
+
+| Test | Checks |
+|---|---|
+| `test_each_goal_runs_its_own_stages_and_old_keys_stay` | Ring and gap belong to `comb_ring`, the test-waveguide stage to `loss_test`; settings of the other goal leave every saved stage key unchanged |
+| `test_unknown_goal_is_refused` | A goal other than `comb_ring` / `loss_test` stops the run |
+| `test_checks_ignore_results_of_the_other_goal` | A ring or gap result left in the folder is ignored by a `loss_test` design; the loss budget works without a ring |
+| `test_run_stops_when_a_choice_is_awaited` | A stage waiting for a choice (cross-section candidates) ends the run; later stages do not start |
+| `test_single_mode_ranking_for_test_waveguides` | Test waveguides need one guided TE mode, not anomalous dispersion |
+| `test_cutback_precision_is_the_least_squares_slope_error` | σ_α = σ / √Σ(L − L̄)²; recommended lengths scaled up (never down) to the target precision; smallest radius below a tenth of the loss, robust to a glitch at one radius |
+| `test_waveguides_stage_recommends_radius_and_lengths` | The stage's radius, lengths, spiral sizes, figure 3w, table and recommendation |
+| `test_spiral_has_the_length_radius_and_no_crossings[...]` (3) | Each spiral has exactly the requested length, no bend tighter than the radius anywhere (three-point curvature), leads along x at both ends, and no two parts of the path closer than the pitch |
+| `test_coupler_setting_decides_what_is_drawn[...]` (5) | `layout.coupler` = auto, uniform, apodised, focusing, all: the cells drawn and the main coupler |
+| `test_missing_coupler_kinds_fall_back_with_a_note` | A coupler that was not designed falls back to the straight grating, with a note; an unknown setting means auto |
+| `test_ring_mask_has_reference_waveguides_and_gap_variants` | Gap variants around both gaps; ring and reference cells for every coupler kind; apodised cells have 18 teeth, uniform 30; the top cell places every variant; `layout.reference = false` leaves the reference out |
+| `test_loss_test_mask_has_spirals_with_couplers` | A test-waveguide mask: reference and spirals with couplers, no ring cells, exact spiral lengths in `spirals.csv`, layout figure |
+| `test_parameters_files_hold_the_new_lists` | The coupler list, the cutback lengths and the main coupler in `parameters.m` / `.json` |
+| `test_circuit_uses_the_apodised_gratings_own_reflection` | The whole-device ripple uses the apodised grating's reflection when its teeth are used, else the uniform grating's (with a note) |
+| `test_reverse_run_of_explicit_teeth_covers_the_whole_grating` | The reverse run's "past" plane lies beyond the last explicit tooth |
+| `test_apodise_stage_measures_the_kept_gratings_reflection` | The kept apodised grating is run backwards (mode source, its own teeth); off with `apodise.reflection_check = false` |
+| `test_expected_cutback_follows_the_loss_and_the_couplers` | Expected transmission = 2 × coupler − α L for every structure, slope −α, ripple from the couplers' reflection, shorter ripple period for longer structures |
+| `test_report_has_the_test_waveguide_sections` | Report sections 3w and 7e for test waveguides |
+| `test_bend_loss_follows_the_waveguide_mode_not_a_substrate_mode` (slow) | Real local solves of the 700 × 1000 nm guide: bend loss tens of dB/cm at 5 µm, falling more than tenfold by 10 µm, below the solver's floor by 20 µm (the bent TE00 tracked by overlap, not the substrate whispering-gallery modes) |
