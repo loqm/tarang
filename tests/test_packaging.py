@@ -139,9 +139,9 @@ def test_core_dependencies_are_required_not_optional(module):
 
 
 def test_optional_imports_are_guarded():
-    """getdist, corner, pymultinest and gdstk are extras: TARANG must import without
+    """getdist, corner, pymultinest, gdstk and streamlit are extras: TARANG must import without
     them, so they may only be imported inside functions or try blocks, never at module top."""
-    optional = {"getdist", "corner", "pymultinest", "gdstk"}
+    optional = {"getdist", "corner", "pymultinest", "gdstk", "streamlit"}
     offenders = []
     for pkg in _top_level_packages():
         for path in (ROOT / pkg).rglob("*.py"):

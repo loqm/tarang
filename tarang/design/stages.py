@@ -125,11 +125,24 @@ class Context:
                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8",
                                 errors="replace", env=env)
         tail: list[str] = []
-        for line in proc.stdout:                                  # type: ignore[union-attr]
-            line = line.rstrip()
-            if line.strip() and not _noise(line):
-                self.ui.say("    " + line)
-            tail = (tail + [line])[-30:]
+        try:
+            for line in proc.stdout:                              # type: ignore[union-attr]
+                line = line.rstrip()
+                if line.strip() and not _noise(line):
+                    self.ui.say("    " + line)
+                tail = (tail + [line])[-30:]
+        except BaseException:
+            # stopped (Ctrl+C, Ctrl+Break, q): the tool got the same signal; give it a moment
+            # to save what it finished, then make sure it does not run on by itself
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            raise
         if proc.wait():
             raise RuntimeError(f"{name} failed:\n" + "\n".join(tail))
 
@@ -333,10 +346,6 @@ def _gaps_default(cfg) -> list:
     wl = cfg.run.wavelength_um
     st = _step(0.065 * wl)
     return _grid(physics.round_to(0.19 * wl, st), physics.round_to(0.52 * wl, st), st)
-
-
-def _budget_items() -> list:
-    return [dict(section="run", key="max_cost_per_run"), dict(section="run", key="max_total_cost")]
 
 
 def _material_ok(key: str) -> str:
@@ -784,8 +793,7 @@ def stage_gap(ctx: Context) -> dict:
         dict(section="gap", key="band_points",
              check=lambda v: "" if int(v) >= 1 and int(v) % 2 == 1 else "an odd number >= 1"),
         dict(section="gap", key="ring_inner_box_recess_um",
-             check=lambda v: "" if 0 <= float(v) < 1 else "0 <= recess < 1 um"),
-        *_budget_items()])
+             check=lambda v: "" if 0 <= float(v) < 1 else "0 <= recess < 1 um")])
     gaps = ui.value(cfg, "gap", "gaps_um", default=_gaps_default(cfg), cast=parse_list)
     span = ui.value(cfg, "gap", "span_angle_deg")
     K = ui.value(cfg, "gap", "over_coupling")
@@ -970,8 +978,7 @@ def stage_grating(ctx: Context) -> dict:
         dict(section="grating", key="centre_peak", show=lambda c: bool(c.grating.retune)),
         dict(section="grating", key="source_x_um", cast=parse_list,
              default=lambda c: [round(c.grating.mfd_um * f, 2) for f in (0.25, 0.375, 0.5, 0.75, 1.0)]),
-        dict(section="grating", key="check_3d"),
-        *_budget_items()])
+        dict(section="grating", key="check_3d")])
     etch = ui.value(cfg, "grating", "etch", check=lambda v: "" if v in ("full", "partial")
                     else "answer full or partial")
     depth = H if etch == "full" else ui.value(cfg, "grating", "etch_depth_um", default=round(H / 2, 3),
@@ -1329,6 +1336,8 @@ STAGES: list[tuple[str, str, str, Callable[[Context], dict]]] = [
     ("focus", "Focusing grating (curved teeth, short focusing slab)", "cloud",
      lambda ctx: __import__("tarang.design.focus", fromlist=["stage_focus"]).stage_focus(ctx)),
     ("layout", "Layout (GDS) and parameter export", "local", stage_layout),
+    ("device", "Whole device: fibre-to-fibre spectrum, every resonance (circuit model)", "local",
+     lambda ctx: __import__("tarang.design.circuit", fromlist=["stage_device"]).stage_device(ctx)),
     ("report", "Report and tables", "local", stage_report),
 ]
 STAGE_NAMES = [s[0] for s in STAGES]
@@ -1345,6 +1354,7 @@ DEPENDS = {
     "apodise": ("apodise",),
     "focus": ("focus",),
     "layout": ("layout",),
+    "device": ("device",),
     "report": (),
 }
 

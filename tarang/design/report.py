@@ -333,6 +333,7 @@ def write(ctx) -> dict:
     L += _taper_section(ctx, st.get("taper", {}))
     L += _apodise_section(ctx, st.get("apodise", {}))
     L += _focus_section(ctx, st.get("focus", {}))
+    L += _device_section(ctx, st.get("device", {}))
     L += _lle_section(ctx, lay.get("lle"))
     L += _runs_section(ctx)
 
@@ -637,11 +638,28 @@ def _apodise_section(ctx, ap: dict) -> list[str]:
               + cen, ""]
         L += _fig(ctx, ctx.out / "figures" / "9b_apodised_spectrum.png", "apodised spectrum")
         L += _fig(ctx, ctx.out / "figures" / "9c_apodised_landscape.png", "apodised landscape")
+        rp = ap.get("ramp")
+        if rp:
+            b = rp["best"]
+            L += [f"**Second recipe, linear fill-factor ramp** (Marchetti et al., Sci. Rep. 7, 16670 "
+                  f"(2017)): F(x) = F0 − R x from F0 = {rp['f0']:g} (weakest usable tooth) down to "
+                  f"{rp['f_min']:g}, each tooth phase-matched, ramp rates "
+                  f"{', '.join(f'{r:g}' for r in rp['rates'])} per µm at three fibre positions (2D FDTD). "
+                  f"Best: R = {b['R_per_um']:g}/µm, fibre at {b['source_x_um']} µm: "
+                  f"{b['efficiency_at_target'] * 100:.1f} %, 1 dB band {b['bandwidth_1db_nm']:.0f} nm "
+                  "(`tables/apodised_ramp.csv`).", ""]
+            L += _fig(ctx, ctx.out / "figures" / "9d_apodised_ramp_landscape.png", "ramp landscape")
+        pref = ap.get("prefer", "efficiency")
+        crit = ("the higher efficiency at the design wavelength" if pref == "efficiency" else
+                "the wider 1 dB band, at most 0.5 dB below the uniform grating at the design wavelength")
+        if ap.get("recipe"):
+            L += [f"Kept: {ap['recipe']} (`apodise.prefer = \"{pref}\"`: {crit}); its spectrum is "
+                  "`tables/apodised_spectrum.csv`.", ""]
         if ap.get("better_than_uniform") and ctx.cfg.apodise.use_in_layout:
             L += ["The layout uses the apodised grating (`layout/grating_teeth.csv`).", ""]
         else:
-            L += ["The apodised grating does not beat the uniform one here; the layout keeps the "
-                  "uniform grating.", ""]
+            L += ["The apodised grating does not beat the uniform one by this criterion; the layout "
+                  "keeps the uniform grating.", ""]
     elif ap.get("verified") is False:
         L += ["The available fill factors cannot scatter weakly enough to shape the beam, so the "
               "apodised design was not run in FDTD. The narrowest trench the etch clears "
@@ -686,6 +704,38 @@ def _focus_section(ctx, fc: dict) -> list[str]:
     return L
 
 
+def _device_section(ctx, dv: dict) -> list[str]:
+    """Section 7e: the whole device from the circuit model."""
+    if not dv or dv.get("skipped") or not dv.get("resonances"):
+        return []
+    L = ["## 7e. Whole device (circuit model)", "",
+         "The device is too long and its resonances too narrow for one simulation, so each part's "
+         "scattering matrix comes from its own stage and the parts are chained (Redheffer star "
+         "product): fibre → coupler → bus with the ring (all-pass, t = (r − a e^{iφ})/(1 − r a e^{iφ}), "
+         "resonances at the ring stage's mode frequencies, so D_int is included) → coupler → fibre. "
+         "The gratings' back-reflections make the Fabry-Perot ripple. Coupler: "
+         f"{dv.get('coupler')}; {dv['bus_length_total_um']:.0f} µm of waveguide between the "
+         f"couplers; {dv['resonances']} resonances from {dv['band_nm'][0]:.0f} to {dv['band_nm'][1]:.0f} nm.", "",
+         f"Off resonance at {ctx.cfg.run.wavelength_um} µm: {dv['off_resonance_db_at_pump']:.2f} dB fibre to fibre"
+         + (f"; ripple {dv['ripple_db_at_pump']:.2f} dB peak to peak." if dv.get("ripple_db_at_pump") is not None
+            else " (no reflection data: no ripple)."), "",
+         "| regime | gap (µm) | Q_L at the pump | Q_c | K | dip (dB) | linewidth (MHz) | Q_L over the band |",
+         "|---|---|---|---|---|---|---|---|"]
+    for k, v in (dv.get("regimes") or {}).items():
+        L.append(f"| {k} | {v['gap_um']:.3f} | {v['Q_L_pump']:.3g} | {v['Q_c_pump']:.3g} | {v['K_pump']:.2f} | "
+                 f"{v['dip_db_pump']:.1f} | {v['linewidth_MHz_pump']:.0f} | {v['Q_L_range'][0]:.3g}-"
+                 f"{v['Q_L_range'][1]:.3g} |")
+    L += [""]
+    for n in dv.get("notes") or []:
+        L += [f"Note: {n}.", ""]
+    L += _fig(ctx, ctx.out / "figures" / "11a_device_spectrum.png", "device spectrum")
+    L += _fig(ctx, ctx.out / "figures" / "11b_device_resonances.png", "device resonances")
+    L += ["Every resonance: `tables/device_resonances.csv`; close-up spectrum: "
+          "`tables/device_spectrum.csv`; off-resonance envelope with the ripple: "
+          "`tables/device_envelope.csv`.", ""]
+    return L
+
+
 def _check_values_12(st: dict) -> list[dict]:
     """Taper, apodised and focusing gratings in check_values.csv / the benchmark pack."""
     rows = []
@@ -714,6 +764,14 @@ def _check_values_12(st: dict) -> list[dict]:
             "eta_2D x focusing x tip taper")
         if fc.get("efficiency_3d") is not None:
             add("focusing grating: 3D FDTD", round(fc["efficiency_3d"], 4), "", "3D FDTD")
+    dv = st.get("device") or {}
+    if dv.get("resonances"):
+        add("fibre-to-fibre transmission off resonance", round(dv["off_resonance_db_at_pump"], 3), "dB",
+            "circuit model: coupler spectra x propagation (tarang.design.circuit)")
+        for k, v in (dv.get("regimes") or {}).items():
+            add(f"loaded Q at the pump ({k})", float(f"{v['Q_L_pump']:.4g}"), "",
+                "all-pass ring: kappa^2 from the gap/checks FDTD, a from the ring loss")
+            add(f"resonance dip at the pump ({k})", round(v["dip_db_pump"], 2), "dB", "same")
     return rows
 
 

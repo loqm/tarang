@@ -19,17 +19,44 @@ publish.
 
 | Section | What it gives you |
 |---|---|
+| [First design](#first-design-gui-or-one-command) | a ring with grating couplers, from the browser or one command |
 | [Where to start](#where-to-start) | the path from installation to your first cloud run |
 | [Pipeline](#pipeline) and [Capabilities](#capabilities) | what each stage computes, and which stages cost credits |
 | [Installation](#installation) | one block of commands |
 | [Quick start](#quick-start-local-no-credits) | five steps, all local and free, with the figures they produce |
-| [Guided design](#guided-design-one-command) | one command from materials to GDS, at any wavelength |
+| [Guided design](#guided-design-one-command) | one command from materials to GDS, at any wavelength; every stage and command |
+| [Design in the browser](#design-in-the-browser-gui) | the GUI: buttons, results, files, credits |
 | [Cloud runs and cost control](#cloud-runs-and-cost-control) | caching, cost limits, resuming |
 | [Materials](#materials), [Logging](#logging), [Repository layout](#repository-layout) | reference, including the two `tarang.migrate` commands for old scripts |
 | [Known limitations](#known-limitations), [Troubleshooting](#troubleshooting) | what to watch for, and fixes for common errors |
 | [Contributing, citing, licence](#contributing-citing-licence) | how to contribute, what to cite, MIT licence; changes per release in [CHANGELOG.md](CHANGELOG.md) |
 
 ---
+
+## First design (GUI or one command)
+
+After [installing](#installation) (and `tidy3d configure` for cloud runs):
+
+```bash
+python -m tarang.gui                      # opens the design GUI in your browser
+```
+
+In the GUI: **New design** (left) → start from `design_sin1550.toml` or `design_sin780.toml`
+→ check the **Settings** tab → **Estimate cost** (prices every cloud step, runs nothing
+that costs) → **Run**. Results appear in the tabs as stages finish. The same from a
+terminal:
+
+```bash
+mkdir design_runs/my_ring
+cp examples/design_sin1550.toml design_runs/my_ring/design.toml
+python -m tarang.design --config design_runs/my_ring/design.toml --price-only
+python -m tarang.design --config design_runs/my_ring/design.toml
+```
+
+(Windows PowerShell: `mkdir design_runs\my_ring`, `copy examples\design_sin1550.toml
+design_runs\my_ring\design.toml`, and backslashes in the paths.) The terminal version asks
+each stage's settings as it comes (Enter accepts them). A run
+can be stopped at any point and continued with the same command; nothing is paid twice.
 
 ## Where to start
 
@@ -62,14 +89,28 @@ Settle a geometry in the blue stages before running orange ones.
 | Grating coupler | 2D/3D coupling efficiency and spectrum, fibre towards or away from the waveguide; nested-sampling design search | `tarang.grating_coupler.GratingCoupler`, `tarang.grating_coupler.nested_sampler` |
 | Edge coupler | Inverse-taper efficiency; tip × taper sweep | `tarang.edge_coupler.EdgeCoupler`, `tarang.edge_coupler.parametric_optimization_sweep` |
 | Plots | Geometry views, corner plots | `tarang.utilities.sim_plotter`, `tarang.utilities.plot_corner` |
-| Guided design | All stages in one session: cross-section, ring, gap, grating coupler, GDS, report | `python -m tarang.design` |
+| Guided design | All stages in one session: cross-section, ring, gap, grating coupler (uniform, apodised, focusing), taper, checks, GDS, whole-device spectrum, report | `python -m tarang.design` |
+| Whole device | Fibre-to-fibre spectrum of grating + taper + bus + ring + taper + grating, every resonance (Q, dip, *D*<sub>int</sub>), Fabry-Perot ripple (S-matrix circuit model, free) | `tarang.design.circuit` |
+| GUI | Run, stop and inspect designs in the browser | `python -m tarang.gui` |
 
 ---
 
 ## Installation
 
 Python 3.11 or newer on Windows, Linux or macOS. TARANG is installed from this repository
-(not from PyPI), in editable mode, so local edits take effect immediately.
+in editable mode, so local edits take effect immediately. (A PyPI release, `pip install
+tarang-photonics`, will follow the paper.)
+
+**Windows** (Anaconda Prompt or PowerShell with conda):
+
+```powershell
+git clone https://github.com/loqm/tarang
+cd tarang
+conda env create -f environment.yml      # environment "tarang", with all extras
+conda activate tarang
+```
+
+**Linux / macOS:**
 
 ```bash
 git clone https://github.com/loqm/tarang
@@ -78,7 +119,9 @@ conda env create -f environment.yml      # environment "tarang", with all extras
 conda activate tarang
 ```
 
-Without conda, into an existing environment: `pip install -e ".[plots,notebooks]"`.
+Without conda, into an existing environment (any system): `pip install -e ".[plots,layout,gui]"`.
+Existing environment, new code: `git pull`, then `pip install -e ".[plots,layout,gui]"` (or
+`conda env update -f environment.yml`).
 
 | Extra | Adds |
 |---|---|
@@ -86,7 +129,8 @@ Without conda, into an existing environment: `pip install -e ".[plots,notebooks]
 | `[plots]` | `getdist`, `corner` (posterior plots) |
 | `[notebooks]` | `jupyterlab`, `ipykernel`, `ipython` |
 | `[layout]` | `gdstk` (GDS export of the guided design) |
-| `[test]` | `pytest`, `pytest-cov`, plus `[plots]` and `[layout]` |
+| `[gui]` | `streamlit` (the design GUI, `python -m tarang.gui`) |
+| `[test]` | `pytest`, `pytest-cov`, plus `[plots]`, `[layout]` and `[gui]` |
 | `[multinest]` | `pymultinest` (needs the MultiNest library, below) |
 
 Then, once per machine:
@@ -198,8 +242,8 @@ each starts with a table of the functions it shows):
 material data cover:
 
 ```
-materials -> cross-section -> ring -> ring-bus gap -> grating coupler -> checks -> taper -> apodised grating -> focusing grating -> layout -> report
-  local          local        local      cloud             cloud        free+cloud  free+cloud  cloud (opt-in)   free (opt-in)     local     local
+materials -> cross-section -> ring -> ring-bus gap -> grating coupler -> checks -> taper -> apodised grating -> focusing grating -> layout -> device -> report
+  local          local        local      cloud             cloud        free+cloud  free+cloud  cloud (opt-in)   free (opt-in)     local    local     local
 ```
 
 Each stage asks only what it needs (the default is shown; Enter accepts it), then prints
@@ -219,6 +263,11 @@ Below, `D` stands for your design's settings file, e.g. `design_runs/my_ring/des
 | To | Run |
 |---|---|
 | start a new design (asks everything) | `python -m tarang.design` |
+| start from an example | copy `examples/design_sin1550.toml` (or `design_sin780.toml`) to `design_runs/<name>/design.toml`, then `python -m tarang.design --config D` |
+| see what a run would cost, running nothing that costs | `python -m tarang.design --config D --price-only` |
+| run, spending at most 1.5 FC in this session | `python -m tarang.design --config D --yes --spend-cap 1.5` |
+| the whole-device spectrum and every resonance (free) | `python -m tarang.design --config D --only device,report` |
+| the same in the browser | `python -m tarang.gui` |
 | continue a stopped design | `python -m tarang.design --config D` |
 | repeat with no questions | `python -m tarang.design --config D --yes` |
 | look at every setting again | `python -m tarang.design --config D --review` |
@@ -242,7 +291,10 @@ answers are in `design.toml`. A cloud run that was in progress keeps running on 
 the same command later picks it up again (it is not submitted or paid twice). Closing
 the terminal has the same effect as Ctrl+C.
 
-**Credits.** Two numbers decide whether a cloud stage may run: the design's limit
+**Credits.** Every run starts with one table of the two limits, the design's total and the
+largest single cloud run, beside the Tidy3D balance and expiry when the account can be
+read; Enter keeps them, a row number changes one, and neither can be set above what the
+account holds. Two numbers decide whether a cloud stage may run: the design's limit
 `run.max_total_cost` (FlexCredits, in `D`) and TARANG's running total of the estimates
 it has spent (`spent` in `state.json`). A stage whose estimate is more than what is left
 is not run. `--budget` changes the limit, `--reset-spent` starts the total at 0 again
@@ -266,9 +318,10 @@ Tidy3D account of the current API key (a link only opens in the account that ran
 | Grating coupler | etch, fibre angle, orientation and MFD, smallest feature | spectra of a period × fill-factor map (and its efficiency landscape, 5g), the period tuned onto your wavelength, fill-factor / period / fibre-position sensitivity, 1 dB and 3 dB bandwidths; optional 3D check |
 | Checks | which checks (each cloud check is priced first) | gap tolerance (K, loaded Q, dip depth), coupled-mode-theory check of the gap, FSR tolerance, ring mode families and crossings, fibre-to-fibre loss budget; optional: coupling across the band, grating angle / film / tooth-width tolerances, back-reflection and directionality, mesh checks |
 | Taper | grating width (or the best for the fibre), taper lengths to try, loss accepted | lateral overlap of the fibre with the grating against its width (effective-index method, free), taper loss against length (one Tidy3D EME run), the shortest taper below the accepted loss; the layout uses both |
-| Apodised grating (opt-in, `apodise.run`; off: the uniform grating is used and nothing is paid) | fill factors to measure, narrowest trench the full etch clears, whether to check in FDTD | scattering strength and phase-matched period of each fill factor (small 2D runs), a tooth list whose scattering follows the fibre's Gaussian, the predicted gain (1D model, before anything else is paid), a 2D FDTD check; the layout uses it when it beats the uniform grating |
+| Apodised grating (opt-in, `apodise.run`; off: the uniform grating is used and nothing is paid) | fill factors to measure, narrowest trench the full etch clears, whether to check in FDTD, what "better" means (`apodise.prefer`: efficiency, or bandwidth within 0.5 dB), a second recipe (`apodise.ramp_check`: linear fill-factor ramp, Marchetti et al. 2017) | scattering strength and phase-matched period of each fill factor (small 2D runs), a tooth list whose scattering follows the fibre's Gaussian, the predicted gain (1D model, before anything else is paid), a 2D FDTD check; the layout uses it when it beats the uniform grating |
 | Focusing grating (opt-in, `focus.run`) | teeth (uniform, apodised or the better one), tip widths, largest light-cone angle, optional 3D check | curved teeth (confocal ellipses around the waveguide tip) on the straight grating's cross-section, the in-plane focusing efficiency against tip-to-grating distance and tip width (free model, landscape figure), the 3D estimate against the straight grating with its taper; optional 3D FDTD (priced); the GDS gets `*_fgc` cells with it beside the straight-grating `*_gc` cells |
 | Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv`, layout figure; `lle/` inputs for a comb (Lugiato-Lefever) solver, incl. pyLLE's dispersion-file format |
+| Whole device (`device.run`, free) | whether to include the gratings' back-reflection | fibre-to-fibre transmission over the band from the stages' results (S-matrix circuit model: coupler spectra, taper, bus loss, ring all-pass with the resonance frequencies of the dispersion solve and κ²(λ) of the gap runs), every resonance's Q<sub>i</sub>, Q<sub>c</sub>, Q<sub>L</sub>, dip and *D*<sub>int</sub> for both gaps, the Fabry-Perot ripple between the couplers (figures 11a, 11b; `tables/device_*.csv`) |
 | Report | | `report.md` with every figure, `benchmark_pack/` (and its zip), `design_summary.json`, `tables/cloud_runs.csv` |
 
 While it runs, the tool shows what it is about to simulate (a picture of each geometry,
@@ -297,6 +350,33 @@ form a V) or *away* from it:
 
 `GratingConfig(..., theta_deg=12, fiber_tilt="towards")`; `theta_deg` is the angle from
 vertical (its sign is ignored) and `source_x` the beam centre on the grating surface.
+
+## Design in the browser (GUI)
+
+```bash
+python -m tarang.gui                         # designs under ./design_runs
+python -m tarang.gui --root D:/my/designs    # another folder (any path style)
+```
+
+The GUI opens in your browser (it runs only on your computer, at `http://localhost:8501`;
+Ctrl+C in the terminal closes it). It shows the same design folders the command line
+writes, so both can be used on one design in turn.
+
+| Where | What |
+|---|---|
+| left | the design (any folder with a `design.toml`), **New design** (defaults or an example), FlexCredits spent and left, **Check Tidy3D balance**, the two credit limits (checked against the balance), what was spent on what |
+| top | stages to run, stages to repeat, **Spend at most** for this run; **Estimate cost** (every cloud estimate, nothing that costs runs), **Run**, **Stop** (like Ctrl+C: finished work is kept); the run's output scrolls below |
+| Summary | headline numbers (geometry, Q, gaps, grating, device), loss budget, status of every stage |
+| Whole device | figures 11a/11b and every resonance |
+| Figures, Tables | every figure by stage; every table, with a CSV download |
+| Report | `report.md` with its figures |
+| Files | every result file with its full path; **Open the design folder** |
+| Settings | `design.toml` with every explanation; checked before it is saved |
+| Log | the full output of the last run started from the GUI (`gui_log.txt`) |
+
+Runs started from the GUI run as `python -m tarang.design --config ... --yes` in the
+background, so cloud steps run only within the design's limits and the spend cap (there are
+no questions to answer). Closing the browser tab does not stop them.
 
 ---
 
@@ -405,8 +485,14 @@ python -m tarang.migrate path/to/your/scripts --write    # apply
 * The partial-ring builder's air region inside the ring reaches 0.1 µm into the BOX (the
   ring's inner side only; the gap is unaffected). It is kept so cached gap results stay
   valid, and noted in the design report and benchmark pack.
-* Grating couplers: the taper between grating and waveguide is drawn in the GDS but not
-  simulated yet.
+* The whole-device spectrum is a circuit model: each part comes from its own simulation
+  and the parts are joined by their scattering matrices. Backscattering inside the ring
+  (resonance splitting), the coupler's own phase and the taper's reflection are left out,
+  and the gratings' reflection phase is unknown (the ripple's depth and period are right,
+  its position is not). For the apodised and focusing gratings the reflection of the
+  uniform grating is used.
+* The focusing grating's efficiency outside 3D FDTD comes from an in-plane model; the
+  3D check (`focus.check_3d`) is the reference.
 
 ## Troubleshooting
 
@@ -430,7 +516,8 @@ python -m tarang.migrate path/to/your/scripts --write    # apply
 
 **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) (setup, review rules, conventions, adding
 a material or device); every pull request runs the tests on Linux and Windows
-([tests/README.md](tests/README.md)).
+([tests/README.md](tests/README.md)). Release steps (tag, wheel, later PyPI):
+[docs/RELEASING.md](docs/RELEASING.md).
 
 **Citing:** cite TARANG using [CITATION.cff](CITATION.cff) (**Cite this repository** on GitHub);
 a paper is in preparation. Also cite the material data you used
@@ -438,6 +525,16 @@ a paper is in preparation. Also cite the material data you used
 and for nested sampling [dynesty](https://dynesty.readthedocs.io/) (Speagle, *MNRAS* **493**,
 3132 (2020)) or MultiNest (Feroz, Hobson & Bridges, *MNRAS* **398**, 1601 (2009)), and
 [GetDist](https://getdist.readthedocs.io/) for posterior plots.
+
+**Built on:** [Tidy3D](https://docs.flexcompute.com/projects/tidy3d/) (FDTD, mode solver,
+EME), [NumPy](https://numpy.org/), [pandas](https://pandas.pydata.org/),
+[Matplotlib](https://matplotlib.org/), [dynesty](https://dynesty.readthedocs.io/),
+[gdstk](https://heitzmann.github.io/gdstk/) (GDS), [Streamlit](https://streamlit.io/) (GUI).
+Published methods used in the design stages are cited where they are used (report,
+benchmark pack, CHANGELOG): e.g. the linear apodisation ramp of Marchetti et al.,
+*Sci. Rep.* **7**, 16670 (2017). The `lle/` files follow the dispersion-file format of
+[pyLLE](https://github.com/gregmoille/pyLLE) (Moille, Li, Lu, Srinivasan, *J. Res. NIST*
+**124**, 124012 (2019)).
 
 **Authors:** Esraaj Sarkar Gupta and Divyanshu Tiwari. Developed at the
 [Laboratory of Optics of Quantum Materials (LOQM)](https://loqm.tech), Indian Institute of

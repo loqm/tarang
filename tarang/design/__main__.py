@@ -10,6 +10,8 @@
     python -m tarang.design --config <run>/design.toml --budget 25  # set the credit limit
     python -m tarang.design --config <run>/design.toml --reset-spent  # restart the spend count
     python -m tarang.design --config <run>/design.toml --runs       # every cloud run + Tidy3D link
+    python -m tarang.design --config <run>/design.toml --price-only # estimates only, nothing run
+    python -m tarang.design --config <run>/design.toml --yes --spend-cap 1.5   # spend <= 1.5 FC
 
 Stop at any time with q (at a question) or Ctrl+C: finished work is kept, and the same
 command continues; a cloud run that was in progress is picked up again, not paid twice.
@@ -52,6 +54,10 @@ def main(argv=None) -> int:
                     help="show budget, spent, what it was spent on and the Tidy3D balance; exit")
     ap.add_argument("--runs", action="store_true",
                     help="list every cloud run of this design with its Tidy3D link; exit")
+    ap.add_argument("--price-only", action="store_true",
+                    help="go through the stages and print every cloud estimate; run nothing priced")
+    ap.add_argument("--spend-cap", type=float, metavar="FC",
+                    help="spend at most this much in this session (cloud steps above it are skipped)")
     a = ap.parse_args(argv)
     for s in (sys.stdout, sys.stderr):
         if hasattr(s, "reconfigure"):
@@ -65,7 +71,9 @@ def main(argv=None) -> int:
     set_tidy3d_output(False)
     cfg = DesignConfig.load(a.config) if a.config else DesignConfig()
     interactive = not a.yes and sys.stdin.isatty()
-    ui = Prompter(interactive=interactive, show_figures=a.show, review=a.review)
+    ui = Prompter(interactive=interactive, show_figures=a.show, review=a.review,
+                  price_only=a.price_only, spend_cap=a.spend_cap)
+    _ctrl_break_stops()
     housekeeping = a.budget is not None or a.reset_spent or a.credits or a.runs
     if a.out:
         out = a.out
@@ -89,6 +97,19 @@ def main(argv=None) -> int:
     redo = [s.strip() for s in a.redo.split(",") if s.strip()]
     run(cfg, out, interactive=interactive, only=only, redo=redo, prompter=ui)
     return 0
+
+
+def _ctrl_break_stops() -> None:
+    """On Windows, Ctrl+Break (what the GUI's Stop button sends) stops like Ctrl+C, so
+    finished work is saved."""
+    import signal
+    if hasattr(signal, "SIGBREAK"):
+        def stop(signum, frame):
+            raise KeyboardInterrupt
+        try:
+            signal.signal(signal.SIGBREAK, stop)
+        except ValueError:                     # not the main thread
+            pass
 
 
 if __name__ == "__main__":

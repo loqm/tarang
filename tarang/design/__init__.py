@@ -3,7 +3,8 @@
 Runs the TARANG pipeline as one session, for any wavelength the material data cover:
 
     materials -> cross-section (H x W) -> ring (radius, Q, D_int) -> ring-bus gap
-    -> grating coupler -> layout (GDS, parameters) -> report
+    -> grating coupler -> checks -> taper -> apodised / focusing grating (optional)
+    -> layout (GDS, parameters) -> whole device (circuit model) -> report
 
 Each stage starts with one table of its settings (Enter accepts them, a number changes
 one, q or Ctrl+C stops), shows its results and figures, and, for cloud stages, the
@@ -48,11 +49,9 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
     for note in ctx.apply_legacy():
         ui.say("  " + note)
     _show_assumptions(cfg, ui)
-    ui.say(f"Credits: budget {cfg.run.max_total_cost:g} FC for this design, {ctx.spent:.3f} "
-           f"spent so far, {ctx.budget_left:.3f} left (python -m tarang.design --config "
-           "<run>/design.toml --credits shows details).")
     stale = False
     try:
+        credit_limits(ctx)
         for i, (name, title, kind, func) in enumerate(STAGES, 1):
             if name not in only:
                 continue
@@ -79,7 +78,74 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
                "and picks it up again without paying twice.")
     finally:
         ctx.save_state()
+        if getattr(ui, "price_only", False):
+            paid = [(w, c) for w, c in ui.priced if c > 0]
+            ui.say("\nPrice only: nothing that costs was run. Estimates:" if paid else
+                   "\nPrice only: no cloud step needs paying for these stages.")
+            if paid:
+                ui.table([dict(step=w, estimate_FC=round(c, 3)) for w, c in paid])
+                ui.say(f"  Total {sum(c for _, c in paid):.3f} FC. Later steps that depend on these "
+                       "runs are priced once those runs exist.")
     return ctx
+
+
+def limit_checks(spent: float, credit: Optional[float], total_now: float):
+    """Checks for the two credit limits: (per-run check, total check). Each returns an
+    error message or "". The total may not exceed what this design has spent plus what the
+    account holds; a single run may not exceed the total or the account balance."""
+    def total(v) -> str:
+        v = float(v)
+        if v < 0:
+            return "a limit cannot be negative"
+        if credit is not None and v > spent + credit + 1e-9:
+            return (f"the account holds {credit:.2f} FC; with {spent:.3f} FC already spent by this "
+                    f"design the limit can be at most {spent + credit:.2f} FC")
+        return ""
+
+    def per_run(v) -> str:
+        v = float(v)
+        if v <= 0:
+            return "a run limit must be above 0"
+        if v > total_now + 1e-9:
+            return f"above this design's total limit ({total_now:g} FC)"
+        if credit is not None and v > credit + 1e-9:
+            return f"above the account balance ({credit:.2f} FC)"
+        return ""
+    return per_run, total
+
+
+def credit_limits(ctx) -> Optional[dict]:
+    """One table at the start of every run: the largest cost of a single cloud run and the
+    budget of this design, checked against the Tidy3D account balance (when it can be
+    read). Returns the account status (or None)."""
+    from tarang.utilities import cloud_run as cr
+    cfg, ui = ctx.cfg, ctx.ui
+    acc = cr.account_status(timeout=8.0) if cr.api_key_source() else None
+    credit = acc.get("credit") if acc else None
+    ui.say("")
+    if acc and credit is not None:
+        when = acc["expires"].strftime("%Y-%m-%d") if acc.get("expires") else "?"
+        ui.say(f"Tidy3D account: {credit:.2f} FlexCredits, valid until {when}"
+               + (" (EXPIRED: cloud runs will be refused)" if acc.get("expired") else "") + ".")
+    else:
+        ui.say("Tidy3D account: balance not readable now (no API key, or offline); the limits "
+               "below are not checked against it.")
+    ui.say(f"This design has spent {ctx.spent:.3f} FlexCredits so far (estimates).")
+    per_run, total = limit_checks(ctx.spent, credit, float(cfg.run.max_total_cost))
+    ui.form(cfg, "Credit limits (Enter keeps them; a row number changes one)", [
+        dict(section="run", key="max_total_cost", check=total),
+        dict(section="run", key="max_cost_per_run",
+             check=lambda v: limit_checks(ctx.spent, credit, float(cfg.run.max_total_cost))[0](v))],
+        always=True)
+    for msg in (total(cfg.run.max_total_cost),
+                limit_checks(ctx.spent, credit, float(cfg.run.max_total_cost))[0](cfg.run.max_cost_per_run)):
+        if msg:
+            ui.say(f"  Note: {msg}. Cloud stages check the account again before they run.")
+    ui.say(f"Credits: limit {cfg.run.max_total_cost:g} FC for this design, {ctx.spent:.3f} spent, "
+           f"{ctx.budget_left:.3f} left; at most {cfg.run.max_cost_per_run:g} FC per cloud run "
+           "(--credits shows what was spent on what).")
+    ctx.save_state()
+    return acc
 
 
 def _show_assumptions(cfg, ui) -> None:

@@ -15,6 +15,44 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **Design GUI** (`python -m tarang.gui`, extra `[gui]`: Streamlit). In the browser, on your
+  own computer: pick or create a design (defaults or an example file), see the FlexCredits
+  spent and left and the Tidy3D balance, change the two credit limits (checked like the
+  run's own limit table), choose stages, **Estimate cost** (runs nothing that costs),
+  **Run** (in the background, `--yes` with a spend cap) and **Stop** (like Ctrl+C, work done
+  is kept), with the run's output live. Tabs: summary, whole device, figures, tables (with
+  download), the report with its figures, every file with its path, `design.toml` (checked
+  before saving) and the full log. `tarang.gui.data` holds the data layer without Streamlit.
+- **Whole-device stage** (`--only device`, free, on by default; `[device]` settings). A
+  circuit model joins each part's 2 x 2 scattering matrix (Redheffer star product): coupler
+  spectrum (uniform or apodised 2D grating x lateral overlap x taper, or the focusing
+  grating's 3D FDTD / model x tip taper), the bus with its loss, the ring as an all-pass
+  filter whose resonances are the dispersion solve's mode frequencies (so *D*<sub>int</sub> is
+  included) with κ²(λ) from the gap/checks FDTD, and the gratings' back-reflection from the
+  checks stage (Fabry-Perot ripple). Gives the fibre-to-fibre spectrum over the band, a
+  close-up at the pump and every resonance's Q<sub>i</sub>, Q<sub>c</sub>, Q<sub>L</sub>, K,
+  linewidth and dip for the critical and over-coupled gaps (figures 11a, 11b;
+  `tables/device_resonances.csv`, `device_spectrum.csv`, `device_envelope.csv`; report
+  section 7e; benchmark pack).
+- **Credit limits at the start of every run**: one table with the design's total limit and
+  the largest single cloud run, beside the Tidy3D balance and expiry; neither can be set
+  above what the account holds (the per-stage limit rows are gone). `--price-only` goes
+  through the stages and lists every cloud estimate with a total, running nothing that
+  costs (cached, free steps still run); `--spend-cap FC` limits what one session may spend.
+- **Apodisation preference and a second recipe.** `apodise.prefer = "efficiency"` (default)
+  keeps the apodised grating when it is more efficient at the design wavelength;
+  `"bandwidth"` when its 1 dB band is wider and it is at most 0.5 dB below the uniform
+  grating there. `apodise.ramp_check = true` also tries the linear fill-factor ramp of
+  Marchetti et al. (*Sci. Rep.* **7**, 16670 (2017)) from the weakest usable tooth, five ramp
+  rates x three fibre positions in 2D FDTD (priced; figure 9d, `tables/apodised_ramp.csv`),
+  and keeps whichever design the preference favours. The kept design's spectrum is saved
+  (`tables/apodised_spectrum.csv`; rerunning the stage reads it from the cache, free).
+- `focus.mesh_steps` (default 12) for the focusing grating's 3D check; its spectrum is
+  saved (`tables/focusing_spectrum_3d.csv`).
+- **Example design files** `examples/design_sin1550.toml` and `examples/design_sin780.toml`
+  (700 nm Si3N4 / mapped film, 4 µm BOX, air top, full-etch gratings, 200 nm narrowest
+  trench, apodised and focusing gratings on).
+
 - **Taper stage** (`--only taper`). The grating width that best matches the fibre: the
   lateral overlap η_y of the fibre's Gaussian with the grating's fundamental lateral mode
   (effective-index method; free), so the 3D efficiency is about η_2D·η_y (for the 1550 nm
@@ -260,6 +298,12 @@ working until v0.2.0; old imports are updated with one command (see
   defaults, and therefore FDTD costs, are unchanged.
 
 ### Fixed
+
+- Stopping a design run (q, Ctrl+C, the GUI's Stop) while the local mode solver maps the
+  cross-section left the solver's worker processes running until every queued point was
+  done; they now stop with it (finished points are kept and skipped next time).
+- The benchmark pack could not describe the taper's EME simulation (`'EMESimulation' object
+  has no attribute 'run_time'`); it now lists its cells and the length sweep.
 
 - Runs made with another Tidy3D account are reported as such (their links cannot be found
   with the current API key) instead of suggesting `--runs` would find them.

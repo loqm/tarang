@@ -179,6 +179,11 @@ class Apodise:
     min_trench_um: Optional[float] = _f(None, "Narrowest trench between teeth that the full etch "
                                               "clears (empty: grating.min_feature_um)", "um")
     max_teeth: int = _f(60, "Most teeth of the apodised grating")
+    prefer: str = _f("efficiency", "What 'better than the uniform grating' means: 'efficiency' "
+                                   "(higher at the design wavelength) or 'bandwidth' (wider 1 dB "
+                                   "band, at most 0.5 dB lower at the design wavelength)")
+    ramp_check: bool = _f(False, "Also try the linear fill-factor ramp of Marchetti et al. (Sci. "
+                                 "Rep. 7, 16670, 2017) as a second recipe (about 15 small 2D runs)")
     use_in_layout: bool = _f(True, "Use the apodised grating in the layout when it beats the "
                                    "uniform one")
 
@@ -195,6 +200,8 @@ class Focus:
                                          "cones are less well described by the model)", "deg")
     check_3d: bool = _f(False, "Check the focusing grating in 3D FDTD (one run, priced first; "
                                "several FlexCredits)")
+    mesh_steps: int = _f(12, "Mesh cells per wavelength in the core for the 3D check (12: about "
+                             "1 FC; 15 matches the 2D design, about twice the cost)")
     use_in_layout: bool = _f(True, "Make the focusing grating the main coupler (loss budget, "
                                    "layout figure); the GDS has both in any case")
 
@@ -217,16 +224,27 @@ class Layout:
     grating_layer: list = _f([1, 0], "GDS [layer, datatype] of the grating teeth")
 
 
+@dataclass
+class Device:
+    run: bool = _f(True, "Model the whole device (free, local): fibre-to-fibre transmission of "
+                         "grating + taper + bus + ring + taper + grating from the stages' results")
+    reflections: bool = _f(True, "Include the gratings' back-reflection (Fabry-Perot ripple "
+                                 "between the two couplers; from the checks stage's reverse run)")
+    zoom_fsr: float = _f(1.5, "Half-width of the close-up around the pump, in ring FSRs")
+
+
 # Settings added after a run was made, with the value that reproduces that run exactly.
 # If a run folder already has results for the stage and its design.toml lacks the setting,
 # the legacy value is used (so saved simulations stay valid), and the stage's settings key
 # leaves it out (so the stage is not repeated).
-LEGACY = {"gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1}}
+LEGACY = {"gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
+          "apodise": {"prefer": "efficiency", "ramp_check": False},
+          "focus": {"mesh_steps": 12}}
 
 SECTIONS = {"run": Run, "materials": Materials, "stack": Stack, "cross_section": CrossSection,
             "ring": Ring, "gap": Gap, "grating": Grating, "checks": Checks, "taper": Taper,
             "apodise": Apodise, "focus": Focus,
-            "layout": Layout, "assumptions": Assumptions}
+            "layout": Layout, "device": Device, "assumptions": Assumptions}
 
 
 @dataclass
@@ -243,6 +261,7 @@ class DesignConfig:
     apodise: Apodise = field(default_factory=Apodise)
     focus: Focus = field(default_factory=Focus)
     layout: Layout = field(default_factory=Layout)
+    device: Device = field(default_factory=Device)
     assumptions: Assumptions = field(default_factory=Assumptions)
     given: set = field(default_factory=set, repr=False, compare=False)   # "section.key" read from a file
 

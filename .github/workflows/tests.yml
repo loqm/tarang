@@ -92,6 +92,12 @@ jobs:
           python -m twine check --strict dist/*
           ls -l dist
 
+      - name: Keep the wheel and sdist (downloadable from the run's page)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarang-dist
+          path: dist/
+
       - name: Install the wheel into a clean environment
         run: |
           python -m venv "$RUNNER_TEMP/venv"

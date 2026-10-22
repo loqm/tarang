@@ -22,12 +22,16 @@ class Stop(Exception):
 
 class Prompter:
     def __init__(self, interactive: bool, out=None, inp: Callable[[str], str] = input,
-                 show_figures: bool = False, review: bool = False):
+                 show_figures: bool = False, review: bool = False, price_only: bool = False,
+                 spend_cap: Optional[float] = None):
         self.interactive = interactive
         self.out = out or sys.stdout
         self.inp = inp
         self.show_figures = show_figures and interactive
         self.review = review and interactive    # ask saved settings again
+        self.price_only = price_only            # show every estimate, run nothing priced
+        self.spend_cap = spend_cap              # this session spends at most this much
+        self.priced: list = []                  # (what, estimate) of every priced step
 
     # ---- output -------------------------------------------------------------------- #
     def say(self, text: str = "") -> None:
@@ -114,14 +118,15 @@ class Prompter:
             cfg.given.add(f"{section}.{key}")
             return value
 
-    def form(self, cfg, title: str, items: list) -> None:
+    def form(self, cfg, title: str, items: list, always: bool = False) -> None:
         """One table for a stage's settings.
 
         ``items``: dicts with ``section``, ``key`` and optionally ``default`` (a value, or a
         function of cfg evaluated each time the table is shown, so it follows earlier
         settings), ``cast``, ``check`` (returns an error message or ""), ``show`` (bool or
         function of cfg). Accepted values are stored in cfg and marked as given, so the
-        stage's later ``value()`` calls return them without asking.
+        stage's later ``value()`` calls return them without asking. ``always``: show the
+        table for changes even when every value is saved (interactive sessions only).
         """
         def active():
             return [it for it in items
@@ -146,7 +151,7 @@ class Prompter:
 
         saved = {f"{it['section']}.{it['key']}" for it in items} & set(cfg.given)
         pending = [it for it in active() if f"{it['section']}.{it['key']}" not in cfg.given]
-        if not self.interactive or (not pending and not self.review):
+        if not self.interactive or (not pending and not self.review and not always):
             accept_all()
             self._form_table(cfg, title, active(), current, meta, saved, compact=True)
             return
@@ -198,11 +203,22 @@ class Prompter:
             line += ")"
         self.say("")
         self.say(line)
+        if cost is not None:
+            self.priced.append((what, float(cost)))
+        if self.price_only and cost is not None and cost > 0:
+            self.say("  Price only: not run.")
+            return False
+        if cost is not None and self.spend_cap is not None:
+            if cost > self.spend_cap + 1e-9:
+                self.say(f"  Skipped: above what this session may still spend ({self.spend_cap:.3f} "
+                         "FC, --spend-cap).")
+                return False
         if not self.interactive:
             if cost is not None and budget_left is not None and cost > budget_left:
                 self.say("  Skipped: the estimate is above the remaining budget "
                          "(raise run.max_total_cost to run it).")
                 return False
+            self._spend(cost)
             return True
         while True:
             ans = self._ask("Proceed? y = yes, s = skip this stage, q = stop here", "y").lower()
@@ -211,10 +227,16 @@ class Prompter:
                     self.say("  The estimate is above the remaining budget; raise "
                              "run.max_total_cost in the config to run it.")
                     return False
+                self._spend(cost)
                 return True
             if ans in {"s", "skip", "n", "no"}:
                 return False
             self.say("  Please answer y, s or q.")
+
+
+    def _spend(self, cost: Optional[float]) -> None:
+        if cost is not None and self.spend_cap is not None:
+            self.spend_cap = max(self.spend_cap - float(cost), 0.0)
 
 
 def _label(help_text: str) -> str:

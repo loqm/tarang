@@ -72,8 +72,15 @@ def describe_sim(sim, wavelength_um: float) -> list[str]:
             b = o.geometry.bounds
             out.append(f"  - finer mesh {_fmt(tuple(dl))} µm in x {b[0][0]:.2f}-{b[1][0]:.2f}, "
                        f"y {b[0][1]:.2f}-{b[1][1]:.2f}, z {b[0][2]:.2f}-{b[1][2]:.2f}")
-    out.append(f"- Run time {sim.run_time * 1e12:.3g} ps; stops early when the fields decay "
-               f"below {sim.shutoff:g} of their peak")
+    if hasattr(sim, "run_time"):
+        out.append(f"- Run time {sim.run_time * 1e12:.3g} ps; stops early when the fields decay "
+                   f"below {sim.shutoff:g} of their peak")
+    else:                                              # an eigenmode-expansion (EME) simulation
+        grid = getattr(sim, "eme_grid", None)
+        n_cells = len(grid.boundaries) - 1 if grid is not None else "?"
+        sweep = getattr(sim, "sweep_spec", None)
+        out.append(f"- Eigenmode expansion along {'xyz'[sim.axis]}: {n_cells} cells"
+                   + (f"; cell lengths swept ({type(sweep).__name__})" if sweep is not None else ""))
     out.append("- Structures (later ones override earlier ones where they overlap):")
     f0 = C_UM / wavelength_um
     for s in sim.structures:
@@ -351,7 +358,12 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
               "- Explicit tooth list `tables/apodised_teeth.csv` (start and length of every tooth, "
               "first tooth at x = 0, full etch), otherwise as section 4.",
               f"- Result: {ap['efficiency_2d'] * 100:.1f} % at {wl} µm, fibre at {ap['source_x_um']} µm"
-              f" (uniform: {ap.get('uniform_efficiency_2d', 0) * 100:.1f} %).", ""]
+              f" (uniform: {ap.get('uniform_efficiency_2d', 0) * 100:.1f} %)"
+              + (f"; kept recipe: {ap['recipe']}" if ap.get("recipe") else "") + "."
+              + (" Its spectrum: `tables/apodised_spectrum.csv`." if (ctx.out / "tables" /
+                 "apodised_spectrum.csv").exists() else ""),
+              *(["- Linear fill-factor ramp (Marchetti et al. 2017) as a cross-check: "
+                 "`tables/apodised_ramp.csv`."] if ap.get("ramp") else []), ""]
     if fc.get("curves"):
         L += ["## 4d. Focusing grating", "",
               "- Teeth are curves n_B r − n_top sin θ · r cos φ = Φ around the waveguide tip (polar "
@@ -376,6 +388,10 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
         ("coupling_vs_wavelength.csv", "coupling ratio K of both gaps across the band (3D FDTD)"),
         ("mode_families.csv", "guided mode families of the bent ring waveguide and their crossings"),
         ("loss_budget.csv", "fibre-to-fibre loss at the design wavelength"),
+        ("device_resonances.csv", "circuit model: Q_i, Q_c, Q_L, K, dip and D_int of every resonance, "
+                                  "both gaps (compare with a measured transmission scan)"),
+        ("device_spectrum.csv", "circuit model: fibre-to-fibre transmission around the pump"),
+        ("device_envelope.csv", "circuit model: off-resonance transmission and Fabry-Perot ripple bounds"),
         ("cloud_runs.csv", "every cloud simulation with its link in the Tidy3D web interface"))
         if (ctx.out / "tables" / n).exists()]
     if extra:
