@@ -372,7 +372,10 @@ def stage_focus(ctx) -> dict:
                straight_lateral=straight_lat,
                straight_length_um=(tp.get("taper_length_um") or cfg.grating.taper_length_um) + L_g,
                focusing_length_um=Lt + d + L_g,
-               curves=[list(c) for c in geo["curves"]], use_in_layout=bool(cfg.focus.use_in_layout))
+               curves=[list(c) for c in geo["curves"]], use_in_layout=bool(cfg.focus.use_in_layout),
+               recommend=dict(recommended=dict(tip_width_um=w_tip, distance_um=d),
+                              why=f"highest in-plane focusing × tip taper with the light cone "
+                                  f"within ±{cfg.focus.max_half_angle_deg:g}°"))
     ui.say(f"  Best allowed: tip {w_tip:g} µm (taper {Lt:g} µm from {W:g} µm), first tooth {d:g} µm "
            f"from the tip (beam centre {best['r_c_um']:.1f} µm, cone ±{best['half_angle_deg']:.0f}°): "
            f"focusing {best['eta_focus'] * 100:.1f} %, with the tip taper {best['eta_lateral'] * 100:.1f} %.")

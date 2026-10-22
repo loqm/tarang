@@ -450,7 +450,7 @@ def test_new_stages_run_through_the_design_session(tmp_path, fake_web, monkeypat
     assert st["taper"]["results"]["taper_length_um"] > 0
     assert st["apodise"]["results"] == {"disabled": True}
     assert fake_web.names().count("batch_start") == n + 1             # the taper EME only
-    assert "[7/12] Taper" in out.getvalue() and "[8/12] Apodised grating" in out.getvalue()
+    assert "[8/13] Taper" in out.getvalue() and "[9/13] Apodised grating" in out.getvalue()
     assert "not requested" in out.getvalue()
     # later: turned on, it runs in the same session; the taper is not repeated
     done.cfg.apodise.run = True

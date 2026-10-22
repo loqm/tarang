@@ -82,7 +82,8 @@ def write(ctx) -> dict:
             chk_res["loss_budget"] = lb_now
             visuals.safe(ctx, "loss budget", _checks.draw_loss_budget, ctx, lb_now)
     cfg = ctx.cfg
-    st = {k: v.get("results", {}) for k, v in ctx.state["stages"].items()}
+    from tarang.design.stages import applies
+    st = {k: v.get("results", {}) for k, v in ctx.state["stages"].items() if applies(k, cfg)}
     mat, xs, ring = st.get("materials", {}), st.get("cross_section", {}), st.get("ring", {})
     gap, gc, lay = st.get("gap", {}), st.get("grating", {}), st.get("layout", {})
     wl = cfg.run.wavelength_um
@@ -214,6 +215,8 @@ def write(ctx) -> dict:
         if ring.get("bent_mode_shift_nm") is not None:
             L += [f"In the bend the TE00 mode moves {ring['bent_mode_shift_nm']:+.1f} nm towards "
                   "the outside of the ring (local bent-mode solve).", ""]
+
+    L += _waveguides_section(ctx, st.get("waveguides", {}))
 
     # ---- 4 gap
     if gap_ok:
@@ -704,8 +707,49 @@ def _focus_section(ctx, fc: dict) -> list[str]:
     return L
 
 
+def _waveguides_section(ctx, wg: dict) -> list[str]:
+    """Section 3w: test waveguides for propagation loss."""
+    if not wg or wg.get("skipped"):
+        return []
+    L = ["## 3w. Test waveguides (propagation loss)", "",
+         "Cutback: structures of lengths L_i with the same two couplers transmit "
+         "T_i = −α L_i − C_i (dB); C_i scatters by σ from structure to structure (fibre "
+         "placement). A straight-line fit gives α to σ_α = σ / √Σ(L_i − L̄)², so the lengths must "
+         "spread far enough. Long waveguides are double spirals; their smallest bend radius keeps "
+         "the bend loss below a tenth of the expected loss (local bent-mode solve).", "",
+         "| quantity | value |", "|---|---|",
+         f"| expected loss α | {wg['alpha_db_cm']:g} dB/cm |",
+         f"| bend radius used (recommended) | {wg['bend_radius_um']:g} µm "
+         f"({wg.get('bend_radius_recommended_um') or '-'} µm) |",
+         f"| lengths | {', '.join(f'{x:g}' for x in wg['lengths_cm'])} cm: α to "
+         f"±{wg['sigma_alpha_db_cm']:.3g} dB/cm |",
+         f"| recommended lengths | {', '.join(f'{x:g}' for x in wg['lengths_recommended_cm'])} cm: "
+         f"±{wg['sigma_alpha_recommended_db_cm']:.3g} dB/cm |",
+         f"| spiral pitch | {wg['spiral_pitch_um']:g} µm |", ""]
+    if wg.get("spirals"):
+        L += ["| spiral | turns | inner / outer radius (µm) |", "|---|---|---|"]
+        L += [f"| {r['length_cm']:g} cm | {r['turns']} | {r['inner_radius_um']:.0f} / "
+              f"{r['outer_radius_um']:.0f} |" for r in wg["spirals"]] + [""]
+    L += _fig(ctx, ctx.out / "figures" / "3w_bend_loss.png", "bend loss")
+    L += ["Bend loss per radius: `tables/bend_loss.csv`. A ring resonator measures low loss more "
+          "precisely (α = 2π n_g / (Q_i λ) from one under-coupled resonance).", ""]
+    return L
+
+
 def _device_section(ctx, dv: dict) -> list[str]:
     """Section 7e: the whole device from the circuit model."""
+    if dv and dv.get("goal") == "loss_test" and dv.get("rows"):
+        L = ["## 7e. Expected cutback measurement (circuit model)", "",
+             f"Each structure: {dv['coupler']}, waveguide, the same coupler; the two couplers' "
+             "reflections make a Fabry-Perot ripple over the whole structure.", "",
+             "| structure | length (cm) | transmission at the pump (dB) | ripple (dB p-p) | ripple period (pm) |",
+             "|---|---|---|---|---|"]
+        L += [f"| {r['structure']} | {r['length_cm']:g} | {r['transmission_db']:.2f} | "
+              f"{r['ripple_pp_db']:.2f} | {r['ripple_period_pm']:.1f} |" for r in dv["rows"]]
+        L += ["", f"Fitted loss expected to ±{dv['sigma_alpha_db_cm']:.3g} dB/cm; coupling loss "
+              f"{dv['coupling_loss_db']:.2f} dB per coupler.", ""]
+        L += _fig(ctx, ctx.out / "figures" / "11a_cutback.png", "cutback")
+        return L
     if not dv or dv.get("skipped") or not dv.get("resonances"):
         return []
     L = ["## 7e. Whole device (circuit model)", "",

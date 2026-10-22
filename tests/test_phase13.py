@@ -263,7 +263,9 @@ def test_gui_finds_designs_and_reads_their_results(tmp_path):
     assert data.find_runs(tmp_path) == [run]
     rows = data.stage_rows(run)
     assert [r["stage"] for r in rows][-3:] == ["layout", "device", "report"]
-    assert {r["status"] for r in rows} <= {"not run", "done", "skipped / off", "settings changed: will rerun"}
+    assert {r["status"] for r in rows} <= {"not run", "done", "skipped / off", "settings changed: will rerun",
+                                          "not part of this goal"}
+    assert next(r for r in rows if r["stage"] == "waveguides")["status"] == "not part of this goal"
     q = {r["quantity"] for r in data.summary_rows(run)}
     assert {"ring radius", "critical gap", "fibre to fibre, off resonance"} <= q
     groups = dict(data.figures(run))

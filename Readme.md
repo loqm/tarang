@@ -242,10 +242,13 @@ each starts with a table of the functions it shows):
 material data cover:
 
 ```
-materials -> cross-section -> ring -> ring-bus gap -> grating coupler -> checks -> taper -> apodised grating -> focusing grating -> layout -> device -> report
-  local          local        local      cloud             cloud        free+cloud  free+cloud  cloud (opt-in)   free (opt-in)     local    local     local
+materials -> cross-section -> ring | test waveguides -> ring-bus gap -> grating coupler -> checks -> taper -> apodised grating -> focusing grating -> layout -> device -> report
+  local          local        local     local (loss_test)   cloud             cloud        free+cloud  free+cloud  cloud (opt-in)   free (opt-in)     local    local     local
 ```
 
+The first question is the goal (`run.goal`): **`comb_ring`**, a ring resonator for
+frequency combs with its bus and couplers, or **`loss_test`**, test waveguides for
+propagation loss (cutback spirals with couplers; the ring and gap stages are left out).
 Each stage asks only what it needs (the default is shown; Enter accepts it), then prints
 its results and saves its figures and tables. Cloud stages first show the FlexCredit
 estimate and wait for your confirmation. Your answers are saved in `design.toml`, so the
@@ -266,6 +269,9 @@ Below, `D` stands for your design's settings file, e.g. `design_runs/my_ring/des
 | start from an example | copy `examples/design_sin1550.toml` (or `design_sin780.toml`) to `design_runs/<name>/design.toml`, then `python -m tarang.design --config D` |
 | see what a run would cost, running nothing that costs | `python -m tarang.design --config D --price-only` |
 | run, spending at most 1.5 FC in this session | `python -m tarang.design --config D --yes --spend-cap 1.5` |
+| test waveguides for propagation loss instead of a ring | in `D`: `run.goal = "loss_test"` (and `cross_section.height_um` / `width_um` to skip the map) |
+| which couplers go on the mask | in `D`: `layout.coupler = "auto"`, `"uniform"`, `"apodised"`, `"focusing"` or `"all"` |
+| extra ring variants around the designed gaps | in `D`: `layout.gap_offsets_um = [-0.05, 0.05]` |
 | the whole-device spectrum and every resonance (free) | `python -m tarang.design --config D --only device,report` |
 | the same in the browser | `python -m tarang.gui` |
 | continue a stopped design | `python -m tarang.design --config D` |
@@ -320,7 +326,8 @@ Tidy3D account of the current API key (a link only opens in the account that ran
 | Taper | grating width (or the best for the fibre), taper lengths to try, loss accepted | lateral overlap of the fibre with the grating against its width (effective-index method, free), taper loss against length (one Tidy3D EME run), the shortest taper below the accepted loss; the layout uses both |
 | Apodised grating (opt-in, `apodise.run`; off: the uniform grating is used and nothing is paid) | fill factors to measure, narrowest trench the full etch clears, whether to check in FDTD, what "better" means (`apodise.prefer`: efficiency, or bandwidth within 0.5 dB), a second recipe (`apodise.ramp_check`: linear fill-factor ramp, Marchetti et al. 2017) | scattering strength and phase-matched period of each fill factor (small 2D runs), a tooth list whose scattering follows the fibre's Gaussian, the predicted gain (1D model, before anything else is paid), a 2D FDTD check; the layout uses it when it beats the uniform grating |
 | Focusing grating (opt-in, `focus.run`) | teeth (uniform, apodised or the better one), tip widths, largest light-cone angle, optional 3D check | curved teeth (confocal ellipses around the waveguide tip) on the straight grating's cross-section, the in-plane focusing efficiency against tip-to-grating distance and tip width (free model, landscape figure), the 3D estimate against the straight grating with its taper; optional 3D FDTD (priced); the GDS gets `*_fgc` cells with it beside the straight-grating `*_gc` cells |
-| Layout | layer numbers, tone (structure or trench) | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds`, `parameters.json`/`.m`/`.csv`, layout figure; `lle/` inputs for a comb (Lugiato-Lefever) solver, incl. pyLLE's dispersion-file format |
+| Test waveguides (`loss_test` only, free) | expected loss, cutback lengths, coupling scatter per structure, bend radii, spiral gap | bend loss against radius (local bent-mode solve) and the smallest spiral radius, the precision of the fitted loss, σ_α = σ / √Σ(L − L̄)², and the lengths that reach the wanted precision; spiral sizes |
+| Layout | layer numbers, tone (structure or trench), couplers on the mask (`layout.coupler`), reference waveguide, gap variants | `waveguide.gds`, `ring_waveguide.gds`, `ring_waveguide_gc.gds` (and `*_agc` / `*_fgc` for the apodised and focusing gratings), `waveguide_gc.gds` (the same couplers without a ring: the reference that gives the coupler loss), `spiral_cutback_gc.gds` (test waveguides), `parameters.json`/`.m`/`.csv`, layout figure; `lle/` inputs for a comb (Lugiato-Lefever) solver, incl. pyLLE's dispersion-file format |
 | Whole device (`device.run`, free) | whether to include the gratings' back-reflection | fibre-to-fibre transmission over the band from the stages' results (S-matrix circuit model: coupler spectra, taper, bus loss, ring all-pass with the resonance frequencies of the dispersion solve and κ²(λ) of the gap runs), every resonance's Q<sub>i</sub>, Q<sub>c</sub>, Q<sub>L</sub>, dip and *D*<sub>int</sub> for both gaps, the Fabry-Perot ripple between the couplers (figures 11a, 11b; `tables/device_*.csv`) |
 | Report | | `report.md` with every figure, `benchmark_pack/` (and its zip), `design_summary.json`, `tables/cloud_runs.csv` |
 

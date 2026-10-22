@@ -38,16 +38,23 @@ LOG10E = 10 * math.log10(math.e)
 def _form(ctx: Context) -> None:
     cfg = ctx.cfg
     ctx.ui.form(cfg, "Checks", [
-        dict(section="checks", key="band"),
+        dict(section="checks", key="band", show=ring_goal),
         dict(section="checks", key="grating_extras"),
         dict(section="checks", key="angle_tolerance_deg"),
         dict(section="checks", key="litho_bias_um"),
         dict(section="checks", key="mesh_grating"),
-        dict(section="checks", key="mesh_gap"),
-        dict(section="checks", key="mode_families")])
+        dict(section="checks", key="mesh_gap", show=ring_goal),
+        dict(section="checks", key="mode_families", show=ring_goal)])
+
+
+def ring_goal(cfg) -> bool:
+    return str(getattr(cfg.run, "goal", "comb_ring")) == "comb_ring"
 
 
 def _done(ctx: Context, name: str) -> Optional[dict]:
+    from tarang.design.stages import applies
+    if not applies(name, ctx.cfg):               # e.g. a ring result left from another goal
+        return None
     r = ctx.state["stages"].get(name, {}).get("results")
     return None if not r or r.get("skipped") else r
 
@@ -219,24 +226,33 @@ def reflections(data, f0: float) -> dict:
 
 def loss_budget(ctx: Context, grating: Optional[dict]) -> list[dict]:
     """Fibre-to-fibre transmission off resonance at the design wavelength."""
-    cfg, ring = ctx.cfg, ctx.results("ring")
-    straight = ring["scattering_loss_db_cm"] + ring["absorption_loss_db_cm"]
+    from tarang.design.layout import coupler_plan
+    from tarang.design.stages import _losses
+    cfg = ctx.cfg
+    ring = (ctx.state["stages"].get("ring") or {}).get("results") or {}
+    straight = (ring["scattering_loss_db_cm"] + ring["absorption_loss_db_cm"] if ring
+                else sum(_losses(cfg)))
+    plan = coupler_plan(ctx)
     length_cm = (cfg.layout.bus_length_um + 2 * cfg.grating.taper_length_um) * 1e-4
     tp = ctx.state["stages"].get("taper", {}).get("results") or {}
     if tp and not tp.get("skipped") and tp.get("taper_length_um") and cfg.taper.use_in_layout:
         length_cm = (cfg.layout.bus_length_um + 2 * tp["taper_length_um"]) * 1e-4
     fc = ctx.state["stages"].get("focus", {}).get("results") or {}
-    use_fc = bool(fc.get("curves")) and bool(cfg.focus.run) and bool(cfg.focus.use_in_layout)
+    ap = ctx.state["stages"].get("apodise", {}).get("results") or {}
+    use_fc = plan["main"] == "focusing"
+    label = "grating coupler"
+    if plan["main"] == "apodised" and ap.get("efficiency_2d"):
+        grating = dict(grating or {}, efficiency_2d=ap["efficiency_2d"])
+        label = "apodised grating coupler"
     if use_fc:
         length_cm = (cfg.layout.bus_length_um + 2 * fc["tip_taper_um"]) * 1e-4
-        ap = ctx.state["stages"].get("apodise", {}).get("results") or {}
         if fc.get("teeth_kind") == "apodised" and ap.get("efficiency_2d"):
             grating = dict(grating or {}, efficiency_2d=ap["efficiency_2d"])
     rows = []
     if grating:
         gc_db = -10 * math.log10(max(grating["efficiency_2d"], 1e-9))
-        rows.append(dict(item="grating coupler, input (2D simulation)", loss_db=round(gc_db, 2)))
-        rows.append(dict(item="grating coupler, output (same design)", loss_db=round(gc_db, 2)))
+        rows.append(dict(item=f"{label}, input (2D simulation)", loss_db=round(gc_db, 2)))
+        rows.append(dict(item=f"{label}, output (same design)", loss_db=round(gc_db, 2)))
     if use_fc:
         rows.append(dict(item=f"focusing into a {fc['tip_width_um']:g} µm tip, 2 x (in-plane model)",
                          loss_db=round(-20 * math.log10(max(fc["eta_focus"], 1e-9)), 3)))
@@ -482,7 +498,8 @@ def _reverse_sim(device, ctx: Context):
     mm = next(m for m in sim.monitors if isinstance(m, td.ModeMonitor))
     st = sim.sources[0].source_time
     (x0, _, z0), (x1, _, z1) = sim.bounds
-    xg = device.config.period * device.config.n_teeth
+    teeth = getattr(device.config, "teeth", None)
+    xg = (teeth[-1][0] + teeth[-1][1]) if teeth else device.config.period * device.config.n_teeth
     src = td.ModeSource(center=(mm.center[0] - 1.5, 0, mm.center[2]), size=(0, td.inf, mm.size[2]),
                         source_time=st, direction="+", mode_spec=mm.mode_spec, mode_index=0,
                         name="waveguide_source")
@@ -632,7 +649,8 @@ def stage_checks(ctx: Context) -> dict:
     gap, gc = _done(ctx, "gap"), _done(ctx, "grating")
     out: dict = {}
     ui.say("Free checks (local or from saved results):")
-    cmt = refresh_figures(ctx, gap)
+    ring = _done(ctx, "ring")
+    cmt = refresh_figures(ctx, gap) if ring else None
     if cmt:
         out["coupled_mode_check"] = cmt
     if gap:
@@ -657,12 +675,12 @@ def stage_checks(ctx: Context) -> dict:
                    "reflection only matters through what couples back into the bus (κ² times "
                    "that).")
             _write_csv(ctx.path("tables", "arc_reflection.csv"), refl)
-    fsr = fsr_tolerance(ctx)
+    fsr = fsr_tolerance(ctx) if ring else None
     if fsr:
         out["fsr_tolerance"] = fsr
         ui.say(f"FSR over the cross-section tolerance box: {fsr['fsr_min_ghz']:.1f}-"
                f"{fsr['fsr_max_ghz']:.1f} GHz (n_g {fsr['n_g_min']:.4f}-{fsr['n_g_max']:.4f}).")
-    if cfg.checks.mode_families:
+    if cfg.checks.mode_families and ring:
         try:
             fam = mode_families(ctx)
         except Exception as err:                                  # noqa: BLE001

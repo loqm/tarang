@@ -469,6 +469,12 @@ def stage_cross_section(ctx: Context) -> dict:
     steps = ui.value(cfg, "cross_section", "map_steps", check=lambda v: "" if v >= 30 else
                      "use at least 30 (50 for maps)")
     ui.value(cfg, "run", "workers")
+    loss_test = str(getattr(cfg.run, "goal", "comb_ring")) == "loss_test"
+    given_hw = cfg.cross_section.height_um and cfg.cross_section.width_um
+    if loss_test and given_hw:
+        ui.say(f"Test waveguides of the given cross-section {cfg.cross_section.height_um} × "
+               f"{cfg.cross_section.width_um} µm: no map, only its check (single mode, n_g, mesh).")
+        return _cross_section_decision(ctx, None, None, [], dW, dH, steps=None)
     n_pts = len(heights) * len(widths)
     ui.say(f"Mapping {len(heights)} heights x {len(widths)} widths = {n_pts} cross-sections "
            f"at {steps} steps/λ (local, free; roughly {max(1, n_pts // cfg.run.workers)} min).")
@@ -486,12 +492,14 @@ def stage_cross_section(ctx: Context) -> dict:
             if r.get("steps") == steps and abs(r.get("wl0", 1.55) - wl) < 1e-9
             and round(r["H"], 4) in {round(h, 4) for h in heights}
             and round(r["W"], 4) in {round(w, 4) for w in widths}]
-    ranked = _rank_targets(rows, heights, widths)
+    ranked = _rank_targets(rows, heights, widths, anomalous=not loss_test)
     if not ranked:
-        ui.say("No cross-section in this map is anomalous AND single-mode. Widen the map "
+        ui.say("No cross-section in this map is " + ("single-mode" if loss_test else
+               "anomalous AND single-mode") + ". Widen the map "
                "(cross_section.heights_um / widths_um) or change the stack, and rerun.")
         raise RuntimeError("no target geometry found")
-    ui.say("\nCandidates (anomalous D, one guided TE mode), most robust first:")
+    ui.say("\nCandidates (" + ("one guided TE mode" if loss_test else
+                                 "anomalous D, one guided TE mode") + "), most robust first:")
     ui.table(ranked[:8], ["H_um", "W_um", "D_TE0", "ng_TE0", "guided_TE", "guided_TM",
                           "TE_TM_split", "target_neighbours"],
              {"D_TE0": ".1f", "ng_TE0": ".4f", "TE_TM_split": ".4f"})
@@ -499,14 +507,40 @@ def stage_cross_section(ctx: Context) -> dict:
            "TE_TM_split = |n_eff(TE00) - n_eff(TM00)|: a larger split keeps the TE and TM "
            "mode families further from crossing (fewer avoided crossings in the comb).")
     best = ranked[0]
+    cands = [{k: v for k, v in r.items() if not k.startswith("_")} for r in ranked[:8]]
+    why = ("most of its 8 neighbouring map points are also targets (robust to fabrication "
+           "errors), then the largest TE/TM index split (fewest mode crossings)")
+    recommend = dict(choices=cands, recommended=dict(height_um=best["H_um"], width_um=best["W_um"]),
+                     why=why)
+    if cfg.cross_section.stop_after_map and not given_hw:
+        ui.say(f"\nMap done. Recommended: {best['H_um']} × {best['W_um']} µm ({why}). Choose one "
+               "(cross_section.height_um / width_um) and run this stage again.")
+        return dict(skipped=True, awaiting_choice=True, candidates=cands, recommend=recommend,
+                    map_file=str(grid_file), map_figure=str(plots / "design_map.png"))
     ui.form(cfg, "Chosen cross-section (default: the most robust candidate)", [
         dict(section="cross_section", key="height_um", default=best["H_um"]),
         dict(section="cross_section", key="width_um", default=best["W_um"]),
         dict(section="cross_section", key="decision_steps")])
     H = ui.value(cfg, "cross_section", "height_um", default=best["H_um"])
     W = ui.value(cfg, "cross_section", "width_um", default=best["W_um"])
+    return _cross_section_decision(ctx, H, W, cands, dW, dH, steps=steps, recommend=recommend,
+                                   grid_file=grid_file, plots=plots)
 
+
+def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None,
+                            grid_file=None, plots=None) -> dict:
+    """The chosen cross-section at the decision mesh: tolerance box, finalist report, mesh
+    convergence, figures."""
+    cfg, ui = ctx.cfg, ctx.ui
+    wl = cfg.run.wavelength_um
+    if H is None:
+        ui.form(cfg, "Cross-section of the test waveguides", [
+            dict(section="cross_section", key="height_um"),
+            dict(section="cross_section", key="width_um"),
+            dict(section="cross_section", key="decision_steps")])
+        H, W = float(cfg.cross_section.height_um), float(cfg.cross_section.width_um)
     dsteps = ui.value(cfg, "cross_section", "decision_steps")
+    steps = steps or dsteps
     ui.say(f"\nChecking {H} x {W} um at {dsteps} steps/λ with its fabrication tolerance "
            f"(W ± {dW}, H ± {dH} um)...")
     fin_file = ctx.path("results", f"finalist_{dsteps}steps.jsonl")
@@ -558,7 +592,9 @@ def stage_cross_section(ctx: Context) -> dict:
                 guided_TM=centre["guided_TM"], aeff_um2=centre.get("Aeff_TE0_um2"),
                 D_min_tol=float(rep["D_min_tol"]), D_max_tol=float(rep["D_max_tol"]),
                 tolerance_box_target=robust, mesh_change=change,
-                map_file=str(grid_file), map_figure=str(plots / "design_map.png"),
+                map_file=str(grid_file) if grid_file else None,
+                map_figure=str(plots / "design_map.png") if plots else None,
+                candidates=cands, recommend=recommend,
                 report=str(ctx.out / "results" / "finalist_report" / "report.md"))
 
 
@@ -656,12 +692,13 @@ def _gap_device(ctx: Context, gap_um: float):
                        **gap_builder_options(cfg))
 
 
-def _rank_targets(rows, heights, widths) -> list[dict]:
-    """TARGET points (D >= 0, one guided TE) ranked by how many of their 8 neighbours are
-    also TARGET (a neighbour outside the map counts as unknown, not as TARGET), then by
-    the TE00/TM00 effective-index split (larger = further from a TE/TM crossing)."""
+def _rank_targets(rows, heights, widths, anomalous: bool = True) -> list[dict]:
+    """TARGET points (D >= 0 when ``anomalous``, one guided TE) ranked by how many of their 8
+    neighbours are also TARGET (a neighbour outside the map counts as unknown, not as
+    TARGET), then by the TE00/TM00 effective-index split (larger = further from a TE/TM
+    crossing)."""
     def is_target(r):
-        return r is not None and r["D_TE0"] >= 0 and r["guided_TE"] == 1
+        return (r is not None and (r["D_TE0"] >= 0 or not anomalous) and r["guided_TE"] == 1)
     by = {(round(r["H"], 4), round(r["W"], 4)): r for r in rows}
     hs, ws = sorted({round(h, 4) for h in heights}), sorted({round(w, 4) for w in widths})
     out = []
@@ -723,16 +760,22 @@ def stage_ring(ctx: Context) -> dict:
     ui.say(f"  absorption {absl} dB/cm ({assumptions.loss_source(cfg, 'absorption')})")
     bend_loss = 0.0
     if ui.value(cfg, "ring", "bend_check"):
-        bend_file = ctx.path("results", "bend.jsonl")
-        ctx.tool("sweep", "--points", f"{H}x{W}", "--bend-radius", R, "--pml", 12,
-                 "--wl", wl, "--steps", cfg.cross_section.map_steps, "--workers", 1,
-                 "--out", bend_file.relative_to(ctx.out), *ctx.stack_args())
-        rec = next((r for r in _read_jsonl(bend_file)
-                    if abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6
-                    and r.get("bend_radius") == R), None)
-        if rec:
-            bend_loss = float(rec.get("loss_TE0_dB_cm", 0.0))
-            ui.say(f"Bend loss of TE00 at R = {R} um (local bent-mode solve): {bend_loss:.3g} dB/cm")
+        # the bent TE00 picked by its overlap with the straight one, in a domain reaching past
+        # the radiation caustic (see tarang.design.waveguides.bend_loss_db_cm)
+        from tarang.design.waveguides import FLOOR_DB_CM, bend_loss_db_cm
+        try:
+            b = bend_loss_db_cm(ctx, H, W, R)
+        except Exception as err:                                  # noqa: BLE001
+            ui.say(f"  (bend loss not computed: {type(err).__name__}: {err})")
+            b = 0.0
+        if b is None:
+            ui.say(f"Warning: no bound TE00 mode at R = {R} µm: the light radiates out of the bend. "
+                   "Use a larger radius (a lower FSR) or a wider / thicker waveguide.")
+            b = 0.0
+        bend_loss = float(b)
+        ui.say(f"Bend loss of TE00 at R = {R} um (local bent-mode solve): "
+               + (f"< {FLOOR_DB_CM:g} dB/cm (below the solver's resolution)" if bend_loss < FLOOR_DB_CM
+                  else f"{bend_loss:.3g} dB/cm"))
     bent_info = fig_bent_mode(ctx, H, W, R)
     total = scat + absl + bend_loss
     qi = physics.q_intrinsic(total, ng, wl)
@@ -757,7 +800,10 @@ def stage_ring(ctx: Context) -> dict:
                 scattering_loss_db_cm=scat, absorption_loss_db_cm=absl, q_intrinsic=qi,
                 D2_2pi_MHz=_num(prof.get("D2_2pi_MHz")), D3_2pi_kHz=_num(prof.get("D3_2pi_kHz")),
                 zdw_nm=prof.get("ZDWs_nm"), profile_figure=str(fig),
-                bent_mode_shift_nm=bent_info.get("shift_nm"))
+                bent_mode_shift_nm=bent_info.get("shift_nm"),
+                recommend=dict(recommended=dict(radius_um=R0),
+                               why=f"R = c / (2π n_g FSR) = {physics.radius_for_fsr(fsr, ng):.2f} µm "
+                                   f"for {fsr:g} GHz at n_g = {ng:.4f}, rounded to 0.5 µm"))
 
 
 def _num(x):
@@ -925,7 +971,13 @@ def stage_gap(ctx: Context) -> dict:
                 figure=str(fig) if fig else None, estimated_cost=cost, folder=str(folder),
                 mesh_steps=[fine, coarse], band_points=int(cfg.gap.band_points),
                 ring_inner_box_recess_um=float(cfg.gap.ring_inner_box_recess_um),
-                coupled_mode_check=cmt or None)
+                coupled_mode_check=cmt or None,
+                recommend=dict(recommended=dict(critical_gap_um=g_crit, over_coupled_gap_um=g_over,
+                                                over_coupling=K),
+                               why="over-coupling (K = Q_i/Q_c > 1) sends more of the comb to the "
+                                   "bus and keeps the ring over-coupled if the gap comes out "
+                                   "slightly wide; the threshold grows as (1 + K)³ / K, so "
+                                   "K ≈ 1.5-2 is the usual compromise. Both gaps are drawn."))
 
 
 def gap_builder_options(cfg) -> dict:
@@ -1202,6 +1254,12 @@ def stage_grating(ctx: Context) -> dict:
                 bandwidth_1db_nm=summ["bandwidth_1db_nm"], bandwidth_3db_nm=summ["bandwidth_3db_nm"],
                 band_1db_um=[summ["band_1db_lo_um"], summ["band_1db_hi_um"]],
                 centre_peak=centre,
+                recommend=dict(recommended=dict(period_um=final["period_um"],
+                                                fill_factor=final["fill_factor"],
+                                                source_x_um=final["source_x_um"]),
+                               why="highest efficiency in the period × fill-factor map, the "
+                                   "period then tuned so the peak sits on the design wavelength, "
+                                   "and the best fibre position"),
                 efficiency_3d=best3d and best3d["efficiency_at_target"],
                 period_estimate_um=p_match(final["fill_factor"]), n_slab=n_slab, n_groove=n_groove,
                 bandwidth_um=band, min_feature_um=min_feat, runs=len(results), table=str(table),
@@ -1325,6 +1383,8 @@ STAGES: list[tuple[str, str, str, Callable[[Context], dict]]] = [
     ("materials", "Materials", "local", stage_materials),
     ("cross_section", "Waveguide cross-section (H x W)", "local", stage_cross_section),
     ("ring", "Ring radius, losses, Q, integrated dispersion", "local", stage_ring),
+    ("waveguides", "Test waveguides: bend loss, spiral radius, cutback lengths", "local",
+     lambda ctx: __import__("tarang.design.waveguides", fromlist=["stage_waveguides"]).stage_waveguides(ctx)),
     ("gap", "Ring-bus gap (critical and over-coupled)", "cloud", stage_gap),
     ("grating", "Grating coupler", "cloud", stage_grating),
     ("checks", "Checks: tolerances, mode families, losses, band, grating budget", "cloud",
@@ -1346,7 +1406,8 @@ STAGE_NAMES = [s[0] for s in STAGES]
 DEPENDS = {
     "materials": ("run.wavelength_um", "run.band_um", "materials"),
     "cross_section": ("stack", "cross_section"),
-    "ring": ("ring",),
+    "ring": ("run.goal", "ring"),
+    "waveguides": ("run.goal", "waveguides"),
     "gap": ("gap",),
     "grating": ("grating",),
     "checks": ("checks",),
@@ -1359,6 +1420,17 @@ DEPENDS = {
 }
 
 
+# Stages that belong to one design goal only (run.goal); the others run for every goal.
+STAGE_GOALS = {"ring": ("comb_ring",), "gap": ("comb_ring",), "waveguides": ("loss_test",)}
+GOALS = ("comb_ring", "loss_test")
+
+
+def applies(stage: str, cfg: DesignConfig) -> bool:
+    """Whether a stage is part of this design's goal (run.goal)."""
+    goal = str(getattr(cfg.run, "goal", "comb_ring") or "comb_ring")
+    return goal in STAGE_GOALS.get(stage, GOALS)
+
+
 # Version of the figures' drawing: a run made with an older version gets its figures redrawn
 # from saved results when its report is written (checks.redraw_saved_figures).
 FIGURE_VERSION = 3
@@ -1366,16 +1438,20 @@ FIGURE_VERSION = 3
 
 # Settings that only label where a value came from (the values themselves are hashed):
 # changing them must not repeat a stage.
-KEY_IGNORE = {"ring": {"loss_preset"}}
+KEY_IGNORE = {"ring": {"loss_preset"}, "cross_section": {"stop_after_map"}}
 
 
 def settings_key(cfg: DesignConfig, stage: str) -> str:
     """Hash of every setting this stage and the stages before it depend on."""
     parts = {}
     for name in STAGE_NAMES[:STAGE_NAMES.index(stage) + 1]:
+        if name != stage and not applies(name, cfg):
+            continue                                  # settings of another goal's stages
         for dep in DEPENDS[name]:
             sec, _, key = dep.partition(".")
             val = getattr(cfg, sec)
+            if dep == "run.goal" and getattr(val, key) == "comb_ring":
+                continue                              # the default: keys of older runs unchanged
             parts[dep] = getattr(val, key) if key else {
                 k: v for k, v in val.__dict__.items() if k not in KEY_IGNORE.get(sec, ())}
     from tarang.design.config import LEGACY

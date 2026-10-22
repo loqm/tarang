@@ -17,6 +17,7 @@ import csv
 import datetime as dt
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -63,7 +64,7 @@ def load_config(run: Path):
 
 def stage_rows(run: Path) -> list[dict]:
     """One row per stage: number, name, title, kind, status."""
-    from tarang.design.stages import STAGES, Context, settings_key
+    from tarang.design.stages import STAGES, Context, applies, settings_key
     from tarang.design.ui import Prompter
     import io
     run = Path(run)
@@ -77,7 +78,9 @@ def stage_rows(run: Path) -> list[dict]:
     rows = []
     for i, (name, title, kind, _) in enumerate(STAGES, 1):
         st = state.get("stages", {}).get(name)
-        if not st:
+        if cfg is not None and not applies(name, cfg):
+            status = "not part of this goal"
+        elif not st:
             status = "not run"
         else:
             res = st.get("results") or {}
@@ -187,7 +190,15 @@ def summary_rows(run: Path) -> list[dict]:
         add("focusing grating", f"estimate {fc['efficiency_3d_estimate'] * 100:.1f} %"
             + (f", 3D FDTD {fc['efficiency_3d'] * 100:.1f} %" if fc.get("efficiency_3d") is not None else ""),
             "", "focus")
+    wg = st.get("waveguides", {})
+    if wg.get("lengths_cm"):
+        add("expected propagation loss", wg.get("alpha_db_cm"), "dB/cm", "waveguides")
+        add("smallest spiral bend radius", wg.get("bend_radius_um"), "um", "waveguides")
+        add("cutback lengths", ", ".join(f"{x:g}" for x in wg["lengths_cm"]), "cm", "waveguides")
+        add("loss known to", wg.get("sigma_alpha_db_cm"), "dB/cm", "waveguides")
     dv = st.get("device", {})
+    for r in dv.get("rows") or []:
+        add(f"expected transmission, {r['structure']}", r["transmission_db"], "dB", "device")
     if dv.get("resonances"):
         add("fibre to fibre, off resonance", dv.get("off_resonance_db_at_pump"), "dB", "device")
         for k, v in (dv.get("regimes") or {}).items():
@@ -212,7 +223,7 @@ def read_csv(path: Path, limit: Optional[int] = None) -> list[dict]:
     return rows
 
 
-FIGURE_GROUPS = [("1", "Materials"), ("2", "Cross-section"), ("3", "Ring"), ("4", "Gap"),
+FIGURE_GROUPS = [("1", "Materials"), ("2", "Cross-section"), ("3", "Ring and test waveguides"), ("4", "Gap"),
                  ("5", "Grating"), ("6", "Layout"), ("7", "Checks and budget"), ("8", "Taper"),
                  ("9", "Apodised grating"), ("10", "Focusing grating"), ("11", "Whole device")]
 
@@ -222,7 +233,7 @@ def figures(run: Path) -> list[tuple[str, list[Path]]]:
     figs = sorted((Path(run) / "figures").glob("*.png"))
     groups = []
     for pre, name in FIGURE_GROUPS:
-        g = [f for f in figs if f.name.split("_")[0].rstrip("abcdefgh") == pre]
+        g = [f for f in figs if (re.match(r"\d+", f.name) or [None])[0] == pre]
         if g:
             groups.append((name, g))
     rest = [f for f in figs if all(f not in g for _, g in groups)]

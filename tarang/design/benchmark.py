@@ -376,13 +376,23 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
               "in-plane focusing model × tip taper)"
               + (f"; 3D FDTD {fc['efficiency_3d'] * 100:.1f} %" if fc.get("efficiency_3d") is not None
                  else "") + ". The full 3D set-up is `simulations/focusing_grating_3d.json`.", ""]
-    used = ("a focusing grating (section 4d)" if fc.get("curves") and cfg.focus.run
-            and cfg.focus.use_in_layout else
+    from tarang.design.layout import coupler_plan
+    main = coupler_plan(ctx)["main"]
+    used = ("a focusing grating (section 4d)" if main == "focusing" else
             f"a {tp.get('taper_length_um') or cfg.grating.taper_length_um:g} µm linear taper and "
-            "the straight grating")
+            f"the straight {main or 'uniform'} grating")
+    wg = st.get("waveguides") or {}
+    if wg.get("lengths_cm"):
+        L += ["## 4e. Test waveguides (propagation loss)", "",
+              f"- Bend loss of the waveguide against radius (local bent-mode solve): "
+              f"`tables/bend_loss.csv`; spirals use a smallest radius of {wg['bend_radius_um']:g} µm.",
+              f"- Cutback lengths {', '.join(f'{x:g}' for x in wg['lengths_cm'])} cm as double "
+              "spirals (`layout/spirals.csv`: turns, radii, exact lengths); expected "
+              f"loss {wg['alpha_db_cm']:g} dB/cm.",
+              "- Expected measurement: `tables/device_cutback.csv`.", ""]
     L += ["## 5. Layout", "",
           "`layout/` has the GDS files and `parameters.json` (every dimension). Each end of the "
-          f"bus has {used}, as in the simulations.", ""]
+          f"{'waveguide' if wg.get('lengths_cm') else 'bus'} has {used}, as in the simulations.", ""]
     extra = [(n, d) for n, d in (
         ("gap_tolerance.csv", "critical and over-coupled gap with the waveguide width ± its tolerance"),
         ("coupling_vs_wavelength.csv", "coupling ratio K of both gaps across the band (3D FDTD)"),
@@ -392,6 +402,8 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
                                   "both gaps (compare with a measured transmission scan)"),
         ("device_spectrum.csv", "circuit model: fibre-to-fibre transmission around the pump"),
         ("device_envelope.csv", "circuit model: off-resonance transmission and Fabry-Perot ripple bounds"),
+        ("bend_loss.csv", "bend loss of the test waveguide against radius"),
+        ("device_cutback.csv", "circuit model: expected transmission of every cutback structure"),
         ("cloud_runs.csv", "every cloud simulation with its link in the Tidy3D web interface"))
         if (ctx.out / "tables" / n).exists()]
     if extra:

@@ -650,7 +650,8 @@ def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
     import gdstk
     plt = _plt()
     lib = gdstk.read_gds(str(gds_path))
-    cell = next((c for c in lib.cells if "_gc" in c.name or "_fgc" in c.name), lib.top_level()[0])
+    cell = next((c for c in lib.cells if any(t in c.name for t in ("_gc", "_agc", "_fgc"))),
+                lib.top_level()[0])
     polys = [np.asarray(q.points) for q in cell.get_polygons()]
     colour = "#3182bd"
     fig = plt.figure(figsize=(15, 8.5))
@@ -721,6 +722,37 @@ def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
         else:
             zooms[2].set_title(f"grating: {p['grating_teeth']} × {p['grating_period_um']:.4f} µm, "
                                f"FF {p['grating_fill_factor']:.2f}")
+    return _save(fig, path)
+
+
+def cutback_views(spiral_gds: Path, ref_gds: Path, p: dict, path: Path) -> Path:
+    """Figure 6 for test waveguides: the reference waveguide and every cutback spiral with
+    its couplers (outlines widened so the waveguide stays visible), and a zoom on the
+    centre of the longest spiral."""
+    import gdstk
+    plt = _plt()
+    cells = list(gdstk.read_gds(str(spiral_gds)).top_level())
+    if Path(ref_gds).exists():
+        cells = list(gdstk.read_gds(str(ref_gds)).top_level()) + cells
+    n = len(cells)
+    fig, axes = plt.subplots(1, n + 1, figsize=(4.2 * (n + 1), 4.6), squeeze=False)
+    colour = "#3182bd"
+    for ax, cell in zip(axes[0], cells + [cells[-1]]):
+        for q in cell.get_polygons():
+            pts = np.asarray(q.points)
+            ax.fill(pts[:, 0], pts[:, 1], facecolor=colour, edgecolor=colour, lw=0.6)
+        ax.set_aspect("equal")
+        ax.set_xlabel("x (µm)")
+        ax.set_ylabel("y (µm)")
+        ax.set_title(cell.name, fontsize=9)
+    zoom = axes[0][-1]
+    r = 1.6 * (p.get("spiral_bend_radius_um") or 50.0)
+    zoom.set_xlim(-r * 1.4, r * 1.4)
+    zoom.set_ylim(-r, r)
+    zoom.set_title(f"centre of {cells[-1].name}: S-bend, smallest radius "
+                   f"{p.get('spiral_bend_radius_um') or 0:g} µm", fontsize=9)
+    fig.suptitle(f"Cutback set: {', '.join(f'{x:g}' for x in p.get('cutback_lengths_cm') or [])} cm "
+                 f"(pitch {p.get('spiral_pitch_um') or 0:g} µm), {p.get('main_coupler')} couplers")
     return _save(fig, path)
 
 

@@ -128,10 +128,11 @@ def coupler_model(ctx) -> Optional[dict]:
         return None
     tables = ctx.out / "tables"
     tp = (st.get("taper") or {}).get("results") or {}
-    ap = (st.get("apodise") or {}).get("results") or {}
     fc = (st.get("focus") or {}).get("results") or {}
-    use_ap = bool(ap.get("verified")) and bool(ap.get("better_than_uniform")) and bool(cfg.apodise.use_in_layout)
-    use_fc = bool(fc.get("curves")) and bool(cfg.focus.run) and bool(cfg.focus.use_in_layout)
+    from tarang.design.layout import coupler_plan
+    plan = coupler_plan(ctx)
+    use_ap = plan["main"] == "apodised"
+    use_fc = plan["main"] == "focusing"
     uniform = _read_spectrum(tables / "grating_spectrum_final.csv")
     apod = _read_spectrum(tables / "apodised_spectrum.csv")
     notes = []
@@ -161,6 +162,27 @@ def coupler_model(ctx) -> Optional[dict]:
     label = ("apodised" if shape is apod else "uniform") + " grating (2D) x lateral overlap x taper"
     return dict(wl=shape[0], eta=shape[1] * lat * 10 ** (-float(tl) / 10), label=label,
                 length_um=float(length), notes=notes)
+
+
+def coupler_reflection(ctx) -> tuple[dict, Optional[str]]:
+    """Reverse-run power budget of the grating the main coupler uses: the apodised
+    grating's own (apodise.reflection_check) when its teeth are used, else the uniform
+    grating's (checks stage). Returns (budget, where it came from)."""
+    from tarang.design.layout import coupler_plan
+    st = ctx.state["stages"]
+    plan = coupler_plan(ctx)
+    ap = (st.get("apodise") or {}).get("results") or {}
+    fc = (st.get("focus") or {}).get("results") or {}
+    apod_teeth = plan["main"] == "apodised" or (plan["main"] == "focusing"
+                                                and fc.get("teeth_kind") == "apodised")
+    if apod_teeth and (ap.get("power_budget") or {}).get("reflected"):
+        return ap["power_budget"], "the apodised grating's reverse run"
+    gc_res = ((st.get("checks") or {}).get("results") or {}).get("grating") or {}
+    b = gc_res.get("power_budget") or {}
+    if b.get("reflected"):
+        return b, ("the uniform grating's reverse run" + (" (the apodised grating's own was not "
+                   "simulated: apodise.reflection_check)" if apod_teeth else ""))
+    return {}, None
 
 
 def coupling_curves(ctx) -> dict:
@@ -233,8 +255,9 @@ def model(ctx) -> Optional[dict]:
         if keep.sum() >= 3:
             om, M, mus, Dint, wl_res = om[keep], M[keep], mus[keep], Dint[keep], wl_res[keep]
     D1_loc = np.gradient(om, M.astype(float))                   # rad/s per mode
-    gc_res = ((st.get("checks") or {}).get("results") or {}).get("grating") or {}
-    budget = gc_res.get("power_budget") or {}
+    budget, refl_src = coupler_reflection(ctx)
+    if refl_src:
+        notes.append(f"grating reflection from {refl_src}")
     use_refl = bool(cfg.device.reflections) and bool(budget.get("reflected"))
     if cfg.device.reflections and not budget.get("reflected"):
         notes.append("no grating reflection saved (checks stage, grating extras): no Fabry-Perot ripple")
@@ -348,13 +371,16 @@ def main_regime(md: dict) -> Optional[str]:
 def stage_device(ctx) -> dict:
     from tarang.design import visuals
     cfg, ui = ctx.cfg, ctx.ui
+    ring_goal = str(getattr(cfg.run, "goal", "comb_ring")) == "comb_ring"
     ui.form(cfg, "Whole device (circuit model, free)", [
         dict(section="device", key="run"),
         dict(section="device", key="reflections", show=lambda c: c.device.run),
-        dict(section="device", key="zoom_fsr", show=lambda c: c.device.run)])
+        dict(section="device", key="zoom_fsr", show=lambda c: c.device.run and ring_goal)])
     if not cfg.device.run:
         ui.say("  Device model not run (device.run = false).")
         return dict(skipped=True)
+    if not ring_goal:
+        return cutback_device(ctx)
     md = model(ctx)
     if md is None:
         ui.say("  Needs the cross-section and ring stages (broadband solve); not run.")
@@ -497,3 +523,100 @@ def draw_resonances(ctx, md):
     bx.set(xlabel="Wavelength (nm)", ylabel="Resonance dip (dB)",
            title="Dip depth (deepest where Q_c = Q_i)")
     return visuals._save(fig, ctx.path("figures", "11b_device_resonances.png"))
+
+
+# ------------------------------------------------------------------ test waveguides
+def cutback_device(ctx) -> dict:
+    """Expected measurement of the cutback set (run.goal = loss_test): each structure is
+    coupler + waveguide of length L + coupler, T(dB) = 2 eta_dB - alpha L, with the coupling
+    scatter (waveguides.coupler_scatter_db) as error bars and the Fabry-Perot ripple of the
+    two couplers' reflections (cavity = the whole structure)."""
+    from tarang.design import visuals
+    cfg, ui = ctx.cfg, ctx.ui
+    st = ctx.state["stages"]
+    wg = (st.get("waveguides") or {}).get("results") or {}
+    xs = (st.get("cross_section") or {}).get("results") or {}
+    if not wg or not xs:
+        ui.say("  Needs the cross-section and test-waveguide stages; not run.")
+        return dict(skipped=True)
+    cp = coupler_model(ctx)
+    if cp is None:
+        ui.say("  Needs a coupler (grating stage); not run.")
+        return dict(skipped=True)
+    alpha = float(wg["alpha_db_cm"])
+    sigma = float(cfg.waveguides.coupler_scatter_db)
+    budget, refl_src = coupler_reflection(ctx)
+    use_refl = bool(cfg.device.reflections) and bool(budget.get("reflected"))
+    wl0 = cfg.run.wavelength_um
+    n_g = float(xs.get("n_group") or 2.0)
+    lengths = [(0.0 if x == 0 else float(x)) for x in wg["lengths_cm"]]
+    L_ref_cm = float(cfg.layout.bus_length_um) * 1e-4
+    extra_cm = 2 * cp["length_um"] * 1e-4                # tapers / tip tapers, same in every one
+    eta0 = float(np.interp(wl0, cp["wl"], cp["eta"]))
+    wl = np.linspace(float(cp["wl"].min()), float(cp["wl"].max()), 400)
+    eta = np.interp(wl, cp["wl"], cp["eta"])
+    R = (np.interp(wl, np.sort(budget["wavelength_um"]),
+                   np.asarray(budget["reflected"], float)[np.argsort(budget["wavelength_um"])])
+         if use_refl else np.zeros_like(wl))
+    rows, curves = [], []
+    for x in lengths:
+        L_cm = (L_ref_cm if x == 0 else x) + extra_cm
+        p = 10 ** (-alpha * L_cm / 10)
+        T0 = eta0 ** 2 * p
+        Rp = (float(np.interp(wl0, wl, R)) * p) if use_refl else 0.0
+        ripple = 20 * math.log10((1 + Rp) / (1 - Rp)) if Rp else 0.0
+        fsr_pm = (wl0 * 1e-6) ** 2 / (2 * n_g * L_cm * 1e-2) * 1e12
+        rows.append(dict(structure="reference" if x == 0 else f"spiral {x:g} cm",
+                         length_cm=round(L_cm, 4), transmission_db=round(10 * math.log10(T0), 3),
+                         ripple_pp_db=round(ripple, 3), ripple_period_pm=round(fsr_pm, 2)))
+        base = eta ** 2 * p
+        Rw = R * p
+        curves.append((rows[-1]["structure"], base, base / (1 - Rw) ** 2, base / (1 + Rw) ** 2))
+    Ls = np.array([r["length_cm"] for r in rows])
+    sig_a = sigma / math.sqrt(float(np.sum((Ls - Ls.mean()) ** 2))) if len(Ls) > 1 else math.inf
+    ui.say(f"Cutback set with the {cp['label']}: expected transmission at {wl0} µm (±{sigma:g} dB "
+           f"coupling scatter per structure):")
+    ui.table(rows)
+    ui.say(f"  A straight-line fit gives the loss ({alpha:g} dB/cm expected) to ±{sig_a:.3g} dB/cm "
+           f"and the coupling loss per coupler ({-10 * math.log10(eta0):.2f} dB) from the intercept.")
+    if use_refl:
+        ui.say(f"  Ripple from the couplers' reflection ({refl_src}): up to "
+               f"{max(r['ripple_pp_db'] for r in rows):.2f} dB peak to peak; average over a few "
+               "ripple periods when measuring.")
+    from tarang.design.checks import _write_csv
+    _write_csv(ctx.path("tables", "device_cutback.csv"), rows)
+    fig = visuals.safe(ctx, "cutback", draw_cutback, ctx, rows, sigma, alpha, eta0, wl, curves)
+    return dict(goal="loss_test", coupler=cp["label"], rows=rows, alpha_db_cm=alpha,
+                sigma_alpha_db_cm=sig_a, coupling_loss_db=-10 * math.log10(eta0),
+                reflections=use_refl, reflection_source=refl_src,
+                tables=["tables/device_cutback.csv"], figures=[str(fig)] if fig else [])
+
+
+def draw_cutback(ctx, rows, sigma, alpha, eta0, wl, curves):
+    """Figure 11a (test waveguides): expected cutback line with the coupling scatter, and
+    the spectrum of every structure with its ripple band."""
+    from tarang.design import visuals
+    plt = visuals._plt()
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(12, 4.6))
+    L = np.array([r["length_cm"] for r in rows])
+    T = np.array([r["transmission_db"] for r in rows])
+    ax.errorbar(L, T, yerr=sigma, fmt="o", color=visuals.PALETTE[0], capsize=4,
+                label=f"expected, ±{sigma:g} dB coupling scatter")
+    xx = np.linspace(0, L.max() * 1.05, 50)
+    ax.plot(xx, 20 * math.log10(eta0) - alpha * xx, color="0.4", ls="--",
+            label=f"slope −{alpha:g} dB/cm, intercept 2 × coupler")
+    ax.set(xlabel="Waveguide length (cm)", ylabel="Transmission at the pump (dB)",
+           title="Cutback: transmission against length")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8)
+    for k, (name, base, hi, lo) in enumerate(curves):
+        col = visuals.PALETTE[k % len(visuals.PALETTE)]
+        bx.plot(wl * 1e3, 10 * np.log10(np.clip(base, 1e-12, None)), color=col, label=name)
+        bx.fill_between(wl * 1e3, 10 * np.log10(np.clip(lo, 1e-12, None)),
+                        10 * np.log10(np.clip(hi, 1e-12, None)), color=col, alpha=0.18, lw=0)
+    bx.axvline(ctx.cfg.run.wavelength_um * 1e3, color="0.6", ls=":")
+    bx.set(xlabel="Wavelength (nm)", ylabel="Transmission (dB)",
+           title="Spectra (band: Fabry-Perot ripple between the couplers)")
+    bx.grid(alpha=0.3)
+    bx.legend(fontsize=8)
+    return visuals._save(fig, ctx.path("figures", "11a_cutback.png"))
