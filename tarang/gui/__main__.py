@@ -34,6 +34,7 @@ def main(argv=None) -> int:
     cmd = [sys.executable, "-m", "streamlit", "run", str(app), "--server.port", str(a.port),
            "--server.address", "localhost", "--server.headless", "true",
            "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
+           "--theme.primaryColor", "#2563eb",
            "--", "--root", str(Path(a.root).resolve())]
     print(f"TARANG GUI on {url}  (designs under {Path(a.root).resolve()}); Ctrl+C here stops it.")
     proc = subprocess.Popen(cmd)

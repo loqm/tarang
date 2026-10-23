@@ -25,7 +25,7 @@ publish.
 | [Installation](#installation) | one block of commands |
 | [Quick start](#quick-start-local-no-credits) | five steps, all local and free, with the figures they produce |
 | [Guided design](#guided-design-one-command) | one command from materials to GDS, at any wavelength; every stage and command |
-| [Design in the browser](#design-in-the-browser-gui) | the GUI: buttons, results, files, credits |
+| [Design in the browser](#design-in-the-browser-gui) | the GUI: guided steps, results, files, credits |
 | [Cloud runs and cost control](#cloud-runs-and-cost-control) | caching, cost limits, resuming |
 | [Materials](#materials), [Logging](#logging), [Repository layout](#repository-layout) | reference, including the two `tarang.migrate` commands for old scripts |
 | [Known limitations](#known-limitations), [Troubleshooting](#troubleshooting) | what to watch for, and fixes for common errors |
@@ -41,10 +41,11 @@ After [installing](#installation) (and `tidy3d configure` for cloud runs):
 python -m tarang.gui                      # opens the design GUI in your browser
 ```
 
-In the GUI: **New design** (left) → start from `design_sin1550.toml` or `design_sin780.toml`
-→ check the **Settings** tab → **Estimate cost** (prices every cloud step, runs nothing
-that costs) → **Run**. Results appear in the tabs as stages finish. The same from a
-terminal:
+In the GUI: **New design** (left), then the guided view takes you through it one step at a
+time. Step 1 asks the two choices (a ring for frequency combs or test waveguides for
+propagation loss; grating or edge couplers); every later step shows a drawing of what it
+designs, its settings, **Run** (cloud steps: **Estimate cost** first), and then what it
+recommends, its results and figures. The same from a terminal:
 
 ```bash
 mkdir design_runs/my_ring
@@ -376,6 +377,22 @@ python -m tarang.gui --root D:/my/designs    # another folder (any path style)
 The GUI opens in your browser (it runs only on your computer, at `http://localhost:8501`;
 Ctrl+C in the terminal closes it). It shows the same design folders the command line
 writes, so both can be used on one design in turn.
+
+**Guided design** (the default view): the steps of your design on the left, with their
+status (done, waiting for your choice, settings changed, not run yet); the chosen step on
+the right:
+
+| Step part | What |
+|---|---|
+| drawing | what the step designs (ring, spirals, the three gratings, the edge coupler and lensed fibre, the cross-section of your stack, ...) |
+| settings | the step's settings as a form, each with its explanation (hover); **All settings** below holds the whole `design.toml` |
+| run | local steps: **Run (free)**; cloud steps: **Estimate cost**, then **Run (up to ... FC)** with that spend cap; **Stop** keeps finished work; the output scrolls while it runs |
+| recommended | what the step recommends and why, beside what is in use; **Use the recommended values** where they are settings (cross-section, ring radius, spiral radius and cutback lengths, the edge coupler's facet width, taper shape and length) |
+| choice | the cross-section map stops with its candidates (most robust first): pick one, it is then checked at a finer mesh |
+| results | the step's key numbers and figures; the layout step shows `design.gds` as it goes to the mask |
+| report | the design in numbers, the report, and downloads: report as HTML (figures inside; print it to PDF) or Markdown, everything as one zip, the benchmark pack |
+
+**All results** (the other view):
 
 | Where | What |
 |---|---|
