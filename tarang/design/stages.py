@@ -1395,6 +1395,8 @@ STAGES: list[tuple[str, str, str, Callable[[Context], dict]]] = [
      lambda ctx: __import__("tarang.design.apodise", fromlist=["stage_apodise"]).stage_apodise(ctx)),
     ("focus", "Focusing grating (curved teeth, short focusing slab)", "cloud",
      lambda ctx: __import__("tarang.design.focus", fromlist=["stage_focus"]).stage_focus(ctx)),
+    ("edge", "Edge coupler: facet width for the lensed fibre, taper shape and length, facet in 3D",
+     "cloud", lambda ctx: __import__("tarang.design.edge", fromlist=["stage_edge"]).stage_edge(ctx)),
     ("layout", "Layout (GDS) and parameter export", "local", stage_layout),
     ("device", "Whole device: fibre-to-fibre spectrum, every resonance (circuit model)", "local",
      lambda ctx: __import__("tarang.design.circuit", fromlist=["stage_device"]).stage_device(ctx)),
@@ -1414,6 +1416,7 @@ DEPENDS = {
     "taper": ("taper",),
     "apodise": ("apodise",),
     "focus": ("focus",),
+    "edge": ("run.coupling", "edge"),
     "layout": ("layout",),
     "device": ("device",),
     "report": (),
@@ -1423,12 +1426,21 @@ DEPENDS = {
 # Stages that belong to one design goal only (run.goal); the others run for every goal.
 STAGE_GOALS = {"ring": ("comb_ring",), "gap": ("comb_ring",), "waveguides": ("loss_test",)}
 GOALS = ("comb_ring", "loss_test")
+STAGE_COUPLING = {"grating": ("grating",), "taper": ("grating",), "apodise": ("grating",),
+                  "focus": ("grating",), "edge": ("edge",)}
+COUPLINGS = ("grating", "edge")
+
+
+def coupling(cfg: DesignConfig) -> str:
+    return str(getattr(cfg.run, "coupling", "grating") or "grating").lower()
 
 
 def applies(stage: str, cfg: DesignConfig) -> bool:
-    """Whether a stage is part of this design's goal (run.goal)."""
+    """Whether a stage is part of this design: its goal (run.goal) and the way light is
+    coupled to the chip (run.coupling)."""
     goal = str(getattr(cfg.run, "goal", "comb_ring") or "comb_ring")
-    return goal in STAGE_GOALS.get(stage, GOALS)
+    return goal in STAGE_GOALS.get(stage, GOALS) and \
+        coupling(cfg) in STAGE_COUPLING.get(stage, COUPLINGS)
 
 
 # Version of the figures' drawing: a run made with an older version gets its figures redrawn
@@ -1450,7 +1462,8 @@ def settings_key(cfg: DesignConfig, stage: str) -> str:
         for dep in DEPENDS[name]:
             sec, _, key = dep.partition(".")
             val = getattr(cfg, sec)
-            if dep == "run.goal" and getattr(val, key) == "comb_ring":
+            if (dep == "run.goal" and getattr(val, key) == "comb_ring") or \
+                    (dep == "run.coupling" and getattr(val, key) == "grating"):
                 continue                              # the default: keys of older runs unchanged
             parts[dep] = getattr(val, key) if key else {
                 k: v for k, v in val.__dict__.items() if k not in KEY_IGNORE.get(sec, ())}

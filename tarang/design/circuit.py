@@ -105,6 +105,21 @@ def chain(f_Hz, eta_in, eta_out, refl, n_eff, L_bus_m: float, alpha_per_m: float
 
 
 # ------------------------------------------------------------------ inputs from the stages
+def interp_eta(wl_um, wl_data, eta_data):
+    """Coupler efficiency between the simulated wavelengths, interpolated in log(eta): the
+    tails of a coupler spectrum fall roughly exponentially, and a linear interpolation would
+    draw V-shaped notches in dB between two simulated points."""
+    w = np.asarray(wl_data, float)
+    o = np.argsort(w)
+    lg = np.log(np.clip(np.asarray(eta_data, float)[o], 1e-12, None))
+    return np.exp(np.interp(wl_um, w[o], lg))
+
+
+def coupling_kind(ctx) -> str:
+    from tarang.design.stages import coupling
+    return coupling(ctx.cfg)
+
+
 def _read_spectrum(path: Path):
     if not path.exists():
         return None
@@ -123,6 +138,10 @@ def coupler_model(ctx) -> Optional[dict]:
     length of waveguide it adds; None if the grating stage has not run."""
     st = ctx.state["stages"]
     cfg = ctx.cfg
+    from tarang.design.stages import coupling
+    if coupling(cfg) == "edge":
+        from tarang.design import edge
+        return edge.coupler(ctx)
     gc = (st.get("grating") or {}).get("results") or {}
     if not gc or gc.get("skipped"):
         return None
@@ -138,9 +157,10 @@ def coupler_model(ctx) -> Optional[dict]:
     notes = []
     if use_fc:
         s3 = _read_spectrum(tables / "focusing_spectrum_3d.csv")
-        T = float(fc.get("tip_taper_T") or 1.0)
         if s3 is not None:
-            return dict(wl=s3[0], eta=s3[1] * T, label="focusing grating (3D FDTD) x tip taper",
+            # the 3D run launches into the tip taper and records the 1 um waveguide behind it:
+            # the tip taper is already in the spectrum
+            return dict(wl=s3[0], eta=s3[1], label="focusing grating with its tip taper (3D FDTD)",
                         length_um=float(fc.get("tip_taper_um") or 0.0), notes=notes)
         shape = apod if (fc.get("teeth_kind") == "apodised" and apod is not None) else uniform
         if shape is None:
@@ -169,6 +189,13 @@ def coupler_reflection(ctx) -> tuple[dict, Optional[str]]:
     grating's own (apodise.reflection_check) when its teeth are used, else the uniform
     grating's (checks stage). Returns (budget, where it came from)."""
     from tarang.design.layout import coupler_plan
+    from tarang.design.stages import coupling
+    if coupling(ctx.cfg) == "edge":
+        cp = coupler_model(ctx)
+        if cp is None or cp.get("refl") is None:
+            return {}, None
+        return dict(wavelength_um=list(map(float, cp["refl_wl"])),
+                    reflected=list(map(float, cp["refl"]))), cp["refl_source"]
     st = ctx.state["stages"]
     plan = coupler_plan(ctx)
     ap = (st.get("apodise") or {}).get("results") or {}
@@ -246,7 +273,8 @@ def model(ctx) -> Optional[dict]:
     a = 10 ** (-loss_ring * L_ring * 100 / 20)
     straight = float(ring["scattering_loss_db_cm"]) + float(ring["absorption_loss_db_cm"])
     alpha = straight * math.log(10) / 10 * 100                  # power, per metre
-    L_bus = (float(cfg.layout.bus_length_um) + 2 * (cp["length_um"] if cp else 0.0)) * 1e-6
+    from tarang.design.layout import bus_length_um
+    L_bus = (bus_length_um(ctx) + 2 * (cp["length_um"] if cp else 0.0)) * 1e-6
     # resonances inside the coupler's band
     wl_res = 2 * math.pi * C / om * 1e6
     if cp is not None:
@@ -256,8 +284,9 @@ def model(ctx) -> Optional[dict]:
             om, M, mus, Dint, wl_res = om[keep], M[keep], mus[keep], Dint[keep], wl_res[keep]
     D1_loc = np.gradient(om, M.astype(float))                   # rad/s per mode
     budget, refl_src = coupler_reflection(ctx)
+    edge_c = coupling_kind(ctx) == "edge"
     if refl_src:
-        notes.append(f"grating reflection from {refl_src}")
+        notes.append(f"{'facet' if edge_c else 'grating'} reflection from {refl_src}")
     use_refl = bool(cfg.device.reflections) and bool(budget.get("reflected"))
     if cfg.device.reflections and not budget.get("reflected"):
         notes.append("no grating reflection saved (checks stage, grating extras): no Fabry-Perot ripple")
@@ -269,7 +298,7 @@ def model(ctx) -> Optional[dict]:
     def eta(wl_um):
         if cp is None:
             return np.ones_like(np.asarray(wl_um, float))
-        return np.interp(wl_um, cp["wl"], cp["eta"])
+        return interp_eta(wl_um, cp["wl"], cp["eta"])
 
     def refl(wl_um):
         if not use_refl:
@@ -468,6 +497,10 @@ def draw_spectrum(ctx, md, reg, full_f, full_T, zf, zoom, wl_env, env):
             rasterized=True, label=f"fibre to fibre ({reg or 'bus only'})")
     ax.plot(wl_env * 1e3, 10 * np.log10(np.clip(env["mean"], 1e-12, None)), lw=1.4,
             color=visuals.PALETTE[1], label="off resonance, no ripple")
+    cp = md.get("coupler")
+    if cp:
+        ax.plot(np.asarray(cp["wl"]) * 1e3, 10 * np.log10(np.clip(cp["eta"], 1e-12, None)), "o--",
+                ms=2.5, lw=0.8, color="0.45", label="one coupler (simulated points)")
     ax.axvline(md["wl0"] * 1e3, color="0.5", ls=":", lw=1)
     ax.set(xlabel="Wavelength (nm)", ylabel="Transmission (dB)",
            title=f"Whole device (circuit model): {len(md['om'])} resonances")
@@ -541,7 +574,7 @@ def cutback_device(ctx) -> dict:
         return dict(skipped=True)
     cp = coupler_model(ctx)
     if cp is None:
-        ui.say("  Needs a coupler (grating stage); not run.")
+        ui.say("  Needs a coupler (grating or edge-coupler stage); not run.")
         return dict(skipped=True)
     alpha = float(wg["alpha_db_cm"])
     sigma = float(cfg.waveguides.coupler_scatter_db)
@@ -550,17 +583,20 @@ def cutback_device(ctx) -> dict:
     wl0 = cfg.run.wavelength_um
     n_g = float(xs.get("n_group") or 2.0)
     lengths = [(0.0 if x == 0 else float(x)) for x in wg["lengths_cm"]]
-    L_ref_cm = float(cfg.layout.bus_length_um) * 1e-4
+    from tarang.design.layout import bus_length_um
+    L_ref_cm = bus_length_um(ctx) * 1e-4
     extra_cm = 2 * cp["length_um"] * 1e-4                # tapers / tip tapers, same in every one
-    eta0 = float(np.interp(wl0, cp["wl"], cp["eta"]))
+    edge_c = coupling_kind(ctx) == "edge"
+    eta0 = float(interp_eta(wl0, cp["wl"], cp["eta"]))
     wl = np.linspace(float(cp["wl"].min()), float(cp["wl"].max()), 400)
-    eta = np.interp(wl, cp["wl"], cp["eta"])
+    eta = interp_eta(wl, cp["wl"], cp["eta"])
     R = (np.interp(wl, np.sort(budget["wavelength_um"]),
                    np.asarray(budget["reflected"], float)[np.argsort(budget["wavelength_um"])])
          if use_refl else np.zeros_like(wl))
     rows, curves = [], []
     for x in lengths:
-        L_cm = (L_ref_cm if x == 0 else x) + extra_cm
+        # edge coupling: the cutback lengths are facet to facet (couplers included)
+        L_cm = (L_ref_cm + extra_cm) if x == 0 else (x if edge_c else x + extra_cm)
         p = 10 ** (-alpha * L_cm / 10)
         T0 = eta0 ** 2 * p
         Rp = (float(np.interp(wl0, wl, R)) * p) if use_refl else 0.0
@@ -583,16 +619,22 @@ def cutback_device(ctx) -> dict:
         ui.say(f"  Ripple from the couplers' reflection ({refl_src}): up to "
                f"{max(r['ripple_pp_db'] for r in rows):.2f} dB peak to peak; average over a few "
                "ripple periods when measuring.")
+        if edge_c:
+            ui.say("  With edge couplers each structure is a Fabry-Perot cavity between its two facets: "
+                   "the ripple contrast K = (Tmax - Tmin)/(Tmax + Tmin) of one waveguide also gives its "
+                   "loss, R exp(-alpha L) = (1 - sqrt(1 - K^2)) / K with the facet reflection R from "
+                   "this design (Regener and Sohler, Appl. Phys. B 36, 143 (1985)); sweep the laser in "
+                   "steps well below the ripple period.")
     from tarang.design.checks import _write_csv
     _write_csv(ctx.path("tables", "device_cutback.csv"), rows)
-    fig = visuals.safe(ctx, "cutback", draw_cutback, ctx, rows, sigma, alpha, eta0, wl, curves)
+    fig = visuals.safe(ctx, "cutback", draw_cutback, ctx, rows, sigma, alpha, eta0, wl, curves, cp)
     return dict(goal="loss_test", coupler=cp["label"], rows=rows, alpha_db_cm=alpha,
                 sigma_alpha_db_cm=sig_a, coupling_loss_db=-10 * math.log10(eta0),
                 reflections=use_refl, reflection_source=refl_src,
                 tables=["tables/device_cutback.csv"], figures=[str(fig)] if fig else [])
 
 
-def draw_cutback(ctx, rows, sigma, alpha, eta0, wl, curves):
+def draw_cutback(ctx, rows, sigma, alpha, eta0, wl, curves, cp=None):
     """Figure 11a (test waveguides): expected cutback line with the coupling scatter, and
     the spectrum of every structure with its ripple band."""
     from tarang.design import visuals
@@ -614,6 +656,9 @@ def draw_cutback(ctx, rows, sigma, alpha, eta0, wl, curves):
         bx.plot(wl * 1e3, 10 * np.log10(np.clip(base, 1e-12, None)), color=col, label=name)
         bx.fill_between(wl * 1e3, 10 * np.log10(np.clip(lo, 1e-12, None)),
                         10 * np.log10(np.clip(hi, 1e-12, None)), color=col, alpha=0.18, lw=0)
+    if cp:
+        bx.plot(np.asarray(cp["wl"]) * 1e3, 10 * np.log10(np.clip(cp["eta"], 1e-12, None)), "o--",
+                ms=2.5, lw=0.8, color="0.45", label="one coupler (simulated points)")
     bx.axvline(ctx.cfg.run.wavelength_um * 1e3, color="0.6", ls=":")
     bx.set(xlabel="Wavelength (nm)", ylabel="Transmission (dB)",
            title="Spectra (band: Fabry-Perot ripple between the couplers)")

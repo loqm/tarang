@@ -71,6 +71,69 @@ def threshold_mw(xs: dict, ring: dict, n2: float, K: float = 1.0) -> float | Non
     return 1e3 * 1.54 * (math.pi / 2) * (qc / (2 * ql)) * n ** 2 * V / (n2 * lam * 1e-6 * ql ** 2)
 
 
+def known_limits(cfg) -> list[str]:
+    """The model limits that apply to this design's goal and coupler."""
+    from tarang.design.stages import applies
+    out = ["Vertical sidewalls everywhere; the n, k data are tabulated bulk values, not your film."]
+    if applies("ring", cfg):
+        out += ["Ring: the bent mode is solved for loss and dispersion; how often other mode "
+                "families cross TE00 is estimated (checks), but the strength of an avoided crossing "
+                "is not modelled.",
+                "Gap: a partial ring whose arcs end inside the simulation box; the span is not "
+                "converged against longer arcs."]
+    if applies("waveguides", cfg):
+        out += ["Test waveguides: the bend loss is that of a bend of constant radius (local "
+                "bent-mode solve); the transitions between radii in the spiral are not simulated, "
+                "and the sidewall roughness is the assumed scattering loss."]
+    if applies("grating", cfg):
+        out += ["Grating: 2D; its width enters only through the lateral overlap with the fibre "
+                "(effective-index method, section 7b); no 3D grating run unless the 3D check ran.",
+                "Taper: EME of the straight linear taper (fundamental mode in and out), even modes "
+                "only; sidewalls vertical.",
+                "Focusing grating (when designed): the in-plane focusing is a model (the fibre spot's "
+                "angular spectrum against the tip mode, effective-index method); the 2D cross-section "
+                "is assumed along every radial line. Only the optional 3D FDTD checks both."]
+    if applies("edge", cfg):
+        out += EDGE_LIMITS
+    return out
+
+
+from tarang.design.edge import EDGE_LIMITS  # noqa: E402
+
+
+def _summary_extra(ctx, st: dict, wl: float) -> list[str]:
+    """Summary rows of the coupler actually used on the mask, the whole device and (test
+    waveguides) the cutback set."""
+    import numpy as np
+    from tarang.design import circuit
+    rows = []
+    try:
+        cp = circuit.coupler_model(ctx)
+    except Exception:                                   # noqa: BLE001 - the summary must not fail
+        cp = None
+    if cp is not None:
+        e = float(np.interp(wl, cp["wl"], cp["eta"]))
+        rows.append(f"| coupler on the mask: {cp['label']} | {e * 100:.1f} % "
+                    f"({10 * math.log10(max(e, 1e-12)):.2f} dB) per coupler at {wl} µm |")
+    dev = st.get("device") or {}
+    if dev.get("off_resonance_db_at_pump") is not None:
+        rows.append(f"| fibre to fibre, off resonance (whole-device model) | "
+                    f"{dev['off_resonance_db_at_pump']:.2f} dB"
+                    + (f", ripple {dev['ripple_db_at_pump']:.2f} dB p-p |" if dev.get("ripple_db_at_pump")
+                       else " |"))
+    wg = st.get("waveguides") or {}
+    if wg and not wg.get("skipped"):
+        rows.append(f"| test waveguides: smallest bend radius | {wg.get('bend_radius_um'):g} µm |")
+        prec = wg.get("sigma_alpha_db_cm")
+        rows.append(f"| cutback lengths (loss known to) | "
+                    f"{', '.join(f'{x:g}' for x in wg.get('lengths_cm') or [])} cm"
+                    + (f" (±{prec:.3g} dB/cm) |" if prec else " |"))
+    if dev.get("goal") == "loss_test" and dev.get("coupling_loss_db") is not None:
+        rows.append(f"| expected coupling loss per coupler (cutback intercept) | "
+                    f"{dev['coupling_loss_db']:.2f} dB |")
+    return rows
+
+
 def write(ctx) -> dict:
     from tarang.design import assumptions, benchmark, checks as _checks, visuals
     _checks.redraw_saved_figures(ctx)              # older runs: improved figures, no new runs
@@ -133,6 +196,7 @@ def write(ctx) -> dict:
         L.append(f"| grating coupler (2D), fibre {gc['fiber_angle_deg']:g}° "
                  f"{gc.get('fiber_tilt', 'away')} the waveguide | "
                  f"{eff * 100:.1f} % ({-gc['loss_db_2d']:.2f} dB) at {wl} µm |")
+    L += _summary_extra(ctx, st, wl)
     L.append("")
 
     # ---- assumptions
@@ -320,12 +384,19 @@ def write(ctx) -> dict:
         L += ["", f"All simulated designs: `{_rel(ctx, gc['table'])}`.", ""]
     elif gc:
         L += ["## 5. Grating coupler", "", "Skipped (not confirmed, over budget or no credits).", ""]
+    L += _edge_section(ctx, st.get("edge", {}))
 
     # ---- 6 layout
     if lay:
         L += ["## 6. Layout", ""] + _fig(ctx, lay.get("figure"), "layout")
         L += [f"- `{_rel(ctx, f)}`" for f in lay.get("files", [])] + [""]
         p = lay.get("parameters") or {}
+        if p.get("edge_facet_width_um"):
+            L += [f"Edge couplers (`*_ec` cells) at both chip facets; the waveguides run across the "
+                  f"{p['chip_length_um']:g} µm chip. Chip outline on layer {p['layers']['chip'][0]}/"
+                  f"{p['layers']['chip'][1]} and dicing lanes ({p['dicing_lane_um']:g} µm) on "
+                  f"{p['layers']['lane'][0]}/{p['layers']['lane'][1]}: drawn for placement, not "
+                  "etched; `layout/chip.json` lists the devices and where their facets are.", ""]
         if p.get("fiber_tilt"):
             L += [f"Fibres: {p.get('fiber_angle_deg')}° from vertical, beam travelling "
                   f"{p['fiber_tilt']} the waveguide at both couplers"
@@ -341,21 +412,7 @@ def write(ctx) -> dict:
     L += _runs_section(ctx)
 
     # ---- limits (last, after every result)
-    L += ["## Known limits", "",
-          "- Vertical sidewalls everywhere; the n, k data are tabulated bulk values, not your film.",
-          "- Ring: the bent mode is solved for loss and dispersion; how often other mode "
-          "families cross TE00 is estimated (checks), but the strength of an avoided crossing "
-          "is not modelled.",
-          "- Gap: a partial ring whose arcs end inside the simulation box; the span is not "
-          "converged against longer arcs.",
-          "- Grating: 2D; its width enters only through the lateral overlap with the fibre "
-          "(effective-index method, section 7b); no 3D grating run unless the 3D check ran.",
-          "- Taper: EME of the straight linear taper (fundamental mode in and out), even modes "
-          "only; sidewalls vertical.",
-          "- Focusing grating (when designed): the in-plane focusing is a model (the fibre spot's "
-          "angular spectrum against the tip mode, effective-index method); the 2D cross-section is "
-          "assumed along every radial line. Only the optional 3D FDTD checks both.",
-          ""]
+    L += ["## Known limits", ""] + [f"- {x}" for x in known_limits(cfg)] + [""]
 
 
     checks = _check_values(cfg, mat, xs, ring, gap, gc, pth_c)
@@ -469,6 +526,14 @@ def _checks_section(ctx, chk: dict) -> list[str]:
     L = ["## 7. Checks", "",
          "Free checks (local solves and saved results) and, when confirmed, small cloud runs. "
          "Tables: `tables/`.", ""]
+    from tarang.design.stages import applies
+    ring_goal = applies("ring", ctx.cfg)        # ring-only checks stay out of other goals' reports
+    grating = applies("grating", ctx.cfg)
+    if not ring_goal:
+        chk = {k: v for k, v in chk.items() if k not in ("gap_tolerance", "arc_reflection",
+                                                          "fsr_tolerance", "mode_families", "band")}
+    if not grating:
+        chk = {k: v for k, v in chk.items() if k != "grating"}
     if chk.get("gap_tolerance"):
         dW = ctx.cfg.cross_section.tolerance_width_um
         L += [f"**Gap tolerance.** Waveguides {dW * 1e3:.0f} nm wider (or narrower) shrink "
@@ -736,6 +801,87 @@ def _waveguides_section(ctx, wg: dict) -> list[str]:
     return L
 
 
+def _edge_section(ctx, ed: dict) -> list[str]:
+    """Section 5 for edge coupling: facet width, taper, the facet in 3D."""
+    if not ed or ed.get("skipped") or not ed.get("facet_width_um"):
+        return []
+    cfg = ctx.cfg
+    wl = cfg.run.wavelength_um
+    mfd, tol = ed["fiber_mfd_um"], ed["mfd_tolerance_um"]
+    L = ["## 5. Edge coupler (wide facet, lensed fibre)", "",
+         "The lensed fibre focuses a Gaussian spot on the chip facet; by reciprocity the power "
+         "it puts into the waveguide is the power of the field leaving the facet that falls "
+         "into the fibre mode, a = ¼∫(E₁×H₂* + E₂*×H₁)·x dA with the fibre mode at unit power. "
+         "Close to the facet this is the butt-coupling estimate: the overlap of the facet's "
+         "TE00 with the spot times the Fresnel transmission 1 − ((n_eff − 1)/(n_eff + 1))². The "
+         f"{ctx.results('cross_section')['height_um'] * 1e3:.0f} nm film fixes the mode's height, "
+         "well below the spot, so the vertical mismatch sets the ceiling; the facet width sets "
+         "the lateral overlap. The waveguide widens towards the facet through an adiabatic taper.",
+         "",
+         f"**Facet width** (free: local mode solve of the facet with the BOX and the Si handle, "
+         f"best fibre height for each width). Spot MFD {mfd:g} ± {tol:g} µm.", ""]
+    L += _fig(ctx, ctx.out / "figures" / "12a_edge_facet.png", "edge facet")
+    L += ["| | value |", "|---|---|",
+          f"| facet width: recommended / used | {ed['facet_width_recommended_um']:g} µm / "
+          f"{ed['facet_width_um']:g} µm |",
+          f"| n_eff of the facet's TE00 | {ed['n_eff_facet']:.4f} |",
+          f"| butt coupling at MFD {mfd:g} µm | {ed['eta_free'] * 100:.1f} % "
+          f"({10 * math.log10(ed['eta_free']):.2f} dB): overlap {ed['eta_overlap'] * 100:.1f} % × "
+          f"Fresnel {ed['fresnel_T'] * 100:.1f} % |",
+          f"| fibre spot centre above the BOX top | {ed['fibre_height_free_um']:.2f} µm |",
+          f"| facet reflection (Fresnel at n_eff) | {10 * math.log10(ed['reflection_free']):.1f} dB |",
+          "", "Every width and spot size: `tables/edge_facet_map.csv`.", ""]
+    L += ["**Taper.** Linear, parabolic (w² linear in length) and power-law (w ∝ s^m, s from the "
+          "waveguide) shapes; the beat length to the next even mode grows as the guide widens, so a "
+          "taper may widen fast where it is narrow. Loss against length from the converged 2D "
+          "model (effective-index method, sub-pixel walls) and, when run, Tidy3D's 3D EME of each "
+          "shape. A short taper's loss oscillates with length and the fabricated shape differs a "
+          "little from the drawn one; length costs nothing at the chip edge, so the length is the "
+          f"shortest from which the loss stays below half the accepted {cfg.edge.max_loss_db:g} dB.", ""]
+    L += _fig(ctx, ctx.out / "figures" / "12b_edge_taper.png", "edge taper")
+    rows = []
+    for k in ed.get("profiles") or []:
+        e3 = (ed.get("eme") or {}).get(k) or {}
+        rows.append(f"| {k} | {ed['model_lengths_um'].get(k) or '-'} | "
+                    f"{e3.get('shortest_um') or '-'}{'' if not e3 or e3.get('converged') else ' (not converged)'} |")
+    L += [f"| shape | loss below {cfg.edge.max_loss_db / 2:g} dB from (2D model, µm) | 3D EME (µm) |",
+          "|---|---|---|"] + rows + [
+          "", f"Used: **{ed['profile']}** taper, **{ed['taper_length_um']:.0f} µm**, "
+              f"{ed['taper_loss_db']:.3f} dB ({ed['taper_loss_source']}); recommended: "
+              f"{ed['profile_recommended']}, {ed.get('taper_length_recommended_um') or '-'} µm.", ""]
+    f3 = ed.get("fdtd")
+    if f3:
+        L += ["**The facet in 3D FDTD.** The waveguide mode is launched towards the facet; the "
+              "waveguide and its BOX run through the absorbing boundary behind the source, so no "
+              "waveguide end reflects (the Si handle, 4 µm down, does not change the guided mode and "
+              "is left out of the box). The field 0.5 µm past the facet gives the coupling for "
+              "any fibre position, spot size and working distance (the overlap above, with the "
+              "Gaussian's curvature), and the mode amplitude travelling back the facet reflection.",
+              ""]
+        L += _fig(ctx, ctx.out / "figures" / "12c_edge_3d.png", "edge coupler in 3D")
+        L += ["| | value |", "|---|---|",
+              f"| coupling per facet at {wl} µm, best position | {f3['eta'] * 100:.1f} % "
+              f"({f3['eta_db']:.2f} dB) |",
+              f"| fibre spot centre above the BOX / waist in front of the facet | "
+              f"{f3['fibre_height_um']:.2f} µm / {f3['working_distance_um']:.1f} µm |",
+              f"| facet reflection into the waveguide mode | "
+              f"{10 * math.log10(max(f3['reflection_mode'], 1e-12)):.1f} dB |",
+              f"| all light sent back into the chip | "
+              f"{10 * math.log10(max(f3['reflection_back_total'], 1e-12)):.1f} dB |", ""]
+        L += ["| spot MFD (µm) | coupling | best height (µm) | working distance (µm) |",
+              "|---|---|---|---|"]
+        L += [f"| {sp['mfd_um']:g} | {sp['eta'] * 100:.1f} % ({sp['eta_db']:.2f} dB) | "
+              f"{sp['fibre_height_um']:.2f} | {sp['working_distance_um']:.1f} |" for sp in f3["spot"]]
+        L += ["", "| fibre offset | change (dB) |", "|---|---|"]
+        L += [f"| {t['direction']} {t['offset_um']:+g} µm | {t['change_db']:.2f} |" for t in f3["tolerance"]]
+        L += ["", "Tables: `tables/edge_spectrum_3d.csv`, `tables/edge_reflection_3d.csv`, "
+              "`tables/edge_spot_and_offsets.csv`.", ""]
+    L += [f"One edge coupler (facet × taper): **{ed['eta_coupler'] * 100:.1f} % "
+          f"({10 * math.log10(ed['eta_coupler']):.2f} dB)** at {wl} µm. The two facets make the "
+          "chip a Fabry-Perot cavity (section 7e).", ""]
+    return L
+
+
 def _device_section(ctx, dv: dict) -> list[str]:
     """Section 7e: the whole device from the circuit model."""
     if dv and dv.get("goal") == "loss_test" and dv.get("rows"):
@@ -757,7 +903,7 @@ def _device_section(ctx, dv: dict) -> list[str]:
          "scattering matrix comes from its own stage and the parts are chained (Redheffer star "
          "product): fibre → coupler → bus with the ring (all-pass, t = (r − a e^{iφ})/(1 − r a e^{iφ}), "
          "resonances at the ring stage's mode frequencies, so D_int is included) → coupler → fibre. "
-         "The gratings' back-reflections make the Fabry-Perot ripple. Coupler: "
+         "The couplers' back-reflections make the Fabry-Perot ripple. Coupler: "
          f"{dv.get('coupler')}; {dv['bus_length_total_um']:.0f} µm of waveguide between the "
          f"couplers; {dv['resonances']} resonances from {dv['band_nm'][0]:.0f} to {dv['band_nm'][1]:.0f} nm.", "",
          f"Off resonance at {ctx.cfg.run.wavelength_um} µm: {dv['off_resonance_db_at_pump']:.2f} dB fibre to fibre"
@@ -816,6 +962,21 @@ def _check_values_12(st: dict) -> list[dict]:
             add(f"loaded Q at the pump ({k})", float(f"{v['Q_L_pump']:.4g}"), "",
                 "all-pass ring: kappa^2 from the gap/checks FDTD, a from the ring loss")
             add(f"resonance dip at the pump ({k})", round(v["dip_db_pump"], 2), "dB", "same")
+    ed = st.get("edge") or {}
+    if ed.get("facet_width_um"):
+        add("edge facet width", ed["facet_width_um"], "um", "best average butt coupling (overlap of the "
+            "facet's TE00, local solve with the Si handle, with the fibre Gaussian x Fresnel "
+            "transmission) over MFD +- tolerance")
+        add("edge butt-coupling estimate", round(ed["eta_free"], 4), "", "overlap x Fresnel at n_eff, "
+            "best fibre height")
+        add("edge taper length", ed["taper_length_um"], "um", f"{ed['profile']} shape; loss below half "
+            f"the accepted loss from this length ({ed['taper_loss_source']})")
+        f3 = ed.get("fdtd") or {}
+        if f3:
+            add("edge coupling per facet (3D FDTD)", round(f3["eta"], 4), "", "overlap of the field 0.5 um "
+                "past the facet with the fibre Gaussian (best height and distance), per unit incident power")
+            add("facet reflection into TE00 (3D FDTD)", round(f3["reflection_mode"], 5), "",
+                "backward mode amplitude^2 between source and facet")
     return rows
 
 

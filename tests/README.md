@@ -2,12 +2,12 @@
 
 ```bash
 python -m pytest                     # whole suite, ~15-20 min, no FlexCredits
-python -m pytest -m "not slow"       # quick check, ~2-3 min (skips 20 mode-solve / fitting tests)
+python -m pytest -m "not slow"       # quick check, ~2-3 min (skips 21 mode-solve / fitting tests)
 python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `389 passed, 2 skipped` (quick check: `369 passed, 2 skipped, 20 deselected`). The two skips are the real-cloud
+Expected on Windows: `415 passed, 2 skipped` (quick check: `394 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.

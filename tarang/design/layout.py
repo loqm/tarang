@@ -35,6 +35,13 @@ def coupler_plan(ctx) -> dict:
     when the main coupler is straight) and notes."""
     cfg = ctx.cfg
     st = ctx.state["stages"]
+    from tarang.design.stages import coupling
+    if coupling(cfg) == "edge":
+        ed = (st.get("edge") or {}).get("results") or {}
+        have = bool(ed.get("facet_width_um")) and not ed.get("skipped")
+        return dict(kinds=[("ec", "edge")] if have else [], main="edge" if have else None,
+                    straight=None, setting="edge", notes=[] if have else
+                    ["run.coupling = edge, but the edge-coupler stage has not run: no couplers drawn"])
     gc = (st.get("grating") or {}).get("results") or {}
     ap = (st.get("apodise") or {}).get("results") or {}
     fc = (st.get("focus") or {}).get("results") or {}
@@ -97,6 +104,12 @@ def device_parameters(ctx) -> dict:
     use_fc = plan["main"] == "focusing"
     lay = cfg.layout
     goal = str(getattr(cfg.run, "goal", "comb_ring"))
+    ed = (st.get("edge") or {}).get("results") or {}
+    from tarang.design.stages import coupling
+    edge_on = coupling(cfg) == "edge" and bool(ed.get("facet_width_um"))
+    if coupling(cfg) == "edge":                 # grating results left from a grating design
+        gc, tp, ap, fc = {}, {}, {}, {}
+        use_tp = use_ap = have_fc = use_fc = False
     gaps = [g for g in (gap.get("critical_gap_um"), gap.get("over_coupled_gap_um")) if g]
     variants = sorted({round(g + d, 4) for g in gaps for d in [0.0, *map(float, lay.gap_offsets_um)]
                        if g + d > 0.05})
@@ -120,7 +133,21 @@ def device_parameters(ctx) -> dict:
         "cutback_lengths_cm": [float(x) for x in wg.get("lengths_cm", [])] if goal == "loss_test" else [],
         "spiral_bend_radius_um": wg.get("bend_radius_um") if goal == "loss_test" else None,
         "spiral_pitch_um": wg.get("spiral_pitch_um") if goal == "loss_test" else None,
-        "bus_length_um": lay.bus_length_um,
+        "coupling": coupling(cfg),
+        "bus_length_um": edge_bus_length_um(cfg, ed) if edge_on else lay.bus_length_um,
+        "edge_facet_width_um": ed.get("facet_width_um") if edge_on else None,
+        "edge_taper_profile": ed.get("profile") if edge_on else None,
+        "edge_power_exponent": ed.get("power_exponent") if edge_on else None,
+        "edge_taper_length_um": ed.get("taper_length_um") if edge_on else None,
+        "edge_facet_straight_um": cfg.edge.facet_straight_um if edge_on else None,
+        "edge_facet_overhang_um": cfg.edge.facet_overhang_um if edge_on else None,
+        "edge_fiber_mfd_um": cfg.edge.fiber_mfd_um if edge_on else None,
+        "edge_fiber_height_um": (((ed.get("fdtd") or {}).get("fibre_height_um")
+                                  or ed.get("fibre_height_free_um")) if edge_on else None),
+        "chip_length_um": cfg.edge.chip_length_um if edge_on else None,
+        "chip_width_um": cfg.edge.chip_width_um if edge_on else None,
+        "dicing_lane_um": cfg.edge.dicing_lane_um if edge_on else None,
+        "edge_pitch_um": cfg.edge.pitch_um if edge_on else None,
         "grating_period_um": gc.get("period_um"),
         "grating_fill_factor": gc.get("fill_factor"),
         "grating_tooth_length_um": _r(gc["period_um"] * gc["fill_factor"]) if gc.get("period_um") else None,
@@ -152,8 +179,30 @@ def device_parameters(ctx) -> dict:
         "tone": lay.tone,
         "trench_width_um": lay.trench_width_um,
         "layers": {"waveguide": list(lay.waveguide_layer), "ring": list(lay.ring_layer),
-                   "taper": list(lay.taper_layer), "grating": list(lay.grating_layer)},
+                   "taper": list(lay.taper_layer), "grating": list(lay.grating_layer),
+                   "chip": list(cfg.edge.chip_layer), "lane": list(cfg.edge.lane_layer)},
     }
+
+
+def edge_coupler_length_um(cfg, ed: dict) -> float:
+    """Length on the chip of one edge coupler: taper plus the straight at the facet width."""
+    return float(ed.get("taper_length_um") or 0.0) + float(cfg.edge.facet_straight_um)
+
+
+def edge_bus_length_um(cfg, ed: dict) -> float:
+    """The 1 um waveguide between the two edge-coupler tapers: the chip length less both
+    couplers (the waveguides run from facet to facet)."""
+    return float(cfg.edge.chip_length_um) - 2 * edge_coupler_length_um(cfg, ed)
+
+
+def bus_length_um(ctx) -> float:
+    """Waveguide between the couplers' tapers on the device: layout.bus_length_um for
+    grating couplers, the chip length less both edge couplers for edge coupling."""
+    from tarang.design.stages import coupling
+    ed = (ctx.state["stages"].get("edge") or {}).get("results") or {}
+    if coupling(ctx.cfg) == "edge" and ed.get("facet_width_um"):
+        return edge_bus_length_um(ctx.cfg, ed)
+    return float(ctx.cfg.layout.bus_length_um)
 
 
 def _r(x, nd=4):
@@ -164,15 +213,18 @@ def export(ctx) -> dict:
     ui = ctx.ui
     cfg = ctx.cfg
     from tarang.design.ui import parse_list
+    from tarang.design.stages import coupling
+    grating = lambda c: coupling(c) == "grating"              # noqa: E731
     ui.form(cfg, "Layout", [
-        dict(section="layout", key="bus_length_um"),
+        dict(section="layout", key="bus_length_um", show=grating),
         dict(section="layout", key="tone", check=lambda v: "" if v in ("structure", "trench")
              else "answer structure or trench"),
         dict(section="layout", key="trench_width_um", show=lambda c: c.layout.tone == "trench"),
         *[dict(section="layout", key=k, cast=parse_list) for k in
           ("waveguide_layer", "ring_layer", "taper_layer", "grating_layer")],
-        dict(section="grating", key="taper_length_um"),
-        dict(section="layout", key="coupler", check=lambda v: "" if str(v).lower() in COUPLER_SETTINGS
+        dict(section="grating", key="taper_length_um", show=grating),
+        dict(section="layout", key="coupler", show=grating,
+             check=lambda v: "" if str(v).lower() in COUPLER_SETTINGS
              else "answer " + ", ".join(COUPLER_SETTINGS)),
         dict(section="layout", key="reference",
              show=lambda c: str(getattr(c.run, "goal", "comb_ring")) == "comb_ring"),
@@ -182,8 +234,11 @@ def export(ctx) -> dict:
                 "taper_layer", "grating_layer"):
         if key == "trench_width_um" and cfg.layout.tone != "trench":
             continue
+        if key == "bus_length_um" and not grating(cfg):
+            continue
         ui.value(cfg, "layout", key)
-    ui.value(cfg, "grating", "taper_length_um")
+    if grating(cfg):
+        ui.value(cfg, "grating", "taper_length_um")
     p = device_parameters(ctx)
     for note in coupler_plan(ctx)["notes"]:
         ui.say("  Note: " + note)
@@ -199,6 +254,13 @@ def export(ctx) -> dict:
                f"({p['focus_tip_taper_um']:g} µm tip taper), drawn in the *_fgc cells; "
                + ("it is the main coupler (budget, layout figure)." if p["grating_focusing"] else
                   "the straight grating stays the main coupler (focus.use_in_layout = false)."))
+    if p.get("edge_facet_width_um"):
+        ui.say(f"  Edge couplers (*_ec cells): {p['edge_taper_profile']} taper "
+               f"{p['edge_taper_length_um']:g} µm from the {p['waveguide_width_um']:g} µm waveguide to the "
+               f"{p['edge_facet_width_um']:g} µm facet, then {p['edge_facet_straight_um']:g} µm straight to "
+               f"the chip edge and {p['edge_facet_overhang_um']:g} µm on into the dicing lane; the "
+               f"waveguides run across the {p['chip_length_um']:g} µm chip "
+               f"({p['bus_length_um']:g} µm between the tapers).")
     if p.get("grating_period_um"):
         src = ("taper stage" if p["taper_length_um"] != cfg.grating.taper_length_um
                else "grating.taper_length_um")
@@ -214,13 +276,28 @@ def export(ctx) -> dict:
         ui.say("gdstk is not installed, so no GDS was written (parameters were). Install it "
                'with: pip install "tarang-photonics[layout]" and rerun this stage.')
         return dict(parameters=p, files=files, gds=None, lle=lle)
-    files += build_gds(p, out)
+    try:
+        files += build_gds(p, out)
+    except ValueError as err:                       # a spiral that does not fit the chip
+        ui.say(f"  Layout not written: {err}")
+        return dict(parameters=p, files=[str(f) for f in files], gds=None, lle=lle, error=str(err))
+    chip = out / "chip.json"
+    if p.get("edge_facet_width_um") and chip.exists():
+        info = json.loads(chip.read_text(encoding="utf-8"))
+        ui.say(f"  Chip {info['chip_length_um']:g} × {info['chip_width_um']:g} µm (outline on layer "
+               f"{p['layers']['chip'][0]}/{p['layers']['chip'][1]}, dicing lanes of "
+               f"{info['dicing_lane_um']:g} µm on {p['layers']['lane'][0]}/{p['layers']['lane'][1]}): "
+               f"{len(info['devices'])} devices, facets at least {info['pitch_um']:g} µm apart, "
+               f"{info['height_needed_um']:.0f} µm of the width used"
+               + ("." if info["fits"] else " — MORE than the chip is wide: use a wider chip "
+                                            "(edge.chip_width_um) or fewer variants."))
     ui.say("Layout files:")
     for f in files:
         ui.say(f"  {f}")
     fig = None
     from tarang.design import visuals
-    suf = next((a for a, k in p.get("couplers") or [] if k == p.get("main_coupler")), "gc")
+    suf = next((a for a, k in p.get("couplers") or [] if k == p.get("main_coupler")),
+               "ec" if p.get("edge_facet_width_um") else "gc")
     if p.get("goal") == "loss_test":
         sp = next((f for f in files if Path(f).name == f"spiral_cutback_{suf}.gds"), None)
         if sp:
@@ -232,6 +309,10 @@ def export(ctx) -> dict:
         if gc_file:
             fig = visuals.safe(ctx, "layout", visuals.layout_views, gc_file, p,
                                ctx.path("figures", "6_layout.png"))
+    if p.get("edge_facet_width_um"):
+        h = p.get("edge_fiber_height_um")
+        ui.say(f"  Fibres: lensed, MFD {p['edge_fiber_mfd_um']:g} µm, in the chip plane facing the facets"
+               + (f", spot centre {h:.2f} µm above the BOX top" if h is not None else "") + ".")
     if p.get("grating_period_um") and p.get("fiber_tilt"):
         ui.say(f"  Fibres: {p['fiber_angle_deg']}° from vertical, beam travelling "
                f"{p['fiber_tilt']} the waveguide at both couplers"
@@ -334,14 +415,32 @@ def build_gds(p: dict, out: Path) -> list[Path]:
                 poly.mirror((0, 0), (0, 1))
             cell.add(poly)
 
+    def edge(cell):
+        """Edge coupler at the right end of the bus: taper (its shape from the edge stage)
+        from the waveguide to the facet width, the straight at the facet width up to the
+        chip edge, and on into the dicing lane."""
+        from tarang.design.taper import taper_outline
+        x0, Lt = L / 2, float(p["edge_taper_length_um"])
+        Wf = float(p["edge_facet_width_um"])
+        pts = taper_outline(Wf, W, Lt, p.get("edge_taper_profile") or "linear",
+                            float(p.get("edge_power_exponent") or 0.6))
+        cell.add(gdstk.Polygon([(x0 + Lt - x, y) for x, y in pts], **lay["taper"]))
+        x1 = x0 + Lt + float(p["edge_facet_straight_um"]) + float(p["edge_facet_overhang_um"])
+        cell.add(gdstk.rectangle((x0 + Lt, -Wf / 2), (x1, Wf / 2), **lay["taper"]))
+
     def coupler(cell, side, kind="uniform", end=None):
         """Taper and grating at the right (side = +1) or left (-1) end of the bus (or at the
         waveguide end ``end`` = (x, y), the waveguide arriving along +x for side +1 and -x
-        for side -1). kind: 'uniform', 'apodised' or 'focusing'."""
-        if not p.get("grating_period_um"):
+        for side -1). kind: 'uniform', 'apodised', 'focusing' or 'edge'."""
+        if kind == "edge":
+            if not p.get("edge_facet_width_um"):
+                return
+        elif not p.get("grating_period_um"):
             return
         sub = gdstk.Cell("_tmp")
-        if kind == "focusing":
+        if kind == "edge":
+            edge(sub)
+        elif kind == "focusing":
             focusing(sub, +1)
         else:
             straight(sub, kind)
@@ -423,6 +522,8 @@ def build_gds(p: dict, out: Path) -> list[Path]:
     top = gdstk.Cell(f"{p['name']}_TOP")
     y_off = 0.0
     spiral_info = []
+    is_edge = any(k == "edge" for _, k in kinds)
+    placed = []                                       # (cell, its y offset) for the edge chip
     for fname, items in variants.items():
         lib = gdstk.Library(unit=1e-6, precision=1e-9)
         for it in items:
@@ -430,7 +531,11 @@ def build_gds(p: dict, out: Path) -> list[Path]:
             kind = it.get("kind")
             if it.get("spiral_cm"):
                 r0 = 2 * float(p["spiral_bend_radius_um"])
-                pts, info = spiral_path(it["spiral_cm"] * 1e4, r0, float(p["spiral_pitch_um"]))
+                if kind == "edge":                  # total facet-to-facet length = the target
+                    pts, info = edge_spiral(it["spiral_cm"] * 1e4, r0, float(p["spiral_pitch_um"]),
+                                            L / 2, float(p["chip_length_um"]))
+                else:
+                    pts, info = spiral_path(it["spiral_cm"] * 1e4, r0, float(p["spiral_pitch_um"]))
                 cell.add(gdstk.FlexPath(pts, W, tolerance=tol, **lay["waveguide"]))
                 info.update(label=it["label"], kind=kind)
                 spiral_info.append(info)
@@ -445,13 +550,23 @@ def build_gds(p: dict, out: Path) -> list[Path]:
                     coupler(cell, -1, kind)
             cell = finish(cell)
             lib.add(cell)
-            lib_all.add(cell)
+            if not (is_edge and kind != "edge"):     # the chip holds only cells with facets
+                lib_all.add(cell)
             (x0b, y0b), (x1b, y1b) = cell.bounding_box() or ((0, 0), (0, 0))
+            if is_edge:
+                if kind == "edge":            # only cells with facets go on the chip
+                    placed.append((cell, y0b, y1b))
+                continue
             top.add(gdstk.Reference(cell, (0, y_off - y1b)))
             y_off -= (y1b - y0b) + 50.0
         path = out / f"{fname}.gds"
         lib.write_gds(path)
         files.append(path)
+    if is_edge and placed:
+        chip = edge_chip(top, placed, p, lay)
+        with open(out / "chip.json", "w", encoding="utf-8") as f:
+            json.dump(chip, f, indent=1)
+        files.append(out / "chip.json")
     lib_all.add(top)
     path = out / "design.gds"
     lib_all.write_gds(path)
@@ -531,3 +646,66 @@ def spiral_path(length_um: float, r0_min: float, pitch: float, lead: float = 20.
     info.update(length_um=round(_length(pts), 2), min_bend_radius_um=round(info["r0"] / 2, 3),
                 r0=round(info["r0"], 3), r_out=round(info["r_out"], 3))
     return pts, info
+
+
+def edge_spiral(total_um: float, r0_min: float, pitch: float, x_taper: float, chip_um: float):
+    """Spiral whose waveguide, run out horizontally to the edge-coupler tapers at +-x_taper,
+    has the given facet-to-facet length (couplers included, chip_um long in total): the
+    spiral's own length s satisfies s + 2 (x_taper - x_spiral_end) + (chip_um - 2 x_taper)
+    = total, solved by a few fixed-point steps (x_spiral_end grows slowly with s)."""
+    xe = 0.0
+    pts = info = None
+    for _ in range(6):
+        s = total_um - chip_um + 2 * xe
+        if s <= 0:
+            raise ValueError(f"{total_um / 1e4:g} cm is shorter than the chip ({chip_um / 1e4:g} cm) "
+                             "plus a spiral: use longer cutback lengths or a shorter chip")
+        pts, info = spiral_path(s, r0_min, pitch)
+        xe_new = float(pts[-1][0])
+        if abs(xe_new - xe) < 1e-3:
+            break
+        xe = xe_new
+    if float(pts[-1][0]) > x_taper:
+        raise ValueError(f"the {total_um / 1e4:g} cm spiral ({2 * pts[-1][0]:.0f} µm across) does not "
+                         f"fit between the edge couplers ({2 * x_taper:.0f} µm apart): use a longer chip")
+    start = np.array([[-x_taper, pts[0][1]]])
+    end = np.array([[x_taper, pts[-1][1]]])
+    full = np.concatenate([start, pts, end])
+    info = dict(info, length_um=round(_length(full) + chip_um - 2 * x_taper, 2),
+                spiral_length_um=round(_length(pts), 2))
+    return full, info
+
+
+def edge_chip(top, placed, p: dict, lay: dict) -> dict:
+    """Place the edge-coupled devices on the chip, one above the other with at least
+    edge_pitch_um between neighbouring facets, centred on the chip; draw the chip outline
+    and the dicing lanes (on their own layers, not etched). Returns the chip summary."""
+    import gdstk
+    pitch = float(p.get("edge_pitch_um") or 127.0)
+    Lc, Wc = float(p["chip_length_um"]), float(p["chip_width_um"])
+    lane = float(p.get("dicing_lane_um") or 0.0)
+    ys, y = [], 0.0
+    prev_bottom = None
+    for cell, y0b, y1b in placed:
+        if prev_bottom is None:
+            y = -y1b
+        else:
+            # the bus (y = 0 in the cell) at least one pitch below the last one, and no overlap
+            y = min(ys[-1] - pitch, prev_bottom - 30.0 - y1b)
+        ys.append(y)
+        prev_bottom = y + y0b
+    top_y = ys[0] + placed[0][2]
+    shift = -(top_y + prev_bottom) / 2                # centre the stack on the chip
+    for (cell, _, _), yy in zip(placed, ys):
+        top.add(gdstk.Reference(cell, (0, yy + shift)))
+    needed = top_y - prev_bottom
+    top.add(gdstk.rectangle((-Lc / 2, -Wc / 2), (Lc / 2, Wc / 2), **lay["chip"]))
+    if lane > 0:
+        for sgn in (-1, 1):
+            x_in, x_out = sgn * Lc / 2, sgn * (Lc / 2 + lane)
+            top.add(gdstk.rectangle((min(x_in, x_out), -Wc / 2), (max(x_in, x_out), Wc / 2),
+                                    **lay["lane"]))
+    return dict(chip_length_um=Lc, chip_width_um=Wc, dicing_lane_um=lane, pitch_um=pitch,
+                devices=[c.name for c, _, _ in placed],
+                facet_y_um=[round(yy + shift, 3) for yy in ys], height_needed_um=round(needed, 1),
+                fits=bool(needed <= Wc))

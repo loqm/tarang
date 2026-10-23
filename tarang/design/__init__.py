@@ -48,14 +48,19 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
     ctx.record_versions()
     for note in ctx.apply_legacy():
         ui.say("  " + note)
-    _show_assumptions(cfg, ui)
     stale = False
-    from tarang.design.stages import GOALS
-    ui.form(cfg, "What to design", [dict(
-        section="run", key="goal",
-        check=lambda v: "" if v in GOALS else "answer comb_ring or loss_test")])
+    from tarang.design.stages import COUPLINGS, GOALS
+    ui.form(cfg, "What to design", [
+        dict(section="run", key="goal",
+             check=lambda v: "" if v in GOALS else "answer comb_ring or loss_test"),
+        dict(section="run", key="coupling",
+             check=lambda v: "" if str(v).lower() in COUPLINGS else "answer grating or edge")])
     if cfg.run.goal not in GOALS:
         raise ValueError(f"run.goal must be one of {GOALS}, not {cfg.run.goal!r}")
+    cfg.run.coupling = str(cfg.run.coupling or "grating").lower()
+    if cfg.run.coupling not in COUPLINGS:
+        raise ValueError(f"run.coupling must be one of {COUPLINGS}, not {cfg.run.coupling!r}")
+    _show_assumptions(cfg, ui)                      # after the choice: they depend on the coupling
     try:
         credit_limits(ctx)
         for i, (name, title, kind, func) in enumerate(STAGES, 1):
@@ -64,7 +69,7 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
             if not applies(name, cfg):
                 if name in set(only) - {"report"} and len(only) < len(STAGE_NAMES):
                     ui.say(f"\n[{i}/{len(STAGES)}] {title}: not part of a '{cfg.run.goal}' design "
-                           "(run.goal); skipped")
+                           f"with {cfg.run.coupling} coupling (run.goal, run.coupling); skipped")
                 continue
             saved = ctx.state["stages"].get(name)
             key = settings_key(cfg, name)

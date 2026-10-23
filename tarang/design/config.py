@@ -26,6 +26,9 @@ class Run:
     goal: str = _f("comb_ring", "What to design: 'comb_ring' (ring resonator for frequency combs, "
                                 "with its bus and couplers) or 'loss_test' (test waveguides for "
                                 "propagation loss: cutback spirals with couplers)")
+    coupling: str = _f("grating", "How light gets on and off the chip: 'grating' (grating "
+                                  "couplers, fibre from above) or 'edge' (edge couplers at the "
+                                  "chip facets, lensed fibre in the chip plane)")
     wavelength_um: float = _f(1.55, "Design wavelength (the pump)", "um")
     band_um: Optional[float] = _f(None, "Material-fit band half-width (default: 0.13 x "
                                         "wavelength)", "um")
@@ -215,6 +218,49 @@ class Focus:
 
 
 @dataclass
+class Edge:
+    fiber_mfd_um: float = _f(3.5, "Mode-field diameter of the lensed fibre's spot (1/e^2 intensity "
+                                  "diameter at the focus)", "um")
+    mfd_tolerance_um: float = _f(0.5, "Spread of the spot size (+/-; datasheet tolerance)", "um")
+    facet_widths_um: list = _f([], "Facet widths for the overlap map (empty: from the waveguide "
+                                   "width to 2 x the MFD)", "um")
+    facet_width_um: Optional[float] = _f(None, "Facet width used (empty: the recommended one)", "um")
+    profiles: list = _f(["linear", "parabolic", "power"], "Taper shapes to compare: 'linear', "
+                                                          "'parabolic' (width^2 grows linearly) and "
+                                                          "'power' (width grows as s^m)")
+    power_exponent: float = _f(0.6, "Exponent m of the 'power' taper, w = w_wg + (w_facet - w_wg) "
+                                    "s^m with s = 0 at the waveguide (m < 1: fast near the "
+                                    "waveguide, slow near the facet)")
+    profile: Optional[str] = _f(None, "Taper shape used (empty: the one that reaches the accepted "
+                                      "loss in the shortest length)")
+    lengths_um: list = _f([], "Taper lengths for the 3D EME (empty: 5-300 um)", "um")
+    taper_length_um: Optional[float] = _f(None, "Taper length used (empty: the shortest below the "
+                                                "accepted loss)", "um")
+    max_loss_db: float = _f(0.05, "Largest taper loss accepted when choosing the length", "dB")
+    run_eme: bool = _f(True, "Check the taper loss with Tidy3D 3D EME (one cloud run per shape, "
+                             "priced first; the free 2D model always runs)")
+    eme_cells: int = _f(80, "EME cells along the taper, graded")
+    eme_modes: int = _f(12, "Modes per EME cell (even modes only)")
+    check_3d: bool = _f(True, "Simulate the facet in 3D FDTD (one small run, priced first): "
+                              "coupling for any fibre offset, spot size and distance, and the facet "
+                              "reflection")
+    mesh_steps: int = _f(15, "Mesh cells per wavelength in the core for the 3D facet run")
+    offset_um: float = _f(1.0, "Fibre offsets for the alignment tolerance (+/- in y and z)", "um")
+    facet_straight_um: float = _f(20.0, "Straight section at the facet width between the chip "
+                                        "edge and the taper (room for the dicing and polishing "
+                                        "position error)", "um")
+    facet_overhang_um: float = _f(10.0, "How far the waveguide continues past the chip-edge line "
+                                        "into the dicing lane", "um")
+    chip_length_um: float = _f(5000.0, "Chip length along the waveguides (facet to facet)", "um")
+    chip_width_um: float = _f(5000.0, "Chip width across the waveguides", "um")
+    dicing_lane_um: float = _f(100.0, "Width of the dicing lane drawn outside each facet", "um")
+    pitch_um: float = _f(127.0, "Smallest spacing between neighbouring waveguides at a facet",
+                         "um")
+    chip_layer: list = _f([99, 0], "GDS [layer, datatype] of the chip outline (not etched)")
+    lane_layer: list = _f([98, 0], "GDS [layer, datatype] of the dicing lanes (not etched)")
+
+
+@dataclass
 class Assumptions:
     n2_m2_w: float = _f(2.4e-19, "Kerr index of the core for the threshold estimate (Si3N4: "
                                  "Ikeda et al., Opt. Express 16, 12987 (2008))", "m^2/W")
@@ -273,7 +319,7 @@ LEGACY = {"gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
 
 SECTIONS = {"run": Run, "materials": Materials, "stack": Stack, "cross_section": CrossSection,
             "ring": Ring, "gap": Gap, "grating": Grating, "checks": Checks, "taper": Taper,
-            "apodise": Apodise, "focus": Focus, "waveguides": Waveguides,
+            "apodise": Apodise, "focus": Focus, "edge": Edge, "waveguides": Waveguides,
             "layout": Layout, "device": Device, "assumptions": Assumptions}
 
 
@@ -290,6 +336,7 @@ class DesignConfig:
     taper: Taper = field(default_factory=Taper)
     apodise: Apodise = field(default_factory=Apodise)
     focus: Focus = field(default_factory=Focus)
+    edge: Edge = field(default_factory=Edge)
     waveguides: Waveguides = field(default_factory=Waveguides)
     layout: Layout = field(default_factory=Layout)
     device: Device = field(default_factory=Device)

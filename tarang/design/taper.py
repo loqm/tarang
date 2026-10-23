@@ -132,21 +132,61 @@ def width_sweep(ctx, widths=None) -> dict:
                 current_width_um=now, current_eta_y=lateral_overlap(n_slab, n_side, now, mfd, wl))
 
 
+# ------------------------------------------------------------------ taper shapes
+PROFILES = ("linear", "parabolic", "power")
+
+
+def profile_width(s, w_narrow: float, w_wide: float, kind: str = "linear", m: float = 0.6):
+    """Width of a taper at s = distance from its narrow end / length (0 ... 1).
+
+    linear     w = w_n + (w_w - w_n) s
+    parabolic  w^2 = w_n^2 + (w_w^2 - w_n^2) s   (the classic adiabatic shape: the mode of a
+               wide guide changes slowly with width, so the taper may widen fast where it is
+               narrow and must widen slowly where it is wide)
+    power      w = w_n + (w_w - w_n) s^m"""
+    s = np.clip(np.asarray(s, float), 0.0, 1.0)
+    if kind == "linear":
+        return w_narrow + (w_wide - w_narrow) * s
+    if kind == "parabolic":
+        return np.sqrt(w_narrow ** 2 + (w_wide ** 2 - w_narrow ** 2) * s)
+    if kind == "power":
+        return w_narrow + (w_wide - w_narrow) * s ** float(m)
+    raise ValueError(f"unknown taper shape {kind!r}; use one of {PROFILES}")
+
+
+def profile_fraction(w, w_narrow: float, w_wide: float, kind: str = "linear", m: float = 0.6):
+    """Inverse of profile_width: s (0 at the narrow end, 1 at the wide end) where the width is w."""
+    u = np.clip((np.asarray(w, float) - w_narrow) / (w_wide - w_narrow), 0.0, 1.0)
+    if kind == "linear":
+        return u
+    if kind == "parabolic":
+        return np.clip((np.asarray(w, float) ** 2 - w_narrow ** 2) / (w_wide ** 2 - w_narrow ** 2), 0, 1)
+    if kind == "power":
+        return u ** (1.0 / float(m))
+    raise ValueError(f"unknown taper shape {kind!r}; use one of {PROFILES}")
+
+
 # ------------------------------------------------------------------ taper cells
-def cell_boundaries(w_wide: float, w_narrow: float, n_cells: int, length: float = 1.0) -> np.ndarray:
-    """Positions (0 ... length) of the cell boundaries of a linear taper, graded so that
-    the width changes by the same ratio in every cell: w_i = W (w/W)^(i/N). Near the
-    narrow end, where a fixed width step is a large change of the mode, the cells are short."""
+def cell_boundaries(w_wide: float, w_narrow: float, n_cells: int, length: float = 1.0,
+                    kind: str = "linear", m: float = 0.6) -> np.ndarray:
+    """Positions (0 ... length, the wide end at 0) of the cell boundaries of a taper, graded
+    so that the width changes by the same ratio in every cell: w_i = W (w/W)^(i/N). Near the
+    narrow end, where a fixed width step is a large change of the mode, the cells are short.
+    ``kind`` / ``m``: the taper shape (profile_width); the boundaries sit where the shape
+    reaches those widths."""
     i = np.arange(int(n_cells) + 1) / int(n_cells)
     wb = w_wide * (w_narrow / w_wide) ** i
-    x = (w_wide - wb) / (w_wide - w_narrow) * length
+    if kind == "linear":
+        x = (w_wide - wb) / (w_wide - w_narrow) * length
+    else:
+        x = (1.0 - profile_fraction(wb, w_narrow, w_wide, kind, m)) * length
     x[0], x[-1] = 0.0, length
     return x
 
 
 # ------------------------------------------------------------------ 2D model (free)
 def eim_modes(width: float, n_core: float, n_side: float, wl: float, half_domain: float,
-              dy: float = 0.02, n_modes: int = 30):
+              dy: float = 0.02, n_modes: int = 30, smooth: bool = False):
     """Even lateral modes of a slab of index n_core and width ``width`` in n_side, on
     0 <= y <= half_domain (mirror at y = 0, metal wall at the edge), for the in-plane
     field normal to the walls (TM-like, as the TE mode of the film sees the side walls).
@@ -155,6 +195,12 @@ def eim_modes(width: float, n_core: float, n_side: float, wl: float, half_domain
     integral beta H^2 / eps dy = 1) and eps on the grid."""
     y = np.arange(dy / 2, half_domain, dy)
     eps = np.where(y <= width / 2, n_core ** 2, n_side ** 2)
+    if smooth:
+        # the grid cell that the wall crosses gets the average of 1/eps over the cell (the
+        # field component is normal to the wall): the width then changes continuously
+        # instead of in steps of 2 dy, which matters for long tapers
+        frac = np.clip((width / 2 - (y - dy / 2)) / dy, 0.0, 1.0)
+        eps = 1.0 / (frac / n_core ** 2 + (1 - frac) / n_side ** 2)
     k0 = 2 * math.pi / wl
     w = 0.5 * (1 / eps[1:] + 1 / eps[:-1]) / dy ** 2          # 1/eps between grid points
     d = np.full(len(y), k0 ** 2)
@@ -179,18 +225,22 @@ def eim_modes(width: float, n_core: float, n_side: float, wl: float, half_domain
 
 
 def eim_taper(n_slab: float, n_side: float, w_wide: float, w_narrow: float, wl: float, lengths,
-              n_cells: int = 600, n_modes: int = 30, margin: float = 2.0, dy: float = 0.02) -> dict:
-    """Transmission of the fundamental mode through a linear taper (2D, effective-index
-    method): the taper is cut into ``n_cells`` graded cells (cell_boundaries), each a straight
-    section of its mid width; the modes of neighbouring cells are joined by their overlaps
-    (transmission t_ij = (<E_j, H_i> + <E_i, H_j>) / 2, reflections neglected) and propagate
-    with exp(i beta L) in between. The same cells and modes serve every length."""
+              n_cells: int = 600, n_modes: int = 30, margin: float = 2.0, dy: float = 0.02,
+              kind: str = "linear", m: float = 0.6, smooth: bool = False) -> dict:
+    """Transmission of the fundamental mode through a taper (2D, effective-index method;
+    shape ``kind`` / ``m``, see profile_width): the taper is cut into ``n_cells`` graded
+    cells (cell_boundaries), each a straight section of its mid width; the modes of
+    neighbouring cells are joined by their overlaps (transmission
+    t_ij = (<E_j, H_i> + <E_i, H_j>) / 2, reflections neglected) and propagate with
+    exp(i beta L) in between. The same cells and modes serve every length."""
     half = w_wide / 2 + margin
-    xb = cell_boundaries(w_wide, w_narrow, n_cells)
-    wb = w_wide + (w_narrow - w_wide) * xb
+    xb = cell_boundaries(w_wide, w_narrow, n_cells, kind=kind, m=m)
+    wb = (w_wide + (w_narrow - w_wide) * xb if kind == "linear"
+          else profile_width(1.0 - xb, w_narrow, w_wide, kind, m))
     widths = 0.5 * (wb[1:] + wb[:-1])
     fracs = np.diff(xb)
-    secs = [eim_modes(v, n_slab, n_side, wl, half, dy, n_modes) for v in [w_wide, *widths, w_narrow]]
+    secs = [eim_modes(v, n_slab, n_side, wl, half, dy, n_modes, smooth)
+            for v in [w_wide, *widths, w_narrow]]
     T = []
     for (b1, h1, e1), (b2, h2, e2) in zip(secs[:-1], secs[1:]):
         T.append(0.5 * dy * ((h2.T / e2) @ h1 * b1[None, :] + (h2.T / e1) @ h1 * b2[:, None]))
@@ -222,11 +272,13 @@ def rise_db(curve: dict) -> float:
 
 # ------------------------------------------------------------------ EME taper (3D, cloud)
 def eme_taper(ctx, w_wide: float, w_narrow: float, length0: float, scale_factors,
-              n_cells: int = 120, n_modes: int = 20, steps: int = 15):
-    """Tidy3D EMESimulation of a linear taper from w_wide (x = 0) to w_narrow (x = length0)
-    with short straight sections at both ends, the taper cut into ``n_cells`` graded cells
-    (cell_boundaries); one EME run, the taper cells rescaled by ``scale_factors`` (taper
-    length = length0 * scale; the straight sections keep their length)."""
+              n_cells: int = 120, n_modes: int = 20, steps: int = 15, kind: str = "linear",
+              m: float = 0.6):
+    """Tidy3D EMESimulation of a taper (shape ``kind`` / ``m``, profile_width) from w_wide
+    (x = 0) to w_narrow (x = length0) with short straight sections at both ends, the taper
+    cut into ``n_cells`` graded cells (cell_boundaries); one EME run, the taper cells
+    rescaled by ``scale_factors`` (taper length = length0 * scale; the straight sections
+    keep their length; the shape scales with the length)."""
     import tidy3d as td
     cfg = ctx.cfg
     H = ctx.results("cross_section")["height_um"]
@@ -247,14 +299,13 @@ def eme_taper(ctx, w_wide: float, w_narrow: float, length0: float, scale_factors
     structs += [
         td.Structure(geometry=td.Box(center=(-straight, 0, H / 2), size=(2 * straight, w_wide, H)),
                      medium=core, name="grating end"),
-        td.Structure(geometry=td.PolySlab(vertices=[(0, -w_wide / 2), (length0, -w_narrow / 2),
-                                                    (length0, w_narrow / 2), (0, w_wide / 2)],
+        td.Structure(geometry=td.PolySlab(vertices=taper_outline(w_wide, w_narrow, length0, kind, m),
                                           slab_bounds=(0, H), axis=2), medium=core, name="taper"),
         td.Structure(geometry=td.Box(center=(length0 + straight, 0, H / 2),
                                      size=(2 * straight, w_narrow, H)), medium=core,
                      name="waveguide")]
     ms = td.EMEModeSpec(num_modes=int(n_modes), target_neff=ctx.n(cfg.materials.core))
-    inner = cell_boundaries(w_wide, w_narrow, n_cells, length0)[1:-1]
+    inner = cell_boundaries(w_wide, w_narrow, n_cells, length0, kind, m)[1:-1]
     grid = td.EMECompositeGrid(
         subgrids=[td.EMEUniformGrid(num_cells=1, mode_spec=ms),
                   td.EMEExplicitGrid(mode_specs=[ms] * int(n_cells),
@@ -272,6 +323,21 @@ def eme_taper(ctx, w_wide: float, w_narrow: float, length0: float, scale_factors
         symmetry=(0, -1, 0),                    # even modes only (E across the width even)
         boundary_spec=td.BoundarySpec.all_sides(td.PECBoundary()),
         sweep_spec=td.EMELengthSweep(scale_factors=scales))
+
+
+def taper_outline(w_wide: float, w_narrow: float, length: float, kind: str = "linear",
+                  m: float = 0.6, n: int = 120) -> list:
+    """Polygon (x, y) of a taper, wide end at x = 0, narrow end at x = length; a linear
+    taper is the four corners, a curved one ``n`` points per side (denser near the narrow
+    end, where a parabolic or power-law taper bends most)."""
+    if kind == "linear":
+        return [(0, -w_wide / 2), (length, -w_narrow / 2), (length, w_narrow / 2), (0, w_wide / 2)]
+    s = np.linspace(0, 1, int(n)) ** 2                    # from the narrow end
+    w = profile_width(s, w_narrow, w_wide, kind, m)
+    x = (1 - s) * length
+    upper = [(float(a), float(b) / 2) for a, b in zip(x, w)]          # narrow -> wide
+    lower = [(float(a), -float(b) / 2) for a, b in zip(x[::-1], w[::-1])]  # wide -> narrow
+    return upper + lower
 
 
 def taper_transmission(data, length0: float, scale_factors) -> dict:

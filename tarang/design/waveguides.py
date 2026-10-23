@@ -158,10 +158,16 @@ def stage_waveguides(ctx) -> dict:
             b = None
         rows.append(dict(radius_um=R, bend_loss_db_cm=b,
                          loss_per_90deg_db=None if b is None else b * math.pi * R / 2 * 1e-4))
-    ui.table(rows, formats={"bend_loss_db_cm": ".3g", "loss_per_90deg_db": ".2e"})
+    def shown(r):                       # below the solver's resolution: printed as an upper bound
+        b = r["bend_loss_db_cm"]
+        if b is None or b >= FLOOR_DB_CM:
+            return r
+        return dict(r, bend_loss_db_cm=f"< {FLOOR_DB_CM:g}",
+                    loss_per_90deg_db=f"< {FLOOR_DB_CM * math.pi * r['radius_um'] / 2 * 1e-4:.1e}")
+    ui.table([shown(r) for r in rows], formats={"bend_loss_db_cm": ".3g", "loss_per_90deg_db": ".2e"})
     if any(r["bend_loss_db_cm"] is not None and r["bend_loss_db_cm"] < FLOOR_DB_CM for r in rows):
-        ui.say(f"  Values below {FLOOR_DB_CM:g} dB/cm are at the mode solver's resolution: read "
-               f"them as < {FLOOR_DB_CM:g} dB/cm.")
+        ui.say(f"  Below {FLOOR_DB_CM:g} dB/cm the mode solver cannot resolve the bend loss (the "
+               "table's csv keeps the computed numbers).")
     if any(r["bend_loss_db_cm"] is None for r in rows):
         ui.say("  Empty: no bound mode at that radius (the light radiates out of the bend).")
     from tarang.design.checks import _write_csv
@@ -176,7 +182,19 @@ def stage_waveguides(ctx) -> dict:
                "dB/cm, a tenth of the propagation loss)" + ("" if R_use == R_rec else
                                                             f"; using your {R_use:g} µm") + ".")
     lengths = [float(x) for x in wg.lengths_cm]
-    sig_now = slope_sigma(lengths, wg.coupler_scatter_db)
+    from tarang.design.stages import coupling
+    edge = coupling(cfg) == "edge"
+    chip_cm = float(cfg.edge.chip_length_um) * 1e-4
+    if edge:
+        # facet to facet: the shortest structure is the straight across the chip
+        ui.say(f"Edge coupling: every structure runs facet to facet; 0 means the straight across the "
+               f"{chip_cm * 1e4:g} µm chip ({chip_cm:g} cm), longer lengths are total lengths with a "
+               "spiral in the middle.")
+        short = [x for x in lengths if 0 < x <= chip_cm]
+        if short:
+            ui.say(f"  Lengths {', '.join(f'{x:g}' for x in short)} cm are not longer than the chip: "
+                   "the layout cannot draw them (use longer lengths or a shorter chip).")
+    sig_now = slope_sigma([chip_cm if (edge and x == 0) else x for x in lengths], wg.coupler_scatter_db)
     rec, sig_rec, k = recommend_lengths(lengths, wg.coupler_scatter_db, alpha, wg.target_precision)
     ui.say(f"Cutback with {', '.join(f'{x:g}' for x in lengths)} cm and ±{wg.coupler_scatter_db:g} dB "
            f"scatter per structure: loss known to ±{sig_now:.3g} dB/cm "
@@ -189,7 +207,8 @@ def stage_waveguides(ctx) -> dict:
     ui.say("  For losses below about 1 dB/cm an under-coupled ring measures them more precisely "
            "(Q_i from one linewidth): design one with run.goal = \"comb_ring\".")
     pitch = W + float(wg.spiral_gap_um)
-    spirals = [dict(length_cm=x, **spiral_size(x * 1e4, 2 * R_use, pitch)) for x in lengths if x > 0]
+    spirals = [dict(length_cm=x, **spiral_size((x - chip_cm) * 1e4 if edge else x * 1e4, 2 * R_use, pitch))
+               for x in lengths if x > 0 and (not edge or x > chip_cm)]
     if spirals:
         ui.table(spirals, ["length_cm", "turns", "inner_radius_um", "outer_radius_um"],
                  {"inner_radius_um": ".1f", "outer_radius_um": ".1f"})
