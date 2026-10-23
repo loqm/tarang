@@ -106,7 +106,7 @@ def device_parameters(ctx) -> dict:
     goal = str(getattr(cfg.run, "goal", "comb_ring"))
     ed = (st.get("edge") or {}).get("results") or {}
     from tarang.design.stages import coupling
-    edge_on = coupling(cfg) == "edge" and bool(ed.get("facet_width_um"))
+    edge_on = coupling(cfg) == "edge" and bool(ed.get("facet_width_um")) and not ed.get("skipped")
     if coupling(cfg) == "edge":                 # grating results left from a grating design
         gc, tp, ap, fc = {}, {}, {}, {}
         use_tp = use_ap = have_fc = use_fc = False
@@ -200,7 +200,7 @@ def bus_length_um(ctx) -> float:
     grating couplers, the chip length less both edge couplers for edge coupling."""
     from tarang.design.stages import coupling
     ed = (ctx.state["stages"].get("edge") or {}).get("results") or {}
-    if coupling(ctx.cfg) == "edge" and ed.get("facet_width_um"):
+    if coupling(ctx.cfg) == "edge" and ed.get("facet_width_um") and not ed.get("skipped"):
         return edge_bus_length_um(ctx.cfg, ed)
     return float(ctx.cfg.layout.bus_length_um)
 

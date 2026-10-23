@@ -304,8 +304,9 @@ class Waveguides:
 class Device:
     run: bool = _f(True, "Model the whole device (free, local): fibre-to-fibre transmission of "
                          "grating + taper + bus + ring + taper + grating from the stages' results")
-    reflections: bool = _f(True, "Include the gratings' back-reflection (Fabry-Perot ripple "
-                                 "between the two couplers; from the checks stage's reverse run)")
+    reflections: bool = _f(True, "Include the couplers' back-reflection (Fabry-Perot ripple "
+                                 "between the two couplers: the gratings' reverse runs, or the "
+                                 "facets of an edge-coupled chip)")
     zoom_fsr: float = _f(1.5, "Half-width of the close-up around the pump, in ring FSRs")
 
 
