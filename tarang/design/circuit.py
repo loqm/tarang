@@ -289,7 +289,8 @@ def model(ctx) -> Optional[dict]:
         notes.append(f"{'facet' if edge_c else 'grating'} reflection from {refl_src}")
     use_refl = bool(cfg.device.reflections) and bool(budget.get("reflected"))
     if cfg.device.reflections and not budget.get("reflected"):
-        notes.append("no grating reflection saved (checks stage, grating extras): no Fabry-Perot ripple")
+        notes.append("no edge-coupler reflection (edge stage not run): no Fabry-Perot ripple" if edge_c else
+                     "no grating reflection saved (checks stage, grating extras): no Fabry-Perot ripple")
     n_wf = (np.asarray(A["wf"]), np.asarray(A["nf"]))
 
     def n_eff(wl_um):

@@ -251,11 +251,64 @@ def test_edge_stage_without_cloud_runs(tmp_path, monkeypatch):
     ctx.ui.price_only = True                       # only priced: the stage counts as not done
     ctx.cfg.edge.check_3d = True
     monkeypatch.setattr("tarang.design.checks._run_batch", lambda *a, **k: None)
-    assert edge.stage_edge(ctx)["skipped"]
+    priced = edge.stage_edge(ctx)
+    assert priced["skipped"]
+    from tarang.design import layout
+    ctx.state["stages"]["edge"] = {"results": priced}       # a price-only run draws no couplers
+    p = layout.device_parameters(ctx)
+    assert p["couplers"] == [] and p["edge_facet_width_um"] is None
     calls = []
     monkeypatch.setattr(edge, "facet_mode", lambda *a, **k: calls.append(1) or _fake_mode(a[1]))
     edge.facet_map(ctx, [1.0, 2.0], [3.0, 3.5, 4.0])     # from the cache: no solve
     assert not calls
+
+
+def test_edge_stage_with_its_cloud_runs_writes_every_table(tmp_path, monkeypatch):
+    """The whole stage with the EME and the 3D facet run answered from fake saved runs
+    (B3b of the 14B guide crashed writing edge_spot_and_offsets.csv)."""
+    pytest.importorskip("xarray")
+    import tidy3d as td
+    from tarang.design import checks, taper
+    from tarang.utilities import cloud_run
+    edge = _patched_edge(monkeypatch)
+    ctx = _edge_ctx(tmp_path, edge__facet_widths_um=[2.0, 4.0, 6.0])
+    monkeypatch.setattr(checks, "_run_batch", lambda *a, **k: True)
+    monkeypatch.setattr(cloud_run, "find_cached", lambda sim, folder, name: tmp_path / "fake.hdf5")
+    monkeypatch.setattr(cloud_run, "_data_class", lambda sim: types.SimpleNamespace(
+        from_file=lambda p: "eme"))
+
+    def fake_eme(data, L0, scales):
+        L = [L0 * s for s in scales]
+        loss = [2.0 * math.exp(-x / 6.0) + 1e-3 for x in L]
+        return dict(length_um=L, transmission=[10 ** (-v / 10) for v in loss], loss_db=loss)
+    monkeypatch.setattr(taper, "taper_transmission", fake_eme)
+    monkeypatch.setattr(td.SimulationData, "from_file", classmethod(
+        lambda cls, p: _fake_facet_data(0.395, 0.148)))
+    res = edge.stage_edge(ctx)
+    assert set(res["eme"]) == {"linear", "parabolic", "power"}
+    assert res["taper_loss_source"] == "3D EME"
+    f3 = res["fdtd"]
+    assert f3["eta"] == pytest.approx(0.395, rel=5e-3) and f3["reflection_mode"] == pytest.approx(0.148)
+    rows = list(csv.DictReader(open(ctx.out / "tables" / "edge_spot_and_offsets.csv", encoding="utf-8")))
+    assert [r["kind"] for r in rows] == ["spot"] * 3 + ["offset"] * 4
+    assert rows[0]["mfd_um"] and rows[3]["direction"] == "y" and rows[0]["direction"] == ""
+    for t in ("edge_reflection_3d.csv", "edge_spectrum_3d.csv", "edge_taper_eme.csv", "edge_facet_map.csv"):
+        assert (ctx.out / "tables" / t).exists()
+    assert (ctx.out / "figures" / "12c_edge_3d.png").exists()
+    assert res["eta_coupler"] == pytest.approx(f3["eta"] * 10 ** (-res["taper_loss_db"] / 10))
+    from tarang.design import circuit
+    ctx.state["stages"]["edge"] = {"results": res}
+    cp = circuit.coupler_model(ctx)
+    assert "3D FDTD" in cp["label"]
+    b, src = circuit.coupler_reflection(ctx)
+    assert max(b["reflected"]) == pytest.approx(0.148) and "3D FDTD" in src
+
+
+def test_csv_tables_take_rows_of_different_kinds(tmp_path):
+    from tarang.design.checks import _write_csv
+    p = _write_csv(tmp_path / "t.csv", [dict(kind="a", x=1), dict(kind="b", y=2)])
+    rows = list(csv.DictReader(open(p, encoding="utf-8")))
+    assert rows == [dict(kind="a", x="1", y=""), dict(kind="b", x="", y="2")]
 
 
 def _edge_results(**kw):

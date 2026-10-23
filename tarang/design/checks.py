@@ -65,9 +65,12 @@ def _done(ctx: Context, name: str) -> Optional[dict]:
 
 
 def _write_csv(path: Path, rows: list[dict]) -> Path:
+    """Rows as a CSV table; the columns are every key of every row in order of first
+    appearance (rows of different kinds may share a table, missing cells stay empty)."""
     if rows:
+        fields = list(dict.fromkeys(k for r in rows for k in r))
         with open(path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=list(rows[0]), lineterminator="\n")
+            w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
             w.writeheader()
             w.writerows(rows)
     return path
