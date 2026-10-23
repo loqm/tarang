@@ -15,6 +15,27 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **Edge coupling** (`run.coupling = "edge"`, asked with the goal; `[edge]` settings): a wide
+  facet for a lensed fibre, the right choice for an air-clad film. New stage `edge` (after
+  the focusing grating): the facet's TE00 (local solve with the BOX and the Si handle)
+  against the fibre spot (MFD ± tolerance) over facet width and fibre height, as butt
+  coupling (mode overlap x Fresnel transmission, free; figure 12a); taper loss against
+  length for linear, parabolic (w² linear) and power-law shapes (converged 2D model, free;
+  one Tidy3D EME per shape, priced; figure 12b), the length being the shortest from which
+  the loss stays below half the accepted loss; one small 3D FDTD of the facet (priced): the
+  waveguide runs through the absorbing boundary, the field 0.5 µm past the facet gives the
+  coupling for any fibre offset (y, z), spot size and working distance by reciprocity, and
+  the backward mode amplitude the facet reflection (figure 12c). On the mask the waveguides
+  run facet to facet across the chip (`edge.chip_length_um`), with the taper, a straight at
+  the facet width and an overhang into the dicing lane; the chip outline and the lanes are
+  drawn on their own layers (not etched), devices at least `edge.pitch_um` apart
+  (`layout/chip.json`); cutback spirals have the requested facet-to-facet length. The
+  whole-device model treats the chip as a Fabry-Perot cavity between the two facets; the
+  loss budget, the report (section 5), the benchmark pack and the GUI summary include it.
+- Taper shapes (`taper.profile_width`, used by the edge stage): linear, parabolic and power
+  law, in the 2D model and the EME; the 2D model can average the permittivity of the grid
+  cell at the wall (`smooth`), so the width changes continuously (without it, long tapers
+  show a spurious loss from width steps of two grid cells).
 - **Design goal** (`run.goal`, asked first): `comb_ring` (as before) or `loss_test`, test
   waveguides for propagation loss. Stages of the other goal are left out (the ring and gap
   for `loss_test`; their settings do not affect the other stages' saved results). With
@@ -327,6 +348,22 @@ working until v0.2.0; old imports are updated with one command (see
   defaults, and therefore FDTD costs, are unchanged.
 
 ### Fixed
+
+- Whole-device model and loss budget with the focusing grating's 3D FDTD: the 3D run already
+  contains the tip taper, which was counted a second time (0.02 dB per coupler); the loss
+  budget now uses the 3D result (it used the 2D grating with the in-plane model, so the
+  budget and the device model differed by about 0.5 dB).
+- Coupler spectra are interpolated in log(η) between the simulated wavelengths (a linear
+  interpolation drew V-shaped notches in dB far from the peak); the device figures show the
+  single coupler's simulated points.
+- Layout figure with gap variants: it showed the first variant in the file (e.g. gap 381 nm)
+  while labelling the critical gap; it now shows the critical ring.
+- The report of a test-waveguide design no longer lists the ring's checks (gap tolerance,
+  FSR, mode families, coupling across the band) or the ring's known limits; the summary
+  table shows the coupler actually on the mask, the fibre-to-fibre transmission and the
+  cutback precision.
+- Bend losses below the solver's resolution are printed as "< 0.001" (the csv keeps the
+  numbers).
 
 - **Bend loss in tight bends** (ring stage, test waveguides): the solver's highest-index
   TE-like solution in a tight bend is a whispering-gallery mode of the substrate, not the

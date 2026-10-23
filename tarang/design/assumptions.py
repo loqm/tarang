@@ -83,4 +83,17 @@ def table(cfg, results: Optional[dict] = None) -> list[dict]:
              source="your process", note="grating teeth and grooves narrower than this are "
                                          "not simulated"),
     ]
+    if str(getattr(cfg.run, "coupling", "grating") or "grating").lower() == "edge":
+        e = cfg.edge
+        drop = {"fibre mode-field diameter", "fibre angle from vertical", "smallest lithography feature"}
+        rows = [r_ for r_ in rows if r_["quantity"] not in drop]
+        rows.insert(3, dict(quantity="lensed-fibre spot (MFD)", value=e.fiber_mfd_um, unit="um",
+                            source="your fibre's datasheet",
+                            note=f"± {e.mfd_tolerance_um:g} µm; round Gaussian spot, waist at the "
+                                 "working distance, TE"))
+        rows.insert(4, dict(quantity="chip facet", value="flat", unit="", source="model limit",
+                            note="cleaved or polished, perpendicular to the waveguide, no coating"))
+        for r_ in rows:
+            if r_["quantity"] == "BOX thickness":
+                r_["note"] = "Si handle below the BOX in the facet mode solve"
     return rows

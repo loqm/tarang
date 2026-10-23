@@ -17,6 +17,7 @@ the simulation JSON files are TARANG's own record of each run.
 from __future__ import annotations
 
 import csv
+import math
 import glob
 import shutil
 from pathlib import Path
@@ -231,6 +232,17 @@ def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
             sim_sections += ["### Focusing grating (3D FDTD set-up)", ""] + describe_sim(dev.sim, wl) + [""]
         except Exception as err:                                  # noqa: BLE001
             sim_sections += [f"(focusing grating simulation not written: {type(err).__name__}: {err})", ""]
+    ed = st.get("edge", {}) or {}
+    if ed.get("facet_width_um"):
+        try:
+            from tarang.design.edge import facet_sim
+            sim = facet_sim(ctx, ed["facet_width_um"], ed["n_eff_facet"], int(cfg.edge.mesh_steps))
+            sim.to_file(str(sims_dir / "edge_facet_3d.json"))
+            sim_sections += ["### Edge-coupler facet (3D FDTD set-up)", ""] + describe_sim(sim, wl) + [""]
+        except Exception as err:                                  # noqa: BLE001
+            sim_sections += [f"(edge-coupler facet simulation not written: {type(err).__name__}: {err})", ""]
+        for p in sorted(glob.glob(str(ctx.out / "cloud" / "edge_taper" / "*" / "simulation.json"))):
+            shutil.copy2(p, sims_dir / f"{Path(p).parent.name.split('_' + f'{wl:.3f}um')[0]}.json")
     readme = _readme(ctx, st, rows, checks, sim_sections, pth)
     (pack / "README.md").write_text("\n".join(readme), encoding="utf-8")
     zip_path = shutil.make_archive(str(ctx.out / "benchmark_pack"), "zip", root_dir=pack)
@@ -379,8 +391,31 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
     from tarang.design.layout import coupler_plan
     main = coupler_plan(ctx)["main"]
     used = ("a focusing grating (section 4d)" if main == "focusing" else
+            "an edge coupler at the chip facet (section 4f)" if main == "edge" else
             f"a {tp.get('taper_length_um') or cfg.grating.taper_length_um:g} µm linear taper and "
             f"the straight {main or 'uniform'} grating")
+    ed = st.get("edge") or {}
+    if ed.get("facet_width_um"):
+        f3 = ed.get("fdtd") or {}
+        L += ["## 4f. Edge coupler (wide facet, lensed fibre)", "",
+              f"- Facet: the {ed['facet_width_um']:g} µm wide film ends at the chip edge (flat, "
+              "perpendicular, no coating) and faces air; the fibre spot is a round Gaussian, MFD "
+              f"{ed['fiber_mfd_um']:g} ± {ed['mfd_tolerance_um']:g} µm, TE.",
+              f"- Butt-coupling estimate (mode overlap × Fresnel transmission, best fibre height): "
+              f"{ed['eta_free'] * 100:.1f} % at {wl} µm; every width and spot size: "
+              "`tables/edge_facet_map.csv`.",
+              f"- Taper from the waveguide to the facet: {ed['profile']}, {ed['taper_length_um']:g} µm, "
+              f"{ed['taper_loss_db']:.3f} dB ({ed['taper_loss_source']}); every shape against length: "
+              "`tables/edge_taper_model.csv`" + (" and `tables/edge_taper_eme.csv`" if ed.get("eme") else "")
+              + ".",
+              ("- 3D FDTD of the facet (`simulations/edge_facet_3d.json`; mode launched towards the "
+               "facet, field recorded 0.5 µm past it): "
+               f"{f3['eta'] * 100:.1f} % per facet at the best fibre position, facet reflection "
+               f"{10 * math.log10(max(f3['reflection_mode'], 1e-12)):.1f} dB; spectra "
+               "`tables/edge_spectrum_3d.csv`, `tables/edge_reflection_3d.csv`." if f3 else
+               "- The 3D set-up of the facet is `simulations/edge_facet_3d.json` (not run)."),
+              "- To compare: the same facet in another FDTD, overlap with the Gaussian at the same "
+              "fibre height; the reflection into the guided mode.", ""]
     wg = st.get("waveguides") or {}
     if wg.get("lengths_cm"):
         L += ["## 4e. Test waveguides (propagation loss)", "",

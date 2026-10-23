@@ -39,12 +39,17 @@ def _form(ctx: Context) -> None:
     cfg = ctx.cfg
     ctx.ui.form(cfg, "Checks", [
         dict(section="checks", key="band", show=ring_goal),
-        dict(section="checks", key="grating_extras"),
-        dict(section="checks", key="angle_tolerance_deg"),
-        dict(section="checks", key="litho_bias_um"),
-        dict(section="checks", key="mesh_grating"),
+        dict(section="checks", key="grating_extras", show=grating_coupling),
+        dict(section="checks", key="angle_tolerance_deg", show=grating_coupling),
+        dict(section="checks", key="litho_bias_um", show=grating_coupling),
+        dict(section="checks", key="mesh_grating", show=grating_coupling),
         dict(section="checks", key="mesh_gap", show=ring_goal),
         dict(section="checks", key="mode_families", show=ring_goal)])
+
+
+def grating_coupling(cfg) -> bool:
+    from tarang.design.stages import coupling
+    return coupling(cfg) == "grating"
 
 
 def ring_goal(cfg) -> bool:
@@ -232,6 +237,8 @@ def loss_budget(ctx: Context, grating: Optional[dict]) -> list[dict]:
     ring = (ctx.state["stages"].get("ring") or {}).get("results") or {}
     straight = (ring["scattering_loss_db_cm"] + ring["absorption_loss_db_cm"] if ring
                 else sum(_losses(cfg)))
+    if not grating_coupling(cfg):
+        return _edge_budget(ctx, straight)
     plan = coupler_plan(ctx)
     length_cm = (cfg.layout.bus_length_um + 2 * cfg.grating.taper_length_um) * 1e-4
     tp = ctx.state["stages"].get("taper", {}).get("results") or {}
@@ -249,14 +256,23 @@ def loss_budget(ctx: Context, grating: Optional[dict]) -> list[dict]:
         if fc.get("teeth_kind") == "apodised" and ap.get("efficiency_2d"):
             grating = dict(grating or {}, efficiency_2d=ap["efficiency_2d"])
     rows = []
-    if grating:
+    fc3d = use_fc and fc.get("efficiency_3d")
+    if fc3d:
+        # the 3D FDTD of the focusing grating already contains the in-plane focusing and the
+        # grating's width: only the tip taper is added (the same as the whole-device model)
+        db = -10 * math.log10(max(fc["efficiency_3d"], 1e-9))
+        rows.append(dict(item=f"focusing grating ({fc.get('teeth_kind', 'uniform')} teeth), input "
+                              "(3D FDTD)", loss_db=round(db, 2)))
+        rows.append(dict(item="focusing grating, output (same design)", loss_db=round(db, 2)))
+    elif grating:
         gc_db = -10 * math.log10(max(grating["efficiency_2d"], 1e-9))
         rows.append(dict(item=f"{label}, input (2D simulation)", loss_db=round(gc_db, 2)))
         rows.append(dict(item=f"{label}, output (same design)", loss_db=round(gc_db, 2)))
     if use_fc:
-        rows.append(dict(item=f"focusing into a {fc['tip_width_um']:g} µm tip, 2 x (in-plane model)",
-                         loss_db=round(-20 * math.log10(max(fc["eta_focus"], 1e-9)), 3)))
-        if fc.get("tip_taper_um"):
+        if not fc3d:
+            rows.append(dict(item=f"focusing into a {fc['tip_width_um']:g} µm tip, 2 x (in-plane model)",
+                             loss_db=round(-20 * math.log10(max(fc["eta_focus"], 1e-9)), 3)))
+        if fc.get("tip_taper_um") and not fc3d:          # the 3D run contains the tip taper
             rows.append(dict(item=f"tip tapers, 2 x {fc['tip_taper_um']:g} µm (2D model)",
                              loss_db=round(-20 * math.log10(max(fc["tip_taper_T"], 1e-9)), 3)))
         tp = {}                                   # no long taper, no straight-grating overlap
@@ -277,6 +293,28 @@ def loss_budget(ctx: Context, grating: Optional[dict]) -> list[dict]:
         rows.append(dict(item="tapers, 2 x (not simulated: run the taper stage)", loss_db=0.0))
     rows.append(dict(item=f"propagation, {length_cm * 1e4:.0f} µm at {straight:g} dB/cm",
                      loss_db=round(straight * length_cm, 3)))
+    total = sum(r["loss_db"] for r in rows)
+    rows.append(dict(item="fibre to fibre, off resonance", loss_db=round(total, 2)))
+    return rows
+
+
+def _edge_budget(ctx: Context, straight: float) -> list[dict]:
+    """Fibre-to-fibre budget with edge couplers (the edge stage's results; empty until it has
+    run, the report recomputes it)."""
+    cfg = ctx.cfg
+    ed = (ctx.state["stages"].get("edge") or {}).get("results") or {}
+    rows = []
+    if ed.get("facet_width_um"):
+        f3 = ed.get("fdtd")
+        eta, how = (f3["eta"], "3D FDTD") if f3 else (ed["eta_free"], "butt-coupling estimate")
+        db = -10 * math.log10(max(eta, 1e-9))
+        rows.append(dict(item=f"facet, input ({ed['facet_width_um']:g} µm, {how})", loss_db=round(db, 2)))
+        rows.append(dict(item="facet, output (same design)", loss_db=round(db, 2)))
+        rows.append(dict(item=f"{ed['profile']} tapers, 2 x {ed['taper_length_um']:.0f} µm "
+                              f"({ed['taper_loss_source']})", loss_db=round(2 * ed["taper_loss_db"], 3)))
+    L_cm = float(cfg.edge.chip_length_um) * 1e-4
+    rows.append(dict(item=f"propagation, {L_cm * 1e4:.0f} µm (facet to facet) at {straight:g} dB/cm",
+                     loss_db=round(straight * L_cm, 3)))
     total = sum(r["loss_db"] for r in rows)
     rows.append(dict(item="fibre to fibre, off resonance", loss_db=round(total, 2)))
     return rows

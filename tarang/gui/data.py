@@ -14,6 +14,7 @@ are kept, and the same run continues next time.
 from __future__ import annotations
 
 import csv
+import math
 import datetime as dt
 import json
 import os
@@ -190,6 +191,15 @@ def summary_rows(run: Path) -> list[dict]:
         add("focusing grating", f"estimate {fc['efficiency_3d_estimate'] * 100:.1f} %"
             + (f", 3D FDTD {fc['efficiency_3d'] * 100:.1f} %" if fc.get("efficiency_3d") is not None else ""),
             "", "focus")
+    ed = st.get("edge", {})
+    if ed.get("facet_width_um"):
+        add("edge coupler: facet width / taper", f"{ed['facet_width_um']:g} / {ed['profile']} "
+            f"{ed['taper_length_um']:g}", "um", "edge")
+        f3 = ed.get("fdtd") or {}
+        add("edge coupler per facet", f"{ed['eta_coupler'] * 100:.1f} %"
+            + (" (3D FDTD)" if f3 else " (butt-coupling estimate)"), "", "edge")
+        if f3.get("reflection_mode") is not None:
+            add("facet reflection", 10 * math.log10(max(f3["reflection_mode"], 1e-12)), "dB", "edge")
     wg = st.get("waveguides", {})
     if wg.get("lengths_cm"):
         add("expected propagation loss", wg.get("alpha_db_cm"), "dB/cm", "waveguides")
@@ -225,7 +235,8 @@ def read_csv(path: Path, limit: Optional[int] = None) -> list[dict]:
 
 FIGURE_GROUPS = [("1", "Materials"), ("2", "Cross-section"), ("3", "Ring and test waveguides"), ("4", "Gap"),
                  ("5", "Grating"), ("6", "Layout"), ("7", "Checks and budget"), ("8", "Taper"),
-                 ("9", "Apodised grating"), ("10", "Focusing grating"), ("11", "Whole device")]
+                 ("9", "Apodised grating"), ("10", "Focusing grating"), ("11", "Whole device"),
+                 ("12", "Edge coupler")]
 
 
 def figures(run: Path) -> list[tuple[str, list[Path]]]:

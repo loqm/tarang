@@ -650,8 +650,11 @@ def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
     import gdstk
     plt = _plt()
     lib = gdstk.read_gds(str(gds_path))
-    cell = next((c for c in lib.cells if any(t in c.name for t in ("_gc", "_agc", "_fgc"))),
-                lib.top_level()[0])
+    with_coupler = [c for c in lib.cells if any(t in c.name for t in ("_gc", "_agc", "_fgc", "_ec"))]
+    # with gap variants on the mask the file holds several rings: show the critical one
+    tag = f"_gap{p['gap_critical_um'] * 1e3:.0f}nm" if p.get("gap_critical_um") else None
+    cell = next((c for c in with_coupler if tag and c.name.endswith(tag)),
+                with_coupler[0] if with_coupler else lib.top_level()[0])
     polys = [np.asarray(q.points) for q in cell.get_polygons()]
     colour = "#3182bd"
     fig = plt.figure(figsize=(15, 8.5))
@@ -670,6 +673,9 @@ def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
     R = p.get("ring_radius_um") or 0.0
     gap = p.get("gap_critical_um") or 0.5
     focusing = bool(p.get("grating_focusing"))
+    edge = bool(p.get("edge_facet_width_um"))
+    if edge:
+        return _edge_views(fig, top, zooms, cell, p, path)
     if focusing:                                  # tip taper, then the focus and the sector
         taper = p.get("focus_tip_taper_um") or 0.0
         x0 = L / 2 + taper + p["focus_distance_um"]
@@ -715,13 +721,54 @@ def layout_views(gds_path: Path, p: dict, path: Path) -> Path:
         if focusing:
             zooms[2].set_xlim(L / 2 + taper - 3, x0 + n + 3)
             zooms[2].set_aspect("equal")
-            zooms[2].set_title(f"focusing grating: {len(tl)} curved teeth, focus "
-                               f"{p['focus_distance_um']:g} µm before the first")
+            zooms[2].set_title(f"focusing grating: {len(tl)} curved teeth,\nfocus "
+                               f"{p['focus_distance_um']:g} µm before the first tooth")
         elif tl:
             zooms[2].set_title(f"apodised grating: {len(tl)} teeth")
         else:
             zooms[2].set_title(f"grating: {p['grating_teeth']} × {p['grating_period_um']:.4f} µm, "
                                f"FF {p['grating_fill_factor']:.2f}")
+    return _save(fig, path)
+
+
+def _edge_views(fig, top, zooms, cell, p: dict, path: Path) -> Path:
+    """Figure 6 for edge coupling: the device across the chip, the coupling region, the
+    taper and the facet at the chip edge."""
+    L, W = p["bus_length_um"], p["waveguide_width_um"]
+    R = p.get("ring_radius_um") or 0.0
+    gap = p.get("gap_critical_um") or 0.5
+    Lt, Wf = p["edge_taper_length_um"], p["edge_facet_width_um"]
+    Ls, Lo = p["edge_facet_straight_um"], p["edge_facet_overhang_um"]
+    Lc, lane = p["chip_length_um"], p.get("dicing_lane_um") or 0.0
+    top.autoscale()
+    ymin, ymax = top.get_ylim()
+    top.set_ylim(ymin - 0.15 * (ymax - ymin) - 20, ymax + 0.05 * (ymax - ymin) + 20)
+    for sgn in (-1, 1):
+        top.axvline(sgn * Lc / 2, color="0.3", ls="--", lw=1)
+        if lane:
+            top.axvspan(sgn * Lc / 2, sgn * (Lc / 2 + lane), color="0.88", zorder=0)
+    top.set_title(f"{cell.name}: facet to facet across the {Lc:g} µm chip (dashed: chip edges, "
+                  "grey: dicing lanes; outlines widened)")
+    if R:
+        top.text(0, W / 2 + gap + R, f"ring R = {R:g} µm", fontsize=9, ha="center", va="center",
+                 color="0.25")
+    zooms[0].set_xlim(-6 * W - 3, 6 * W + 3)
+    zooms[0].set_ylim(-3 * W, 2 * W + gap + 4)
+    zooms[0].set_title(f"coupling region (gap {gap * 1e3:.0f} nm)" if R else "waveguide")
+    x0 = L / 2
+    zooms[1].set_xlim(x0 - 10, x0 + Lt + Ls + Lo + 5)
+    zooms[1].set_ylim(-max(2 * Wf, 3 * W), max(2 * Wf, 3 * W))
+    zooms[1].set_aspect("auto")
+    zooms[1].axvline(Lc / 2, color="0.3", ls="--", lw=1)
+    zooms[1].set_title(f"{p['edge_taper_profile']} taper {W:g} → {Wf:g} µm, {Lt:g} µm\n(y axis stretched)")
+    zooms[2].set_xlim(Lc / 2 - Ls - 5, Lc / 2 + max(lane, Lo) * 0.3 + Lo + 5)
+    zooms[2].set_ylim(-2 * Wf, 2 * Wf)
+    zooms[2].axvline(Lc / 2, color="0.3", ls="--", lw=1)
+    if lane:
+        zooms[2].axvspan(Lc / 2, Lc / 2 + lane, color="0.88", zorder=0)
+    zooms[2].set_aspect("auto")
+    zooms[2].set_title(f"facet: {Wf:g} µm wide, {Ls:g} µm straight before the chip edge,\n"
+                       f"{Lo:g} µm into the dicing lane")
     return _save(fig, path)
 
 
