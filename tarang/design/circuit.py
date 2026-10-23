@@ -243,6 +243,19 @@ def _k2_at(curve, wl_um):
     return np.interp(wl_um, w[o], k[o])
 
 
+def mode_phase(omega, om, M, D1):
+    """Round-trip phase of the ring at angular frequency omega: 2 pi times the (fractional)
+    mode number, interpolated between the resonances om (mode numbers M) and continued
+    beyond the first and last one with the local FSR D1 (rad/s per mode). Holding it at the
+    end resonance instead would put the outer half FSR of the band exactly on a dip."""
+    w = np.atleast_1d(np.asarray(omega, float))
+    m = np.interp(w, om, np.asarray(M, float))
+    lo, hi = w < om[0], w > om[-1]
+    m[lo] = M[0] + (w[lo] - om[0]) / D1[0]
+    m[hi] = M[-1] + (w[hi] - om[-1]) / D1[-1]
+    return 2 * np.pi * (m if np.ndim(omega) else m[0])
+
+
 # ------------------------------------------------------------------ the model
 def model(ctx) -> Optional[dict]:
     """Every number of the device model (no files, no figures)."""
@@ -309,7 +322,7 @@ def model(ctx) -> Optional[dict]:
         return np.interp(wl_um, w[oo], np.asarray(budget["reflected"], float)[oo])
 
     def phase(omega):
-        return 2 * np.pi * np.interp(omega, om, M.astype(float))
+        return mode_phase(omega, om, M, D1_loc)
 
     regimes = {}
     for name, curve in curves.items():
@@ -417,7 +430,9 @@ def stage_device(ctx) -> dict:
         return dict(skipped=True)
     cp = md["coupler"]
     ui.say(f"Circuit model: fibre -> {cp['label'] if cp else 'ideal coupler'} -> "
-           f"{md['L_bus'] * 1e6:.0f} µm of waveguide with the ring halfway -> the same coupler -> "
+           f"{md['L_bus'] * 1e6:.0f} µm of waveguide ("
+           + ("facet to facet" if coupling_kind(ctx) == "edge" else "grating to grating")
+           + ", tapers included) with the ring halfway -> the same coupler -> "
            f"fibre; {len(md['om'])} resonances from {md['wl_res'].min() * 1e3:.0f} to "
            f"{md['wl_res'].max() * 1e3:.0f} nm; ring round trip a = {md['a']:.5f} "
            f"({md['loss_ring']:.3g} dB/cm over {md['L_ring'] * 1e6:.0f} µm).")

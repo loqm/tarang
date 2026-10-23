@@ -441,7 +441,13 @@ def analyse(data, ctx, mfd: float, mfd_tol: float, offset: float, wl0: float,
     wl = C_UM / f
     o = np.argsort(wl)
     side = data["side view"]
-    return dict(eta=e_best, eta_db=10 * math.log10(max(e_best, 1e-12)), fibre_height_um=z_best,
+    # the maps above are at the recorded wavelength nearest the design one; the headline
+    # value is the spectrum (fibre fixed at that position) interpolated to the design wavelength
+    from tarang.design.circuit import interp_eta
+    e_wl0 = float(interp_eta(wl0, [r["wavelength_um"] for r in spectrum],
+                             [r["efficiency"] for r in spectrum]))
+    return dict(eta=e_wl0, eta_db=10 * math.log10(max(e_wl0, 1e-12)),
+                eta_maps=e_best, maps_wavelength_um=float(C_UM / ff[k0]), fibre_height_um=z_best,
                 working_distance_um=g_best, phase_sign=sgn,
                 reflection_mode=float(np.interp(wl0, wl[o], R_mode[o])),
                 reflection_back_total=float(np.interp(wl0, wl[o], R_back[o])),
@@ -648,6 +654,8 @@ def stage_edge(ctx) -> dict:
                    f"estimate {eta_free * 100:.1f} %). Facet reflection into the waveguide mode "
                    f"{10 * math.log10(max(res3['reflection_mode'], 1e-12)):.1f} dB; all light sent back "
                    f"into the chip {10 * math.log10(max(res3['reflection_back_total'], 1e-12)):.1f} dB.")
+            ui.say(f"  Spot sizes and offsets at {res3['maps_wavelength_um'] * 1e3:.1f} nm (the recorded "
+                   f"wavelength nearest {wl * 1e3:g} nm; there {res3['eta_maps'] * 100:.1f} %):")
             ui.table([dict(mfd_um=s["mfd_um"], eta_pct=100 * s["eta"], loss_db=-s["eta_db"],
                            fibre_height_um=s["fibre_height_um"], working_distance_um=s["working_distance_um"])
                       for s in res3["spot"]],

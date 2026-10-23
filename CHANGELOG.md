@@ -15,6 +15,17 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **Guided design in the GUI** (the default view of `python -m tarang.gui`): the steps of the
+  design one at a time. Step 1 asks the two choices (ring for combs or test waveguides;
+  grating or edge couplers; which gratings, or the lensed fibre's spot) with drawings of
+  each option; every later step shows a drawing of what it designs, its settings as a form,
+  Run (cloud steps priced first, then run with that spend cap), and once run what it
+  recommends and why (one click writes the recommended values where they are settings), its
+  key numbers and figures. The cross-section map stops for your choice of candidate. The
+  layout step shows `design.gds` as it goes to the mask; the last step offers the report as
+  one HTML page with its figures (print it to PDF), everything as a zip and the benchmark
+  pack. `tarang.gui.wizard` holds the steps and their logic without Streamlit;
+  `tarang.gui.illustrations` the drawings. The earlier view stays as "All results".
 - **Edge coupling** (`run.coupling = "edge"`, asked with the goal; `[edge]` settings): a wide
   facet for a lensed fibre, the right choice for an air-clad film. New stage `edge` (after
   the focusing grating): the facet's TE00 (local solve with the BOX and the Si handle)
@@ -348,6 +359,13 @@ working until v0.2.0; old imports are updated with one command (see
   defaults, and therefore FDTD costs, are unchanged.
 
 ### Fixed
+
+- Whole-device spectrum: beyond the first and last computed resonance (half an FSR at each
+  end of the band) the ring's phase was held at the end resonance, so the trace sat on a dip
+  there (e.g. −21.6 dB at 1450 nm); it now continues with the local FSR.
+- Edge coupler: the headline coupling is the spectrum at the design wavelength; the
+  alignment and spot-size maps are at the recorded wavelength nearest to it (now said so;
+  before, that wavelength's value was reported as the design wavelength's).
 
 - Whole-device model and loss budget with the focusing grating's 3D FDTD: the 3D run already
   contains the tip taper, which was counted a second time (0.02 dB per coupler); the loss

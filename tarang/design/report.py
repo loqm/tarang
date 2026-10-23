@@ -904,8 +904,10 @@ def _device_section(ctx, dv: dict) -> list[str]:
          "product): fibre → coupler → bus with the ring (all-pass, t = (r − a e^{iφ})/(1 − r a e^{iφ}), "
          "resonances at the ring stage's mode frequencies, so D_int is included) → coupler → fibre. "
          "The couplers' back-reflections make the Fabry-Perot ripple. Coupler: "
-         f"{dv.get('coupler')}; {dv['bus_length_total_um']:.0f} µm of waveguide between the "
-         f"couplers; {dv['resonances']} resonances from {dv['band_nm'][0]:.0f} to {dv['band_nm'][1]:.0f} nm.", "",
+         f"{dv.get('coupler')}; {dv['bus_length_total_um']:.0f} µm of waveguide "
+         + ("from facet to facet (the edge couplers' tapers included)"
+            if "edge coupler" in str(dv.get("coupler")) else "between the gratings (tapers included)")
+         + f"; {dv['resonances']} resonances from {dv['band_nm'][0]:.0f} to {dv['band_nm'][1]:.0f} nm.", "",
          f"Off resonance at {ctx.cfg.run.wavelength_um} µm: {dv['off_resonance_db_at_pump']:.2f} dB fibre to fibre"
          + (f"; ripple {dv['ripple_db_at_pump']:.2f} dB peak to peak." if dv.get("ripple_db_at_pump") is not None
             else " (no reflection data: no ripple)."), "",

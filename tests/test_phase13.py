@@ -339,6 +339,7 @@ def test_gui_app_renders_a_design(tmp_path):
     _saved_design(tmp_path)
     at = AppTest.from_file(app.__file__, default_timeout=120)
     at.session_state["root"] = str(tmp_path)
+    at.session_state["mode"] = "All results"            # the guided view is tested in 14C
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert [t.label for t in at.tabs] == ["Summary", "Whole device", "Figures", "Tables", "Report",

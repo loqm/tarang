@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `417 passed, 2 skipped` (quick check: `396 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
+Expected on Windows: `439 passed, 2 skipped` (quick check: `418 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.

@@ -1,9 +1,11 @@
 """TARANG design GUI (Streamlit). Start it with ``python -m tarang.gui``.
 
-Left: pick a design folder, its credit limits and the Tidy3D balance.
-Top: choose stages, then Estimate cost (runs nothing that costs), Run, or Stop; the
-run's output scrolls below while it goes.
-Tabs: Summary, Whole device, Figures, Tables, Report, Files, Settings, Log.
+Left: pick a design folder, the view, its credit limits and the Tidy3D balance.
+Guided design (the default view, ``guided.py``): one step at a time: what to design, then
+each stage with a drawing, its settings, Run (cloud steps priced first), and what it
+recommends, its results and figures.
+All results: choose stages, then Estimate cost (runs nothing that costs), Run, or Stop;
+tabs Summary, Whole device, Figures, Tables, Report, Files, Settings, Log.
 
 Everything shown is read from the design folder (state.json, figures/, tables/, ...), the
 same files the command line writes, so the GUI and ``python -m tarang.design`` can be
@@ -57,7 +59,7 @@ def _table(rows, **kw):
 # ------------------------------------------------------------------ sidebar
 def sidebar(root_default: str):
     st.sidebar.title("TARANG")
-    st.sidebar.caption("Microring + grating-coupler design")
+    st.sidebar.caption("Microrings and test waveguides, with grating or edge couplers")
     root = st.sidebar.text_input("Folder with your designs", value=st.session_state.get("root", root_default),
                                  help="The folder that holds your design folders (each has a design.toml).")
     st.session_state["root"] = root
@@ -85,6 +87,9 @@ def sidebar(root_default: str):
             except Exception as err:                                  # noqa: BLE001
                 st.error(str(err))
     if run is not None:
+        st.sidebar.radio("View", ["Guided design", "All results"], key="mode",
+                         help="Guided: one step at a time, with what each step recommends. All "
+                              "results: every stage, figure, table and file at once.")
         credits_panel(run)
     return run
 
@@ -298,6 +303,10 @@ def main():
         st.title(run.name)
         st.error(f"design.toml not readable: {err}")
     st.caption(f"Folder: {run.resolve()}")
+    if st.session_state.get("mode", "Guided design") == "Guided design":
+        from tarang.gui import guided
+        guided.page(run, live_log)
+        return
     run_panel(run)
     tabs = st.tabs(["Summary", "Whole device", "Figures", "Tables", "Report", "Files", "Settings", "Log"])
     for t, fn in zip(tabs, (tab_summary, tab_device, tab_figures, tab_tables, tab_report, tab_files,
