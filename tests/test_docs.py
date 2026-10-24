@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = ["Readme.md", "CONTRIBUTING.md", "CHANGELOG.md", "tarang/media/data/SOURCES.md",
+DOCS = ["Readme.md", "CONTRIBUTING.md", "CHANGELOG.md", "docs/USER_GUIDE.md", "tarang/media/data/SOURCES.md",
         "tarang/waveguide/dispersion_mapping/README.md", "tests/README.md"]
 # Old top-level names are listed on purpose: an example that still imports them fails
 # to resolve (they no longer exist), so the test catches it.

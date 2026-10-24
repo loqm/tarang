@@ -4,7 +4,7 @@
     python -m tarang.gui --root D:\\my\\designs # another folder
     python -m tarang.gui --port 8502           # another port (default 8501)
 
-Stop it with Ctrl+C in this window. Runs started from the GUI keep going on their own;
+Stop it with Exit TARANG (bottom of the left panel) or Ctrl+C in this window. Runs started from the GUI keep going on their own;
 their output is in <design>/gui_log.txt.
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ def main(argv=None) -> int:
            "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
            "--theme.primaryColor", "#2563eb",
            "--", "--root", str(Path(a.root).resolve())]
-    print(f"TARANG GUI on {url}  (designs under {Path(a.root).resolve()}); Ctrl+C here stops it.")
+    print(f"TARANG GUI on {url}  (designs under {Path(a.root).resolve()}); Exit TARANG in its left panel, or Ctrl+C here, stops it.")
     proc = subprocess.Popen(cmd)
     if not a.no_browser:
         import time
@@ -53,13 +53,15 @@ def main(argv=None) -> int:
         if proc.poll() is None:
             webbrowser.open(url)
     try:
-        return proc.wait()
+        proc.wait()
     except KeyboardInterrupt:
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.terminate()
-        return 0
+    print("TARANG GUI stopped.")
+    return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

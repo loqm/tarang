@@ -397,3 +397,13 @@ def new_design(folder: Path, name: str, wavelength_um: float, example: Optional[
     cfg.run.name = name
     cfg.run.wavelength_um = float(wavelength_um)
     return cfg.save(folder / "design.toml")
+
+
+def shutdown(delay: float = 1.0) -> None:
+    """End this GUI server after ``delay`` seconds (time for the page to show that it
+    stopped). Runs started from the GUI are separate processes and keep going."""
+    import os
+    import signal
+    import threading
+
+    threading.Timer(delay, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()

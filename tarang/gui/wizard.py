@@ -242,6 +242,12 @@ CHOICE_LABELS = {
 }
 
 
+def is_cloud(step: Step) -> bool:
+    """True if any of the step's stages runs on Tidy3D (priced first)."""
+    from tarang.design.stages import STAGES
+    return any(kind == "cloud" for name, _, kind, _ in STAGES if name in step.stages)
+
+
 def applies(step: Step, cfg) -> bool:
     from tarang.design.stages import applies as stage_applies
     if any(not stage_applies(s, cfg) for s in step.stages):
@@ -330,6 +336,80 @@ def show_value(info: dict) -> str:
     return str(v)
 
 
+def _list_text(v: list) -> str:
+    return ", ".join(f"{x:g}" for x in v)
+
+
+def _recommended(run: Optional[Path], dotted: str):
+    """The value a done step recommends for this setting, or None."""
+    if run is None:
+        return None
+    for stage, mapping in RECOMMEND_FIELDS.items():
+        for k, d in mapping.items():
+            if d == dotted:
+                rec = (results(run, stage).get("recommend") or {}).get("recommended") or {}
+                return rec.get(k)
+    return None
+
+
+def default_text(cfg, dotted: str, run: Optional[Path] = None) -> str:
+    """What an empty setting stands for, with its value where it can be worked out now
+    (shown greyed in the empty field)."""
+    from tarang.design import assumptions, stages as sg
+    from tarang.design.waveguides import default_radii
+    wl = float(cfg.run.wavelength_um)
+    rec = _recommended(run, dotted)
+    if rec not in (None, [], ""):
+        return f"the recommended {_list_text(rec) if isinstance(rec, list) else _fmt(rec)}"
+    try:
+        pre = assumptions.preset(cfg.ring.loss_preset)
+    except ValueError:
+        pre = {}
+    known = {
+        "run.band_um": lambda: f"{round(0.13 * wl, 3):g} (0.13 × wavelength)",
+        "cross_section.heights_um": lambda: _list_text(sg._heights_default(cfg)),
+        "cross_section.widths_um": lambda: _list_text(sg._widths_default(cfg)),
+        "gap.gaps_um": lambda: _list_text(sg._gaps_default(cfg)),
+        "waveguides.bend_radii_um": lambda: _list_text(default_radii(wl)),
+        "ring.scattering_loss_db_cm": lambda: f"{pre['scattering_db_cm']:g} (preset {cfg.ring.loss_preset})",
+        "ring.absorption_loss_db_cm": lambda: f"{pre['absorption_db_cm']:g} (preset {cfg.ring.loss_preset})",
+        "ring.radius_um": lambda: "from the FSR and the group index (shown when the step runs)",
+        "apodise.min_trench_um": lambda: f"{cfg.grating.min_feature_um:g} (grating.min_feature_um)",
+        "stack.core_height_um": lambda: "heights are mapped",
+        "grating.etch_depth_um": lambda: f"{(cfg.cross_section.height_um or 0) / 2:g} (half the core)",
+    }
+    if dotted in known:
+        try:
+            return known[dotted]()
+        except Exception:                                             # noqa: BLE001
+            pass
+    sec, key = dotted.split(".")
+    f = {x.name: x for x in fields(getattr(cfg, sec))}[key]
+    m = re.search(r"\((?:default|empty)[:]?\s*([^)]*)\)", f.metadata.get("help", ""))
+    return m.group(1).strip() if m else ""
+
+
+def preset_label(name: str) -> str:
+    """'typical_ebl: 0.40 dB/cm, Colación et al., Sci. Rep. (2025)' for the loss drop-down."""
+    from tarang.design.assumptions import LOSS_PRESETS
+    p = LOSS_PRESETS[name]
+    tot = p["scattering_db_cm"] + p["absorption_db_cm"]
+    return f"{name}: {tot:.3g} dB/cm, {p['short']}"
+
+
+def preset_detail(name: str) -> str:
+    from tarang.design.assumptions import LOSS_PRESETS
+    p = LOSS_PRESETS[name]
+    return (f"Scattering {p['scattering_db_cm']:g} + absorption {p['absorption_db_cm']:g} dB/cm. "
+            f"{p['note']} Source: {p['source']}.")
+
+
+def problems(cfg) -> dict:
+    """Settings outside their plausible range (e.g. nm typed for µm)."""
+    from tarang.design.config import implausible
+    return implausible(cfg)
+
+
 def save_fields(run: Path, values: dict) -> str:
     """Set {"section.key": value} in design.toml (checked by reading the file back); returns
     "" or why it was refused (then nothing is changed)."""
@@ -340,6 +420,11 @@ def save_fields(run: Path, values: dict) -> str:
         # a new preset: its losses replace the old preset's (unless typed in the same form)
         for k in ("ring.scattering_loss_db_cm", "ring.absorption_loss_db_cm"):
             values.setdefault(k, None)
+    from tarang.design.config import range_problem
+    for dotted, v in values.items():
+        msg = range_problem(dotted, v)
+        if msg:
+            return msg
     for dotted, v in values.items():
         sec, key = dotted.split(".")
         setattr(getattr(cfg, sec), key, v)
@@ -521,6 +606,35 @@ def price_total(log: str) -> Optional[float]:
     if "no cloud step needs paying" in log:
         return 0.0
     return None
+
+
+# ------------------------------------------------------------------ Tidy3D jobs
+#: cloud/ sub-folder -> the step whose runs it holds (the grating folder also holds the
+#: checks' grating variants and the apodise step's reference grating)
+CLOUD_FOLDERS = {"gap_sweep": "gap", "grating": "grating", "band": "checks", "mesh_check": "checks",
+                 "taper": "taper", "apodise": "apodise", "focus": "focus", "edge_taper": "edge",
+                 "edge_facet": "edge"}
+
+
+def jobs(run: Path, st: Optional[Step] = None) -> list[dict]:
+    """The Tidy3D jobs of this design (of one step when ``st`` is given), newest first:
+    step, name, status, estimate, billed cost, submitted, link (from each run's task.json;
+    nothing is asked of Tidy3D)."""
+    from tarang.utilities.cloud_run import collect_runs
+    root = Path(run) / "cloud"
+    if not root.exists():
+        return []
+    out = []
+    for r in collect_runs(root):
+        rel = Path(r["folder"]).relative_to(root).parts
+        step_key = CLOUD_FOLDERS.get(rel[0], rel[0]) if rel else ""
+        if st is not None and step_key != st.key and not (st.key == "checks" and rel and rel[0] == "grating"):
+            continue
+        out.append(dict(link=r.get("url") or "", step=step_key, name=r["name"], status=r["status"],
+                        estimate_FC=r.get("estimated_cost"), billed_FC=r.get("real_cost"),
+                        submitted=(r.get("submitted") or "")[:16].replace("T", " ")))
+    out.sort(key=lambda r: r["submitted"], reverse=True)
+    return out
 
 
 # ------------------------------------------------------------------ downloads

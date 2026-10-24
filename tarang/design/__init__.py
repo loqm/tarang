@@ -60,7 +60,13 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
     cfg.run.coupling = str(cfg.run.coupling or "grating").lower()
     if cfg.run.coupling not in COUPLINGS:
         raise ValueError(f"run.coupling must be one of {COUPLINGS}, not {cfg.run.coupling!r}")
-    _show_assumptions(cfg, ui)                      # after the choice: they depend on the coupling
+    from tarang.design.config import SettingsError, implausible
+    bad = implausible(cfg)
+    if bad:                                          # nearly always nm typed for µm
+        raise SettingsError("Settings outside their plausible range (fix them in design.toml or "
+                         "the GUI, then run again):\n" +
+                         "\n".join(f"  {k}: {v}" for k, v in bad.items()))
+    _show_assumptions(cfg, ui)                     # after the choice: they depend on the coupling
     try:
         credit_limits(ctx)
         for i, (name, title, kind, func) in enumerate(STAGES, 1):

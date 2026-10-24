@@ -13,17 +13,20 @@ from typing import Optional
 LOSS_PRESETS: dict[str, dict] = {
     "typical_ebl": dict(
         scattering_db_cm=0.3, absorption_db_cm=0.1,
+        short="Colación et al., Sci. Rep. (2025)",
         source="Colación, Rukh, Buck, Drake, Sci. Rep. (2025), doi:10.1038/s41598-025-30946-x",
         note="EBL-patterned, annealed LPCVD Si3N4 microrings (620 nm film) with intrinsic Q "
              "about 0.9-1.1 x 10^6, i.e. about 0.4 dB/cm at n_g = 2.2. The split between "
              "scattering and absorption is an assumption."),
     "annealed_low_loss": dict(
         scattering_db_cm=0.020, absorption_db_cm=0.001,
+        short="Xuan et al., Optica 3, 1171 (2016)",
         source="Xuan et al., Optica 3, 1171 (2016), doi:10.1364/OPTICA.3.001171",
         note="600 nm LPCVD Si3N4, annealed at 1150-1200 °C, oxide-clad: intrinsic Q 1.7 x 10^7, "
              "loss about 2.1 dB/m in total (scattering and absorption). Split assumed."),
     "state_of_the_art": dict(
         scattering_db_cm=0.0067, absorption_db_cm=0.0013,
+        short="Ji et al., Optica 4, 619 (2017)",
         source="Ji et al., Optica 4, 619 (2017), doi:10.1364/OPTICA.4.000619",
         note="730 nm Si3N4, oxide-clad: 0.8 dB/m total (upper bound), bulk absorption "
              "0.13 dB/m measured; intrinsic Q 3.7 x 10^7."),

@@ -91,7 +91,42 @@ def sidebar(root_default: str):
                          help="Guided: one step at a time, with what each step recommends. All "
                               "results: every stage, figure, table and file at once.")
         credits_panel(run)
+        from tarang.gui import guided
+        guided.jobs_box(run, where=st.sidebar)
+    exit_panel(run)
     return run
+
+
+def exit_panel(run) -> None:
+    """Exit: stops the GUI (as Ctrl+C in its window does). A run started from the GUI keeps
+    going unless it is stopped here too."""
+    st.sidebar.divider()
+    running = bool(run is not None and data.job(run).get("running"))
+    if st.sidebar.button("Exit TARANG", key="exit", help="Stops the GUI; your designs and results "
+                         "stay in their folders. Start it again with python -m tarang.gui."):
+        if not running:
+            _exit_now()
+        st.session_state["exit_ask"] = True
+    if st.session_state.get("exit_ask") and running:
+        st.sidebar.warning("A run of this design is still going. It can keep going without the GUI "
+                           "(its output goes on into gui_log.txt; open the GUI again to watch it).")
+        a, b = st.sidebar.columns(2)
+        if a.button("Exit, run goes on", key="exit_keep"):
+            _exit_now()
+        if b.button("Stop run and exit", key="exit_stop"):
+            data.stop(run)
+            _exit_now()
+        if st.sidebar.button("Cancel", key="exit_cancel"):
+            st.session_state.pop("exit_ask", None)
+            st.rerun()
+
+
+def _exit_now() -> None:
+    st.session_state.pop("exit_ask", None)
+    st.success("TARANG has stopped. You can close this browser tab; start it again with "
+               "`python -m tarang.gui`.")
+    data.shutdown()
+    st.stop()
 
 
 def credits_panel(run: Path):

@@ -15,6 +15,28 @@ working until v0.2.0; old imports are updated with one command (see
 
 ### Added
 
+- **User guide** ([docs/USER_GUIDE.md](docs/USER_GUIDE.md)): a design in the GUI step by
+  step for both paths (ring with grating couplers; test waveguides with edge couplers), what
+  each step computes from first principles, what to set and check, credits and Tidy3D jobs,
+  the files and the benchmark pack, units and common mistakes; with screenshots.
+- **GUI: Exit button** (bottom of the left panel) stops the GUI; a run still going can go on
+  without it or be stopped first. **Tidy3D jobs**: every cloud simulation of a step (and of
+  the design, left panel) with status, estimate, billed cost, date and a link to it in the
+  Tidy3D web interface (from each run's `task.json`; **Find the missing links** asks Tidy3D
+  for runs saved before task records). **Empty settings show their value** (greyed in the
+  field and written under it: the default worked out from your other settings, or the
+  step's recommendation once it has run). The **loss presets** name their paper and total
+  loss in the drop-down, with the full source and note below it. Step buttons show the whole
+  title (no hover text over them) and a legend of the status icons.
+- **Plausible values** (`config.RANGES_UM`, `range_problem`, `implausible`): film, BOX, core
+  height and width (and the mapped ones), lensed-fibre spot and fibre MFD must lie in a
+  plausible range in µm; a value outside (nearly always nm typed for µm) is refused by the
+  GUI with the value meant ("did you mean 0.7 µm (700 nm)?"), shown on every step with Run
+  disabled, asked again in the terminal forms, and stops a design run before its first stage
+  (`SettingsError`, a message instead of a traceback).
+- **Benchmark pack:** `comparison.csv` (every number of `results.csv` with empty columns for
+  another solver's value, its settings, the difference and notes, to fill in and send back),
+  and the TARANG, Tidy3D, NumPy and Python versions in its README.
 - **Guided design in the GUI** (the default view of `python -m tarang.gui`): the steps of the
   design one at a time. Step 1 asks the two choices (ring for combs or test waveguides;
   grating or edge couplers; which gratings, or the lensed fibre's spot) with drawings of
