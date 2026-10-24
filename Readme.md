@@ -26,6 +26,7 @@ publish.
 | [Quick start](#quick-start-local-no-credits) | five steps, all local and free, with the figures they produce |
 | [Guided design](#guided-design-one-command) | one command from materials to GDS, at any wavelength; every stage and command |
 | [Design in the browser](#design-in-the-browser-gui) | the GUI: guided steps, results, files, credits |
+| [User guide](docs/USER_GUIDE.md) | a design step by step in the GUI, with what each step computes and screenshots |
 | [Cloud runs and cost control](#cloud-runs-and-cost-control) | caching, cost limits, resuming |
 | [Materials](#materials), [Logging](#logging), [Repository layout](#repository-layout) | reference, including the two `tarang.migrate` commands for old scripts |
 | [Known limitations](#known-limitations), [Troubleshooting](#troubleshooting) | what to watch for, and fixes for common errors |
@@ -374,9 +375,11 @@ python -m tarang.gui                         # designs under ./design_runs
 python -m tarang.gui --root D:/my/designs    # another folder (any path style)
 ```
 
-The GUI opens in your browser (it runs only on your computer, at `http://localhost:8501`;
-Ctrl+C in the terminal closes it). It shows the same design folders the command line
-writes, so both can be used on one design in turn.
+The GUI opens in your browser (it runs only on your computer, at `http://localhost:8501`).
+**Exit TARANG** at the bottom of the left panel closes it (or Ctrl+C in the terminal); a
+run still going can go on without it or be stopped first. It shows the same design
+folders the command line writes, so both can be used on one design in turn. The
+[user guide](docs/USER_GUIDE.md) walks through a design step by step, with screenshots.
 
 **Guided design** (the default view): the steps of your design on the left, with their
 status (done, waiting for your choice, settings changed, not run yet); the chosen step on
@@ -385,12 +388,13 @@ the right:
 | Step part | What |
 |---|---|
 | drawing | what the step designs (ring, spirals, the three gratings, the edge coupler and lensed fibre, the cross-section of your stack, ...) |
-| settings | the step's settings as a form, each with its explanation (hover); **All settings** below holds the whole `design.toml` |
+| settings | the step's settings as a form, each with its explanation (hover); an empty field shows the value it stands for; **All settings** below holds the whole `design.toml`; values that cannot be right (e.g. a film of 700 µm, nm typed for µm) are refused with the value meant |
 | run | local steps: **Run (free)**; cloud steps: **Estimate cost**, then **Run (up to ... FC)** with that spend cap; **Stop** keeps finished work; the output scrolls while it runs |
 | recommended | what the step recommends and why, beside what is in use; **Use the recommended values** where they are settings (cross-section, ring radius, spiral radius and cutback lengths, the edge coupler's facet width, taper shape and length) |
 | choice | the cross-section map stops with its candidates (most robust first): pick one, it is then checked at a finer mesh |
 | results | the step's key numbers and figures; the layout step shows `design.gds` as it goes to the mask |
 | report | the design in numbers, the report, and downloads: report as HTML (figures inside; print it to PDF) or Markdown, everything as one zip, the benchmark pack |
+| Tidy3D jobs | every cloud simulation of the step (and, in the left panel, of the design) with its status, estimate, billed cost and a link to it in the Tidy3D web interface |
 
 **All results** (the other view):
 
@@ -537,6 +541,7 @@ python -m tarang.migrate path/to/your/scripts --write    # apply
 | `CostLimitExceededError` | Estimate above `max_cost` / `TARANG_MAX_COST`; nothing was charged. Raise the limit or coarsen the mesh. |
 | `WaveguideModeError: TE00 mode not found` | Widen the core, raise `num_modes`, or enlarge `sim_size_y` / `sim_size_z`. |
 | `No guided modes` in the log | Below cut-off; `require_guided=True` makes it an error. |
+| `... outside 0.02–5 µm (the setting is in µm); did you mean 0.7 µm (700 nm)?` | Lengths are in µm: type 0.7 for a 700 nm film (in the GUI's step 1, or in `design.toml`). |
 | `ValueError: sim_size_z (...) must exceed ...` | The vertical domain is smaller than box + core + cladding; enlarge `sim_size_z`. |
 | `Requested wl_range ...` (no data / beyond the data) | Pick a dataset that covers the band ([Materials](#materials)). |
 | A sweep returns instantly | Every point is cached; `force_rerun=True` recomputes. |

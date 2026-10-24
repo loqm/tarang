@@ -20,6 +20,17 @@ STATUS_TEXT = {"done": "done", "choose": "waiting for your choice", "changed": "
                "skipped": "skipped or off", "to do": "not run yet"}
 
 
+# step buttons: the whole title on one or two lines, left-aligned (no "…")
+NAV_CSS = """<style>
+div[class*="st-key-nav-"] button {justify-content: flex-start; text-align: left; height: auto;
+  min-height: 2.5rem; padding-top: .35rem; padding-bottom: .35rem}
+div[class*="st-key-nav-"] button p, div[class*="st-key-nav-"] button div {white-space: normal;
+  overflow: visible; text-overflow: clip; text-align: left}
+[data-testid="stCheckbox"] label p, [data-testid="stCheckbox"] label div {white-space: normal;
+  overflow: visible; text-overflow: clip}
+</style>"""
+
+
 def _img(svg: str, width: int = 320) -> None:
     st.markdown(il.as_img(svg, width), unsafe_allow_html=True)
 
@@ -54,23 +65,29 @@ def page(run: Path, live_log) -> None:
     rows = data.stage_rows(run)
     statuses = {s.key: wz.step_status(run, s, rows) for s in steps}
     cur = _current(run, steps, statuses)
-    nav, main = st.columns([1, 3.4], gap="large")
+    st.markdown(NAV_CSS, unsafe_allow_html=True)
+    nav, main = st.columns([1.15, 3.3], gap="medium")
     with nav:
         st.markdown("**Steps**")
         for i, s in enumerate(steps, 1):
             label = f"{ICON[statuses[s.key]]} {i}. {s.title}"
-            if st.button(label, key=f"nav:{s.key}", width="stretch",
-                         type="primary" if s.key == cur else "secondary",
-                         help=STATUS_TEXT[statuses[s.key]]):
+            if st.button(label, key=f"nav-{s.key}", width="stretch",
+                         type="primary" if s.key == cur else "secondary"):
                 _go(run, s.key)
                 st.rerun()
         done = sum(1 for s in steps if statuses[s.key] in ("done", "skipped"))
         st.progress(done / len(steps), text=f"{done} of {len(steps)} steps done")
+        st.caption("  \n".join(f"{ICON[k]} {STATUS_TEXT[k]}" for k in ICON))
     with main:
         s = wz.step(cur)
         i = [x.key for x in steps].index(cur)
         st.subheader(f"Step {i + 1} of {len(steps)}: {s.title}")
         st.caption(s.explain)
+        bad = wz.problems(cfg)
+        if bad:
+            st.error("**A setting cannot be right; fix it before running a step:**  \n"
+                     + "  \n".join(f"`{k}`: {v}" for k, v in bad.items())
+                     + ("" if s.key == "start" else "  \n(The film, BOX and fibre are set in step 1.)"))
         if s.key == "start":
             start_step(run, cfg)
         else:
@@ -142,8 +159,9 @@ def start_step(run: Path, cfg) -> None:
     values["run.wavelength_um"] = b.number_input("Design wavelength (µm)", value=float(cfg.run.wavelength_um),
                                                  min_value=0.3, max_value=5.0, step=0.01, format="%.3f")
     film = c.text_input("Film thickness, if fixed (µm)", value="" if cfg.stack.core_height_um is None
-                        else f"{cfg.stack.core_height_um:g}",
-                        help="The wafer you have or ordered; empty: heights are mapped.")
+                        else f"{cfg.stack.core_height_um:g}", placeholder="e.g. 0.7; empty: heights are mapped",
+                        help="In µm (0.7 for a 700 nm film): the wafer you have or ordered. Empty: "
+                             "several heights are mapped in the Cross-section step.")
     a, b, c = st.columns(3)
     values["stack.box_height_um"] = a.number_input("BOX thickness (µm)", value=float(cfg.stack.box_height_um),
                                                    min_value=0.5, step=0.5)
@@ -154,12 +172,16 @@ def start_step(run: Path, cfg) -> None:
     presets = wz._choices()["ring.loss_preset"]
     values["ring.loss_preset"] = st.selectbox(
         "Propagation loss to start from (each from a publication; your measured values replace them)",
-        presets, index=presets.index(cfg.ring.loss_preset) if cfg.ring.loss_preset in presets else 0)
+        presets, index=presets.index(cfg.ring.loss_preset) if cfg.ring.loss_preset in presets else 0,
+        format_func=wz.preset_label, key=f"preset:{run}")
+    st.caption(wz.preset_detail(values["ring.loss_preset"])
+               + " For an air-clad, fully etched film, typical_ebl is the realistic start; the "
+                 "other two papers are oxide-clad.")
     if st.button("Save and continue", type="primary"):
         try:
             values["stack.core_height_um"] = float(film) if film.strip() else None
         except ValueError:
-            st.error("Film thickness: a number in µm, or empty.")
+            st.error("Film thickness: a number in µm (0.7 for 700 nm), or empty.")
             return
         msg = wz.save_fields(run, values)
         if msg:
@@ -198,11 +220,13 @@ def settings_form(run: Path, cfg, s) -> None:
                 raw[info["dotted"]] = c.number_input(label, value=float(info["value"]), help=info["help"],
                                                      format="%g", key=key)
             else:
-                raw[info["dotted"]] = c.text_input(label, value=wz.show_value(info),
-                                                   help=info["help"] + ("  (empty: the default / recommended "
-                                                                        "value)" if info["kind"] in
-                                                                       ("optional", "list") else ""),
-                                                   key=key)
+                dflt = wz.default_text(cfg, info["dotted"], run)
+                empty = not wz.show_value(info)
+                raw[info["dotted"]] = c.text_input(
+                    label, value=wz.show_value(info), placeholder=f"empty: {dflt}" if dflt else "",
+                    help=info["help"] + (f"  Empty: {dflt}." if dflt else ""), key=key)
+                if dflt and empty:
+                    c.caption(f"Empty, so: **{dflt}**")
         if st.form_submit_button("Save settings"):
             try:
                 vals = {i["dotted"]: wz.parse_value(i, raw[i["dotted"]]) for i in infos}
@@ -215,12 +239,11 @@ def settings_form(run: Path, cfg, s) -> None:
 
 def run_controls(run: Path, s, status: str, live_log) -> None:
     job = data.job(run)
-    running = bool(job.get("running"))
+    running = bool(job.get("running")) or bool(wz.problems(data.load_config(run)))
     missing = wz.missing_before(run, s)
     if missing and not running:
         st.warning("Needs the earlier step(s) first: " + ", ".join(missing))
-    from tarang.design.stages import STAGES
-    cloud = any(kind == "cloud" for name, _, kind, _ in STAGES if name in s.stages)
+    cloud = wz.is_cloud(s)
     pkey = f"price:{run}:{s.key}"
     # a finished price-only run of this step: read its total
     if not running and job and "--price-only" in job.get("argv", []) and \
@@ -250,7 +273,7 @@ def run_controls(run: Path, s, status: str, live_log) -> None:
                      key=f"run:{s.key}"):
             wz.run_step(run, s, "run", again=again)
             st.rerun()
-    if c3.button("Stop", disabled=not running, key=f"stop:{s.key}",
+    if c3.button("Stop", disabled=not job.get("running"), key=f"stop:{s.key}",
                  help="Like Ctrl+C: finished stages and cloud runs are kept."):
         data.stop(run)
     st.fragment(run_every=2)(live_log)(str(run))
@@ -263,7 +286,7 @@ def cross_section_choice(run: Path) -> None:
     st.markdown("**Choose the cross-section** (candidates from the map, most robust first)")
     _table(cands)
     labels = [f"{c['H_um']} × {c['W_um']} µm: D = {c.get('D_TE0', 0):.0f} ps/(nm·km), "
-              f"{c.get('target_neighbours', '?')} of 8 neighbours also targets" for c in cands]
+              f"{c.get('target_neighbours', '?')} neighbours also targets" for c in cands]
     i = st.selectbox("Cross-section", range(len(cands)), format_func=lambda k: labels[k]
                      + ("  (recommended)" if k == 0 else ""), key="xs_pick")
     if st.button("Use this cross-section and check it", type="primary", disabled=bool(data.job(run).get("running"))):
@@ -349,6 +372,8 @@ def stage_step(run: Path, cfg, s, status: str, live_log) -> None:
     with b:
         settings_form(run, cfg, s)
     run_controls(run, s, status, live_log)
+    if wz.is_cloud(s):
+        jobs_box(run, s)
     results_panel(run, s, status)
     with st.expander("All settings (design.toml, advanced)"):
         p = run / "design.toml"
@@ -366,3 +391,27 @@ def stage_step(run: Path, cfg, s, status: str, live_log) -> None:
                 st.success("Saved.")
             finally:
                 tmp.unlink(missing_ok=True)
+
+
+def jobs_box(run: Path, s=None, where=None) -> None:
+    """The Tidy3D jobs of this step (or of the whole design), each with its link."""
+    where = where or st
+    rows = wz.jobs(run, s)
+    title = (f"Tidy3D jobs of this step ({len(rows)})" if s is not None
+             else f"Tidy3D jobs of this design ({len(rows)})")
+    with where.expander(title):
+        if not rows:
+            st.caption("None yet. Each cloud run appears here with its link once it is submitted.")
+        else:
+            if s is not None:
+                rows = [{k: v for k, v in r.items() if k != "step"} for r in rows]
+            st.dataframe(rows, hide_index=True, width="stretch",
+                         column_config={"link": st.column_config.LinkColumn("Tidy3D", display_text="open ↗")})
+            st.caption("A link opens the run in the Tidy3D web interface (set-up, mesh, results; "
+                       "log in with your Tidy3D account).")
+        if any(not r["link"] for r in rows):
+            st.caption("Runs saved before TARANG kept task records have no link yet.")
+            if st.button("Find the missing links (asks Tidy3D)", key=f"backfill:{s.key if s else 'all'}"):
+                from tarang.utilities.cloud_run import backfill_task_records
+                n = backfill_task_records(run / "cloud")
+                st.success(f"{n} link(s) found.") if n else st.info("No more found (offline, or no API key).")

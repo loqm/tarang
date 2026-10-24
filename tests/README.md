@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `439 passed, 2 skipped` (quick check: `418 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
+Expected on Windows: `453 passed, 2 skipped` (quick check: `432 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -502,3 +502,20 @@ cloud for the cloud stages.
 | `test_expected_cutback_follows_the_loss_and_the_couplers` | Expected transmission = 2 × coupler − α L for every structure, slope −α, ripple from the couplers' reflection, shorter ripple period for longer structures |
 | `test_report_has_the_test_waveguide_sections` | Report sections 3w and 7e for test waveguides |
 | `test_bend_loss_follows_the_waveguide_mode_not_a_substrate_mode` (slow) | Real local solves of the 700 × 1000 nm guide: bend loss tens of dB/cm at 5 µm, falling more than tenfold by 10 µm, below the solver's floor by 20 µm (the bent TE00 tracked by overlap, not the substrate whispering-gallery modes) |
+
+## `test_phase14d.py`: plausible values, defaults, papers, Tidy3D jobs, Exit, guided paths (13 tests, Phase 14D)
+
+| Test | Checks |
+|---|---|
+| `test_a_film_in_nanometres_is_caught_with_the_value_meant` | A film of 700 µm is refused with "did you mean 0.7 µm (700 nm)"; lists are checked element by element; a plausible design has no problem |
+| `test_a_design_run_stops_before_any_stage_on_such_a_value` | `python -m tarang.design` exits with code 2 and a message (no traceback) before the first stage |
+| `test_the_gui_refuses_it_and_takes_the_right_one` | `save_fields` refuses 700 and changes nothing; 0.7 is saved |
+| `test_empty_settings_show_their_value` | Band half-width 0.13 λ, heights around the fixed film, widths, the preset's losses, the help text, and a done step's recommendation |
+| `test_loss_presets_name_their_papers` | Each preset's drop-down label has its total loss and paper; the detail has the DOI |
+| `test_jobs_are_listed_per_step_with_their_links` | `task.json` records under `cloud/` listed newest first with their links, filtered by step (checks: band and grating folders) |
+| `test_a_wrong_film_is_shown_and_no_step_can_run` | The red box on a step and Run disabled |
+| `test_start_step_lists_the_papers_and_checks_the_film` | Step 1: the paper in the drop-down and below it; 700 refused, the step stays open |
+| `test_exit_stops_the_gui_and_asks_about_a_running_run` | Exit ends the server at once; with a run going it asks, and "Stop run and exit" stops the run first |
+| `test_guided_path_walks_every_step[path_A_ring_gratings]`, `[path_B_test_waveguides_edge]` | Headless walk through every step of both paths: each opens without an error, shows done, cloud steps list their Tidy3D jobs, recommendations shown; Run again starts that step's own stages |
+| `test_step_buttons_carry_no_hover_text` | The step buttons have no tooltip covering their neighbours |
+| `test_benchmark_pack_has_a_comparison_sheet_and_the_versions` | `comparison.csv` holds every number of `results.csv` with empty columns for another solver; the README gives the versions and how to send numbers back |

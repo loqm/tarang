@@ -401,3 +401,51 @@ def _toml_value(v) -> str:
     if isinstance(v, (list, tuple)):
         return "[" + ", ".join(_toml_value(x) for x in v) + "]"
     raise TypeError(f"Cannot write {v!r} to TOML")
+
+
+# ---- plausible values ---------------------------------------------------------------- #
+class SettingsError(ValueError):
+    """A setting that cannot be right (shown as a message, not a traceback)."""
+
+
+#: lengths (µm) a design cannot sensibly go beyond; a value outside is nearly always a
+#: unit slip (nanometres typed into a micrometre setting)
+RANGES_UM: dict[str, tuple[float, float, str]] = {
+    "stack.core_height_um": (0.02, 5.0, "Film thickness"),
+    "stack.box_height_um": (0.1, 20.0, "BOX thickness"),
+    "cross_section.height_um": (0.02, 5.0, "Core height"),
+    "cross_section.width_um": (0.05, 20.0, "Core width"),
+    "cross_section.heights_um": (0.02, 5.0, "Core heights to map"),
+    "cross_section.widths_um": (0.05, 20.0, "Core widths to map"),
+    "edge.fiber_mfd_um": (0.5, 20.0, "Lensed-fibre spot (MFD)"),
+    "grating.mfd_um": (1.0, 30.0, "Fibre mode-field diameter"),
+}
+
+
+def range_problem(dotted: str, value) -> str:
+    """'' if ``value`` (a number, a list of numbers or None) is plausible for the setting,
+    otherwise why not, with the micrometre value meant if nanometres were typed."""
+    if dotted not in RANGES_UM or value is None or value == []:
+        return ""
+    lo, hi, what = RANGES_UM[dotted]
+    for v in (value if isinstance(value, (list, tuple)) else [value]):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return f"{what}: {v!r} is not a number in µm"
+        if not lo <= v <= hi:
+            hint = (f"; did you mean {v / 1000:g} µm ({v:g} nm)?" if v > hi and lo <= v / 1000 <= hi
+                    else "")
+            return f"{what} {v:g} µm is outside {lo:g}–{hi:g} µm (the setting is in µm){hint}"
+    return ""
+
+
+def implausible(cfg: "DesignConfig") -> dict[str, str]:
+    """{"section.key": why} for every setting outside its plausible range."""
+    out = {}
+    for dotted in RANGES_UM:
+        sec, key = dotted.split(".")
+        msg = range_problem(dotted, getattr(getattr(cfg, sec), key))
+        if msg:
+            out[dotted] = msg
+    return out

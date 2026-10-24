@@ -6,6 +6,7 @@
                          the result, and what to compare
       assumptions.csv    assumed values with their sources
       results.csv        every computed value with how it was computed
+      comparison.csv     the same values with empty columns for another solver's numbers
       materials_nk.csv   the n, k actually used (fitted models, sampled over the band)
       design.toml        the settings of the run
       figures/  tables/  layout/   copies of the run's figures, tables and GDS
@@ -25,6 +26,11 @@ from pathlib import Path
 import numpy as np
 
 C_UM = 2.99792458e14
+
+
+#: columns of comparison.csv: TARANG's numbers, and empty columns for the other solver's
+COMPARISON_FIELDS = ["quantity", "unit", "tarang_value", "how_tarang", "your_value",
+                     "your_solver_and_settings", "difference_pct", "notes"]
 
 
 def _copy(src, dst_dir: Path) -> Path | None:
@@ -166,6 +172,13 @@ def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
                            lineterminator="\n")
         w.writeheader()
         w.writerows(checks)
+    with open(pack / "comparison.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=COMPARISON_FIELDS, lineterminator="\n")
+        w.writeheader()
+        for r in checks:
+            w.writerow({"quantity": r.get("quantity", ""), "unit": r.get("unit", ""),
+                        "tarang_value": r.get("value", ""),
+                        "how_tarang": r.get("how TARANG computed it", "")})
     if mat.get("table"):
         _copy(mat["table"], pack)
     _copy(ctx.out / "design.toml", pack)
@@ -269,6 +282,11 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
          + ". Import these tables rather than a solver's built-in materials, so both solvers "
          "see the same indices.",
          "- Sidewalls: vertical (90°) everywhere.", ""]
+    v = ctx.state.get("versions") or {}
+    if v:
+        L += ["Made with TARANG " + str(v.get("tarang", "?")) + ", Tidy3D " + str(v.get("tidy3d", "?"))
+              + ", NumPy " + str(v.get("numpy", "?")) + ", Python " + str(v.get("python", "?"))
+              + (f" on {v['date'][:10]}" if v.get("date") else "") + ".", ""]
     L += ["## Assumed values", "", "| quantity | value | unit | source |", "|---|---|---|---|"]
     L += [f"| {r['quantity']} | {r['value']} | {r['unit']} | {r['source']} |" for r in rows]
     L.append("")
@@ -452,6 +470,12 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
               "The files in `simulations/` are the exact simulations TARANG ran; below is what "
               "they contain.", ""] + sim_sections
     L += ["## Every number", "", "`results.csv` (quantity, value, unit, how computed).", ""]
+    L += ["## Sending your numbers back", "",
+          "`comparison.csv` lists every number of `results.csv` with empty columns for yours: "
+          "fill `your_value` (same unit), `your_solver_and_settings` (solver, version, mesh, "
+          "boundaries, anything that differs from the set-up above) and, if you like, "
+          "`difference_pct` = 100 × (yours − TARANG) / TARANG. Leave rows you did not compute "
+          "empty. Send the file back as it is; it is read row by row.", ""]
     return L
 
 

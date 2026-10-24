@@ -328,6 +328,12 @@ def _wavelength_ok(v) -> str:
         return "wavelength must be a number in um, e.g. 1.55"
 
 
+def _in_range(dotted: str):
+    """A form check: the value lies in the setting's plausible range (config.RANGES_UM)."""
+    from tarang.design.config import range_problem
+    return lambda v: range_problem(dotted, v)
+
+
 def _heights_default(cfg) -> list:
     wl, H, dH = cfg.run.wavelength_um, cfg.stack.core_height_um, cfg.cross_section.tolerance_height_um
     if H:
@@ -441,13 +447,15 @@ def stage_cross_section(ctx: Context) -> dict:
     wl = cfg.run.wavelength_um
     clad_not_air = str(cfg.materials.cladding).lower() != "air"
     ui.form(cfg, "Cross-section map", [
-        dict(section="stack", key="core_height_um"),
-        dict(section="stack", key="box_height_um"),
+        dict(section="stack", key="core_height_um", check=_in_range("stack.core_height_um")),
+        dict(section="stack", key="box_height_um", check=_in_range("stack.box_height_um")),
         dict(section="stack", key="cladding_height_um", show=clad_not_air),
         dict(section="cross_section", key="tolerance_width_um"),
         dict(section="cross_section", key="tolerance_height_um"),
-        dict(section="cross_section", key="heights_um", default=_heights_default, cast=parse_list),
-        dict(section="cross_section", key="widths_um", default=_widths_default, cast=parse_list),
+        dict(section="cross_section", key="heights_um", default=_heights_default, cast=parse_list,
+             check=_in_range("cross_section.heights_um")),
+        dict(section="cross_section", key="widths_um", default=_widths_default, cast=parse_list,
+             check=_in_range("cross_section.widths_um")),
         dict(section="cross_section", key="map_steps",
              check=lambda v: "" if v >= 30 else "use at least 30 (50 for maps)"),
         dict(section="run", key="workers")])
@@ -505,11 +513,13 @@ def stage_cross_section(ctx: Context) -> dict:
              {"D_TE0": ".1f", "ng_TE0": ".4f", "TE_TM_split": ".4f"})
     ui.say("  Ranked by how many of the 8 neighbouring map points are also targets, then by "
            "TE_TM_split = |n_eff(TE00) - n_eff(TM00)|: a larger split keeps the TE and TM "
-           "mode families further from crossing (fewer avoided crossings in the comb).")
+           + ("modes apart (less TE-TM conversion in the spiral bends)." if loss_test else
+              "mode families further from crossing (fewer avoided crossings in the comb)."))
     best = ranked[0]
     cands = [{k: v for k, v in r.items() if not k.startswith("_")} for r in ranked[:8]]
     why = ("most of its 8 neighbouring map points are also targets (robust to fabrication "
-           "errors), then the largest TE/TM index split (fewest mode crossings)")
+           "errors), then the largest TE/TM index split (" + ("TE and TM furthest apart)" if loss_test
+                                                              else "fewest mode crossings)"))
     recommend = dict(choices=cands, recommended=dict(height_um=best["H_um"], width_um=best["W_um"]),
                      why=why)
     if cfg.cross_section.stop_after_map and not given_hw:

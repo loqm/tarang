@@ -95,7 +95,12 @@ def main(argv=None) -> int:
         return 0
     only = [s.strip() for s in a.only.split(",")] if a.only else None
     redo = [s.strip() for s in a.redo.split(",") if s.strip()]
-    run(cfg, out, interactive=interactive, only=only, redo=redo, prompter=ui)
+    from tarang.design.config import SettingsError
+    try:
+        run(cfg, out, interactive=interactive, only=only, redo=redo, prompter=ui)
+    except SettingsError as err:
+        print(f"\n{err}")
+        return 2
     return 0
 
 
