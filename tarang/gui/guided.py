@@ -280,16 +280,46 @@ def run_controls(run: Path, s, status: str, live_log) -> None:
 
 
 def cross_section_choice(run: Path) -> None:
+    """Every candidate of the map (most robust first): tick some and compare them side by side
+    (local, free), then choose one and check it."""
     cands = wz.candidates(run)
     if not cands:
         return
-    st.markdown("**Choose the cross-section** (candidates from the map, most robust first)")
-    _table(cands)
+    running = bool(data.job(run).get("running"))
+    st.markdown(f"**Choose the cross-section**: all {len(cands)} candidates of the map, most robust "
+                "first. Tick the ones to compare side by side (their tolerance box, a bend, mode "
+                "profiles and D over the band; local, free, a few minutes each), then choose.")
+    ticked = set(wz.compare_list(run)) or {wz.hw_key(c) for c in cands[:4]}
+    rows = [dict(compare=wz.hw_key(c) in ticked, **{k: c.get(k) for k in wz.CANDIDATE_COLUMNS})
+            for c in cands]
+    edited = st.data_editor(rows, hide_index=True, key="xs_table", width="stretch",
+                            disabled=list(wz.CANDIDATE_COLUMNS),
+                            column_config={"compare": st.column_config.CheckboxColumn("compare")})
+    chosen = [wz.hw_key(c) for c, r in zip(cands, edited) if r.get("compare")]
+    if st.button(f"Compare the {len(chosen)} ticked candidates (free)", disabled=running or not chosen,
+                 key="xs_compare"):
+        msg = wz.compare_candidates(run, chosen)
+        if msg:
+            st.error(msg)
+        else:
+            wz.run_step(run, wz.step("cross_section"), "run")
+            st.rerun()
+    comp = wz.comparison(run)
+    if comp:
+        with st.container(border=True):
+            st.markdown(f"**Compared** at {comp.get('steps')} steps/λ; bend R = {comp.get('radius_um')} µm")
+            _table(comp.get("rows") or [])
+            figs = wz.comparison_figures(run)
+            cols = st.columns(2)
+            for j, f in enumerate(figs):
+                cols[j % 2].image(str(f), caption=f.name, width="stretch")
+    done = {wz.hw_key(r) for r in (comp or {}).get("rows") or []}
     labels = [f"{c['H_um']} × {c['W_um']} µm: D = {c.get('D_TE0', 0):.0f} ps/(nm·km), "
-              f"{c.get('target_neighbours', '?')} neighbours also targets" for c in cands]
-    i = st.selectbox("Cross-section", range(len(cands)), format_func=lambda k: labels[k]
-                     + ("  (recommended)" if k == 0 else ""), key="xs_pick")
-    if st.button("Use this cross-section and check it", type="primary", disabled=bool(data.job(run).get("running"))):
+              f"{c.get('target_neighbours', '?')} neighbours also targets"
+              + ("  (recommended)" if k == 0 else "") + ("  (compared)" if wz.hw_key(c) in done else "")
+              for k, c in enumerate(cands)]
+    i = st.selectbox("Cross-section", range(len(cands)), format_func=lambda k: labels[k], key="xs_pick")
+    if st.button("Use this cross-section and check it", type="primary", disabled=running):
         msg = wz.choose_cross_section(run, cands[i]["H_um"], cands[i]["W_um"])
         if msg:
             st.error(msg)
@@ -298,18 +328,19 @@ def cross_section_choice(run: Path) -> None:
             st.rerun()
 
 
-def suite_panel(run: Path, s) -> None:
-    """The step's dispersion-engineering figures under results/ (map, convergence, ...)."""
-    groups = wz.suite(run, s)
+def suite_panel(run: Path, s, skip=()) -> None:
+    """The step's dispersion-engineering figures (map, candidates, convergence, ...)."""
+    groups = [(t, g) for t, g in wz.suite(run, s) if t not in skip]
     for k, (title, figs) in enumerate(groups):
         with st.expander(f"{title} ({len(figs)})", expanded=k < 2 and s.key == "cross_section"):
             cols = st.columns(2) if len(figs) > 2 else [st.container()]
             for j, f in enumerate(figs):
                 cols[j % len(cols)].image(str(f), caption=f.relative_to(run).as_posix(), width="stretch")
     m = data.latest_map(run) if s.key == "cross_section" else None
-    if m is not None and (m / "target_geometries.csv").exists():
+    p = next((q for q in (run / "tables" / "map_target_geometries.csv",
+                          m / "target_geometries.csv" if m else None) if q is not None and q.exists()), None)
+    if p is not None:
         with st.expander("Target geometries of the map (anomalous D, one guided TE mode)"):
-            p = m / "target_geometries.csv"
             _table(data.read_csv(p), width="stretch")
             st.download_button("Download CSV", p.read_bytes(), file_name=f"{run.name}_target_geometries.csv",
                                mime="text/csv", key="dl_targets")
@@ -318,7 +349,7 @@ def suite_panel(run: Path, s) -> None:
 def results_panel(run: Path, s, status: str) -> None:
     if s.key == "cross_section" and status == "choose":
         cross_section_choice(run)
-        suite_panel(run, s)
+        suite_panel(run, s, skip=("Candidates compared",))     # shown in the choice above
         return
     if status not in ("done", "changed", "skipped"):
         return

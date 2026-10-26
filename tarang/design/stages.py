@@ -328,6 +328,109 @@ def _wavelength_ok(v) -> str:
         return "wavelength must be a number in um, e.g. 1.55"
 
 
+#: where the dispersion-engineering figures go (their tables go to tables/; the raw solver
+#: data stays in results/, which makes a repeated solve free)
+MAP_DIR = "figures/2_dispersion_map"
+CONV_DIR = "figures/2_mesh_convergence"
+FIN_DIR = "figures/2_finalists"
+CAND_DIR = "figures/2_candidates"
+PROFILE_DIR = "figures/3_dispersion_profile"
+
+
+def _to_tables(ctx: Context, folder: Path, names: dict) -> None:
+    """Move the tables a tool wrote among its figures into tables/ ({file: new name})."""
+    for src, dst in names.items():
+        p = Path(folder) / src
+        if p.exists():
+            os.replace(p, ctx.path("tables", dst))
+
+
+def _hw(token: str) -> tuple[float, float]:
+    h, w = (round(float(v), 4) for v in str(token).lower().replace("×", "x").split("x"))
+    return h, w
+
+
+def compare_radius(cfg, ng: float) -> float:
+    """The bend radius a candidate is judged at: the ring radius for the FSR target (or the one
+    set), or for test waveguides the spiral radius (set, or 20 µm scaled with the wavelength)."""
+    if str(getattr(cfg.run, "goal", "comb_ring")) == "loss_test":
+        r = cfg.waveguides.bend_radius_um
+        return float(r) if r else round(20.0 * cfg.run.wavelength_um / 1.55, 1)
+    if cfg.ring.radius_um:
+        return float(cfg.ring.radius_um)
+    return physics.round_to(physics.radius_for_fsr(cfg.ring.fsr_ghz, ng), 0.5)
+
+
+def _read_csv(path: Path) -> list[dict]:
+    if not Path(path).exists():
+        return []
+    with open(path, encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def compare_candidates(ctx: Context, points: list, dW: float, dH: float, ng: float) -> dict:
+    """Candidates side by side before the choice (local, free): each at the check mesh with its
+    tolerance box, TE/TM split and second-mode margin, in a bend, its mode profiles and its D
+    over the band (and D_int for a ring)."""
+    cfg, ui = ctx.cfg, ctx.ui
+    wl, dsteps = cfg.run.wavelength_um, int(cfg.cross_section.decision_steps)
+    pts = ",".join(f"{h:g}x{w:g}" for h, w in points)
+    R = compare_radius(cfg, ng)
+    ui.say(f"\nComparing {len(points)} candidates ({pts}) at {dsteps} steps/λ, each with its "
+           f"tolerance box, in a bend of R = {R:g} µm and over the band (local, free; a few "
+           "minutes each)...")
+    straight = ctx.path("results", f"candidates_{dsteps}steps.jsonl")
+    bend = ctx.path("results", f"candidates_{dsteps}steps_R{R:g}um.jsonl")
+    rel = lambda p: p.relative_to(ctx.out)                       # noqa: E731
+    ctx.tool("sweep", "--points", pts, "--tol", f"{dW},{dH}", "--wl", wl, "--steps", dsteps,
+             "--workers", cfg.run.workers, "--out", rel(straight), *ctx.stack_args())
+    ctx.tool("sweep", "--points", pts, "--wl", wl, "--steps", dsteps, "--bend-radius", R,
+             "--workers", cfg.run.workers, "--out", rel(bend), *ctx.stack_args())
+    scat, absl = _losses(cfg)
+    ctx.tool("report", "--straight", rel(straight), "--bends", rel(bend), "--finalists", pts,
+             "--tol", f"{dW},{dH}", "--alpha-scat", scat, "--alpha-abs", absl,
+             "--n2", cfg.assumptions.n2_m2_w, "--out", CAND_DIR, "--overwrite")
+    lo, hi = ctx.band
+    ctx.tool("broadband", "--points", pts, "--wl-min", lo, "--wl-max", hi, "--pump", wl,
+             "--steps", dsteps, "--radius", R, "--data", "results/candidates_broadband.jsonl",
+             "--plots-dir", f"{CAND_DIR}/profiles", "--overwrite", *ctx.stack_args())
+    cand_dir = ctx.out / CAND_DIR
+    _to_tables(ctx, cand_dir, {"finalists.csv": "candidates_compared.csv",
+                               "finalists_bend.csv": "candidates_bend.csv"})
+    _to_tables(ctx, cand_dir / "profiles", {"profiles_summary.csv": "candidates_profiles.csv"})
+    for h, w in points:
+        fig_mode_profiles(ctx, h, w, cand_dir / f"modes_H{h * 1e3:.0f}_W{w * 1e3:.0f}.png")
+    straight_rows = {r["name"]: r for r in _read_csv(ctx.out / "tables" / "candidates_compared.csv")}
+    bend_rows = {r["name"]: r for r in _read_csv(ctx.out / "tables" / "candidates_bend.csv")}
+    prof_rows = {r["geometry"].split(" ")[0].replace("×", "x"): r
+                 for r in _read_csv(ctx.out / "tables" / "candidates_profiles.csv")}
+    rows = []
+    for h, w in points:
+        name = f"{h * 1e3:.0f}x{w * 1e3:.0f}"
+        s_, b_, p_ = straight_rows.get(name, {}), bend_rows.get(name, {}), prof_rows.get(name, {})
+        rnd = lambda v, n: None if v is None else round(v, n)        # noqa: E731
+        bl = _num(b_.get("bend_loss_dB_cm"))
+        rows.append(dict(H_um=h, W_um=w, D=rnd(_num(s_.get("D")), 1),
+                         D_min_tol=rnd(_num(s_.get("D_min_tol")), 1),
+                         D_max_tol=rnd(_num(s_.get("D_max_tol")), 1), n_g=rnd(_num(s_.get("ng")), 4),
+                         TE_TM_split=rnd(_num(s_.get("dn_TE_TM")), 4),
+                         TE1_margin=rnd(_num(s_.get("TE1_margin")), 4),
+                         tolerance_box_target=str(s_.get("all_neighbours_target")).lower() == "true",
+                         bend_R_um=R, bend_loss_db_cm=None if bl is None else float(f"{bl:.2g}"),
+                         D_bend=rnd(_num(b_.get("D_bend")), 1), D2_2pi_MHz=_num(p_.get("D2_2pi_MHz")),
+                         ZDWs_nm=p_.get("ZDWs_nm")))
+        r_ = rows[-1]
+        ui.say(f"  {name} nm: D = {r_['D']} ps/(nm·km) (tolerance box {r_['D_min_tol']} to "
+               f"{r_['D_max_tol']}{'' if r_['tolerance_box_target'] else ', NOT all target'}), "
+               f"n_g {r_['n_g']}, TE-TM {r_['TE_TM_split']}, bend loss at {R:g} µm "
+               f"{r_['bend_loss_db_cm']} dB/cm, D2/2π {r_['D2_2pi_MHz']} MHz")
+    for f in ("finalists_comparison.png", "bend_dispersion.png"):
+        if (cand_dir / f).exists():
+            ui.figure(cand_dir / f)
+    return dict(points=[[h, w] for h, w in points], radius_um=R, steps=dsteps, rows=rows,
+                folder=str(cand_dir))
+
+
 def _in_range(dotted: str):
     """A form check: the value lies in the setting's plausible range (config.RANGES_UM)."""
     from tarang.design.config import range_problem
@@ -492,8 +595,10 @@ def stage_cross_section(ctx: Context) -> dict:
              ",".join(map(str, widths)), "--wl", wl, "--steps", steps,
              "--workers", cfg.run.workers, "--out", grid_file.relative_to(ctx.out),
              *ctx.stack_args())
-    ctx.tool("maps", "--data", grid_file.relative_to(ctx.out), "--tm", "--overwrite")
-    plots = ctx.out / "results" / f"plots_{grid_file.stem}"
+    ctx.tool("maps", "--data", grid_file.relative_to(ctx.out), "--tm", "--overwrite",
+             "--plots-dir", MAP_DIR)
+    plots = ctx.out / MAP_DIR
+    _to_tables(ctx, plots, {"target_geometries.csv": "map_target_geometries.csv"})
     ui.figure(plots / "design_map.png")
 
     rows = [r for r in _read_jsonl(grid_file)
@@ -515,26 +620,39 @@ def stage_cross_section(ctx: Context) -> dict:
            "TE_TM_split = |n_eff(TE00) - n_eff(TM00)|: a larger split keeps the TE and TM "
            + ("modes apart (less TE-TM conversion in the spiral bends)." if loss_test else
               "mode families further from crossing (fewer avoided crossings in the comb)."))
+    if len(ranked) > 8:
+        ui.say(f"  ... and {len(ranked) - 8} more (all {len(ranked)} in the GUI's choice and in "
+               "tables/map_target_geometries.csv).")
     best = ranked[0]
-    cands = [{k: v for k, v in r.items() if not k.startswith("_")} for r in ranked[:8]]
+    cands = [{k: v for k, v in r.items() if not k.startswith("_")} for r in ranked]
     why = ("most of its 8 neighbouring map points are also targets (robust to fabrication "
            "errors), then the largest TE/TM index split (" + ("TE and TM furthest apart)" if loss_test
                                                               else "fewest mode crossings)"))
     recommend = dict(choices=cands, recommended=dict(height_um=best["H_um"], width_um=best["W_um"]),
                      why=why)
+    comparison = None
+    if cfg.cross_section.compare and not given_hw:
+        pts = [_hw(t) for t in cfg.cross_section.compare]
+        ngs = [r["ng_TE0"] for r in cands if (round(r["H_um"], 4), round(r["W_um"], 4)) in pts]
+        comparison = compare_candidates(ctx, pts, dW, dH, float(np.mean(ngs)) if ngs else best["ng_TE0"])
     if cfg.cross_section.stop_after_map and not given_hw:
         ui.say(f"\nMap done. Recommended: {best['H_um']} × {best['W_um']} µm ({why}). Choose one "
-               "(cross_section.height_um / width_um) and run this stage again.")
+               "(cross_section.height_um / width_um) and run this stage again"
+               + ("" if comparison else "; to see candidates side by side first, list them in "
+                  "cross_section.compare (\"HxW\") and run it again") + ".")
         return dict(skipped=True, awaiting_choice=True, candidates=cands, recommend=recommend,
-                    map_file=str(grid_file), map_figure=str(plots / "design_map.png"))
+                    comparison=comparison, map_file=str(grid_file),
+                    map_figure=str(plots / "design_map.png"))
     ui.form(cfg, "Chosen cross-section (default: the most robust candidate)", [
         dict(section="cross_section", key="height_um", default=best["H_um"]),
         dict(section="cross_section", key="width_um", default=best["W_um"]),
         dict(section="cross_section", key="decision_steps")])
     H = ui.value(cfg, "cross_section", "height_um", default=best["H_um"])
     W = ui.value(cfg, "cross_section", "width_um", default=best["W_um"])
-    return _cross_section_decision(ctx, H, W, cands, dW, dH, steps=steps, recommend=recommend,
-                                   grid_file=grid_file, plots=plots)
+    res = _cross_section_decision(ctx, H, W, cands, dW, dH, steps=steps, recommend=recommend,
+                                  grid_file=grid_file, plots=plots)
+    res["comparison"] = comparison
+    return res
 
 
 def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None,
@@ -557,15 +675,21 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
     ctx.tool("sweep", "--points", f"{H}x{W}", "--tol", f"{dW},{dH}", "--wl", wl,
              "--steps", dsteps, "--workers", cfg.run.workers,
              "--out", fin_file.relative_to(ctx.out), *ctx.stack_args())
-    ctx.tool("report", "--straight", fin_file.relative_to(ctx.out), "--finalists", f"{H}x{W}",
-             "--tol", f"{dW},{dH}", "--alpha-scat", _losses(cfg)[0],
-             "--alpha-abs", _losses(cfg)[1], "--n2", cfg.assumptions.n2_m2_w,
-             "--out", "results/finalist_report", "--overwrite")
     centre = next(r for r in _read_jsonl(fin_file)
                   if abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6 and r["steps"] == dsteps
                   and r.get("bend_radius") is None)
-    with open(ctx.out / "results" / "finalist_report" / "finalists.csv", encoding="utf-8") as f:
-        rep = next(csv.DictReader(f))
+    R_b = compare_radius(cfg, centre["ng_TE0"])
+    bend_file = ctx.path("results", f"finalist_{dsteps}steps_R{R_b:g}um.jsonl")
+    ctx.tool("sweep", "--points", f"{H}x{W}", "--wl", wl, "--steps", dsteps, "--bend-radius", R_b,
+             "--workers", cfg.run.workers, "--out", bend_file.relative_to(ctx.out), *ctx.stack_args())
+    ctx.tool("report", "--straight", fin_file.relative_to(ctx.out), "--bends",
+             bend_file.relative_to(ctx.out), "--finalists", f"{H}x{W}",
+             "--tol", f"{dW},{dH}", "--alpha-scat", _losses(cfg)[0],
+             "--alpha-abs", _losses(cfg)[1], "--n2", cfg.assumptions.n2_m2_w,
+             "--out", FIN_DIR, "--overwrite")
+    _to_tables(ctx, ctx.out / FIN_DIR, {"finalists.csv": "finalists.csv",
+                                         "finalists_bend.csv": "finalists_bend.csv"})
+    rep = _read_csv(ctx.out / "tables" / "finalists.csv")[0]
     robust = str(rep.get("all_neighbours_target")).lower() == "true"
     ui.say(f"\nCross-section {H*1e3:.0f} x {W*1e3:.0f} nm at {dsteps} steps/λ: "
            f"D = {centre['D_TE0']:.1f} ps/(nm km), n_g = {centre['ng_TE0']:.4f}, "
@@ -580,7 +704,9 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
     ladder = ",".join(map(str, sorted({steps, dsteps, dsteps + 20})))
     ctx.tool("convergence", "--points", f"{H}x{W}", "--steps-list", ladder,
              "--wl", wl, "--workers", cfg.run.workers,
-             "--data", conv_file.relative_to(ctx.out), "--overwrite", *ctx.stack_args())
+             "--data", conv_file.relative_to(ctx.out), "--overwrite", "--plots-dir", CONV_DIR,
+             *ctx.stack_args())
+    _to_tables(ctx, ctx.out / CONV_DIR, {"convergence_table.csv": "mesh_convergence.csv"})
     conv = sorted((r for r in _read_jsonl(conv_file)
                    if abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6), key=lambda r: r["steps"])
     if len(conv) >= 2:
@@ -605,11 +731,11 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
                 map_file=str(grid_file) if grid_file else None,
                 map_figure=str(plots / "design_map.png") if plots else None,
                 candidates=cands, recommend=recommend,
-                report=str(ctx.out / "results" / "finalist_report" / "report.md"))
+                report=str(ctx.out / FIN_DIR / "report.md"))
 
 
 # ======================================================== figures shared with the checks stage
-def fig_mode_profiles(ctx: Context, H: float, W: float) -> Optional[Path]:
+def fig_mode_profiles(ctx: Context, H: float, W: float, path: Optional[Path] = None) -> Optional[Path]:
     """TE00 / TM00 field components in the cross-section (free, local mode solver)."""
     from tarang.design import localmodes, visuals
     wl = ctx.cfg.run.wavelength_um
@@ -618,7 +744,9 @@ def fig_mode_profiles(ctx: Context, H: float, W: float) -> Optional[Path]:
         ms = localmodes.cross_section_modes(ctx, H, W, num_modes=4, group_index=True)
         te, tm = localmodes.te00(ms), localmodes.tm00(ms)
         rows = [("TE00", te)] + ([("TM00", tm)] if tm else [])
-        return visuals.mode_profiles(rows, H, W, ctx.path("figures", "2b_mode_profiles.png"),
+        out = Path(path) if path else ctx.path("figures", "2b_mode_profiles.png")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        return visuals.mode_profiles(rows, H, W, out,
                                      f"Modes of the {H * 1e3:.0f} × {W * 1e3:.0f} nm core at "
                                      f"{wl} µm (cross-section, y across the width)")
     return visuals.safe(ctx, "mode profiles", draw)
@@ -795,12 +923,13 @@ def stage_ring(ctx: Context) -> dict:
     bb_file = ctx.path("results", "broadband.jsonl")
     ctx.tool("broadband", "--points", f"{H}x{W}", "--wl-min", lo, "--wl-max", hi,
              "--pump", wl, "--steps", cfg.cross_section.decision_steps, "--radius", R,
-             "--data", bb_file.relative_to(ctx.out), "--overwrite", *ctx.stack_args())
-    with open(ctx.out / "results" / "dispersion_profile_plots" / "profiles_summary.csv",
-              encoding="utf-8") as f:
-        prof = [r for r in csv.DictReader(f) if r["geometry"].startswith(f"{H*1e3:.0f}×{W*1e3:.0f}")]
+             "--data", bb_file.relative_to(ctx.out), "--overwrite", "--plots-dir", PROFILE_DIR,
+             *ctx.stack_args())
+    _to_tables(ctx, ctx.out / PROFILE_DIR, {"profiles_summary.csv": "dispersion_profiles.csv"})
+    prof = [r for r in _read_csv(ctx.out / "tables" / "dispersion_profiles.csv")
+            if r["geometry"].startswith(f"{H*1e3:.0f}×{W*1e3:.0f}")]
     prof = prof[-1] if prof else {}
-    fig = ctx.out / "results" / "dispersion_profile_plots" / f"profile_H{H*1e3:.0f}_W{W*1e3:.0f}.png"
+    fig = ctx.out / PROFILE_DIR / f"profile_H{H*1e3:.0f}_W{W*1e3:.0f}.png"
     ui.say(f"\nRing R = {R} um: FSR = {fsr_r:.1f} GHz, total loss {total:.3g} dB/cm "
            f"(scattering {scat}, absorption {absl}, bend {bend_loss:.2g}) -> Q_int = {qi:.3g}; "
            f"D2/2π = {prof.get('D2_2pi_MHz', '?')} MHz, zero-dispersion wavelengths: "
@@ -1460,7 +1589,7 @@ FIGURE_VERSION = 3
 
 # Settings that only label where a value came from (the values themselves are hashed):
 # changing them must not repeat a stage.
-KEY_IGNORE = {"ring": {"loss_preset"}, "cross_section": {"stop_after_map"}}
+KEY_IGNORE = {"ring": {"loss_preset"}, "cross_section": {"stop_after_map", "compare"}}
 
 
 def settings_key(cfg: DesignConfig, stage: str) -> str:

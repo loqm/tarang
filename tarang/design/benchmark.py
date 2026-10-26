@@ -188,13 +188,20 @@ def build(ctx, st: dict, checks: list[dict], pth=(None, None)) -> dict:
     extra_figs = [xs.get("map_figure"), ring.get("profile_figure")]
     extra_figs += glob.glob(str(ctx.out / "results" / "mesh_convergence_plots" / "*.png"))
     extra_figs += glob.glob(str(ctx.out / "results" / "finalist_report" / "*.png"))
+    for sub in ("2_dispersion_map", "2_candidates", "2_mesh_convergence", "2_finalists",
+                "3_dispersion_profile"):                    # the dispersion engineering (14E on)
+        d = ctx.out / "figures" / sub
+        for f in sorted(d.rglob("*.png")) if d.is_dir() else []:
+            _copy(f, pack / "figures" / sub / f.parent.relative_to(d))
     extra_figs += glob.glob(str(ctx.out / "cloud" / "gap_sweep" / "*.png"))
     extra_figs += glob.glob(str(ctx.out / "cloud" / "gap_sweep" / "field_maps" / "*.png"))
+    figs_dir = (ctx.out / "figures").resolve()
     for f in extra_figs:
-        _copy(f, pack / "figures" / "details")
+        if f and figs_dir not in Path(f).resolve().parents:   # those under figures/ are copied above
+            _copy(f, pack / "figures" / "details")
     for f in sorted((ctx.out / "tables").glob("*.csv")):
         _copy(f, pack / "tables")
-    for f in (ctx.out / "results" / "finalist_report" / "finalists.csv",
+    for f in (ctx.out / "results" / "finalist_report" / "finalists.csv",       # older runs
               ctx.out / "results" / "mesh_convergence_plots" / "convergence_table.csv",
               ctx.out / "results" / "dispersion_profile_plots" / "profiles_summary.csv"):
         _copy(f, pack / "tables")
@@ -314,7 +321,8 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
               f"= {ring['loss_db_cm']:.3g} dB/cm (assumed scattering + absorption + bend) = "
               f"{ring['q_intrinsic']:.3g}.",
               f"- D2/2π = {ring.get('D2_2pi_MHz')} MHz, D3/2π = {ring.get('D3_2pi_kHz')} kHz from a "
-              "broadband solve of the straight waveguide (see `tables/profiles_summary.csv`)."]
+              "broadband solve of the straight waveguide (see `tables/dispersion_profiles.csv`; "
+              "`tables/profiles_summary.csv` in designs from before 14E)."]
         if pth[0]:
             L.append(f"- Threshold estimate (comparative): {pth[0]:.0f} mW at critical coupling"
                      + (f", {pth[1]:.0f} mW over-coupled" if pth[1] else "") + ".")

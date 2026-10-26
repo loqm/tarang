@@ -67,7 +67,7 @@ def key(r):
             r.get("core", "si3n4"), r.get("substrate", "sio2"), r.get("cladding") or None)
 
 
-def plot(data_path: Path, overwrite: bool, tol_pct: float):
+def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -79,7 +79,7 @@ def plot(data_path: Path, overwrite: bool, tol_pct: float):
             r = json.loads(line)
             if "error" not in r:
                 groups[key(r)][r["steps"]] = r
-    out = unique_dir(data_path.parent / "mesh_convergence_plots", overwrite)
+    out = unique_dir(Path(plots_dir) if plots_dir else data_path.parent / "mesh_convergence_plots", overwrite)
     out.mkdir(parents=True, exist_ok=True)
     rows = []
     fig_s, ax_s = plt.subplots(figsize=(8, 5), dpi=140)
@@ -155,6 +155,8 @@ def main():
     ap.add_argument("--tol-pct", type=float, default=2.0, help="acceptance band for D (%%)")
     ap.add_argument("--plot-only", action="store_true")
     ap.add_argument("--overwrite", action="store_true", help="reuse the plots folder")
+    ap.add_argument("--plots-dir", default=None,
+                    help="write the plots here (default: mesh_convergence_plots next to the data)")
     a = ap.parse_args()
     clad = None if str(a.cladding).lower() in ("", "air", "none") else a.cladding
     mat = dict(core=a.core, substrate=a.substrate, cladding=clad, box=a.box,
@@ -191,7 +193,7 @@ def main():
                           f"R={r.get('bend_radius')}  {msg}  ({r['secs']}s)", flush=True)
                 if a.workers > 1:
                     pool.shutdown()
-    plot(data, a.overwrite, a.tol_pct)
+    plot(data, a.overwrite, a.tol_pct, a.plots_dir)
 
 
 if __name__ == "__main__":

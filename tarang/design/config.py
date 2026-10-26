@@ -72,6 +72,9 @@ class CrossSection:
     tolerance_height_um: float = _f(0.02, "Fabrication tolerance of the film thickness (+/-)", "um")
     stop_after_map: bool = _f(False, "Stop after the map so a candidate can be chosen (the GUI "
                                      "uses this), then run the stage again")
+    compare: list = _f([], "Candidates to compare before choosing, as \"HxW\" in um (e.g. "
+                           "\"0.7x1.0\"): tolerance box, mode profiles, D over the band and a bend "
+                           "each, side by side (local, free)")
     height_um: Optional[float] = _f(None, "Chosen core height (picked from the map)", "um")
     width_um: Optional[float] = _f(None, "Chosen core width (picked from the map)", "um")
 

@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `456 passed, 2 skipped` (quick check: `435 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
+Expected on Windows: `465 passed, 2 skipped` (quick check: `444 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -576,3 +576,17 @@ cloud for the cloud stages.
 | `test_each_step_shows_only_its_own_figures` | The materials step shows only figure 1 (its filter matched 10a, 11a and 12a before); no figure belongs to two steps |
 | `test_dispersion_map_suite_is_shown_listed_and_zipped` | The dispersion-engineering figures under `results/` (design map, dashboard, the nine maps, D and modes against width and height, convergence, finalists, ring profile) are grouped for the cross-section and ring steps and the Figures tab; their tables are listed; the zip holds them but not the raw solver data |
 | `test_cross_section_step_shows_the_map_while_waiting_for_the_choice` | While the cross-section waits for the choice, the map overview and the target geometries are shown; "8/8 neighbours also targets" |
+
+## `test_phase14e.py`: choosing the cross-section after comparing candidates; figures with the others (9 tests, Phase 14E)
+
+| Test | Checks |
+|---|---|
+| `test_compare_setting_round_trips_and_does_not_change_the_stage_keys` | `cross_section.compare` is saved and read back, and changes no stage's settings key (nothing reruns) |
+| `test_compare_radius_follows_the_goal` | Bend radius of the comparison: the ring radius for the FSR (107.5 µm at 200 GHz) or the one set; for test waveguides the spiral radius set, else 20 µm at 1550 nm |
+| `test_candidates_are_compared_side_by_side` | The comparison runs the tolerance sweep, the bend sweep, the report (to `figures/2_candidates`) and the broadband profiles (raw data in `results/`); its tables are moved to `tables/`; the numbers per candidate; mode-profile figures |
+| `test_chosen_cross_section_gets_its_bend_and_its_tables` | The chosen cross-section's finalist report includes its bend; figures to `figures/2_finalists` and `figures/2_mesh_convergence`, tables to `tables/` |
+| `test_map_tools_write_their_plots_where_they_are_asked` | `dispersion_mapping.maps --plots-dir` writes the design map and dashboard there and nothing next to the data |
+| `test_suite_reads_the_new_folders_and_the_old_ones` | The GUI finds the map in `figures/2_dispersion_map` (else an older `results/plots_map_*`), and the candidates, finalists, convergence and profile figures in their new folders |
+| `test_compare_choice_is_saved_for_the_next_run` | Ticked candidates are saved as `cross_section.compare` and the cross-section is emptied |
+| `test_choice_lists_every_candidate_and_compares_the_ticked_ones` | All 10 candidates in the choice (not only 8); the top four pre-ticked; Compare saves them and reruns only the cross-section, which stops again for the choice |
+| `test_choice_shows_the_comparison` | The comparison table and figures in the choice; compared candidates marked; not shown twice |

@@ -585,6 +585,45 @@ def candidates(run: Path) -> list[dict]:
     return list(r.get("candidates") or (r.get("recommend") or {}).get("choices") or [])
 
 
+#: columns of the candidates table in the choice
+CANDIDATE_COLUMNS = ("H_um", "W_um", "D_TE0", "ng_TE0", "guided_TE", "guided_TM", "TE_TM_split",
+                     "target_neighbours")
+
+
+def hw_key(c) -> str:
+    """'0.7x1' for a candidate or comparison row (or [H, W])."""
+    if isinstance(c, (list, tuple)):
+        h, w = c
+    else:
+        h, w = c["H_um"], c["W_um"]
+    return f"{float(h):g}x{float(w):g}"
+
+
+def compare_list(run: Path) -> list[str]:
+    return [hw_key([float(v) for v in str(t).lower().replace("×", "x").split("x")])
+            for t in (data.load_config(run).cross_section.compare or [])]
+
+
+def compare_candidates(run: Path, keys: list[str]) -> str:
+    """Ask the next cross-section run to compare these candidates before the choice."""
+    return save_fields(run, {"cross_section.compare": list(keys), "cross_section.height_um": None,
+                             "cross_section.width_um": None})
+
+
+def comparison(run: Path) -> Optional[dict]:
+    """The comparison of candidates the cross-section stage made, if any."""
+    return results(run, "cross_section").get("comparison") or None
+
+
+def comparison_figures(run: Path) -> list[Path]:
+    d = Path(run) / "figures" / "2_candidates"
+    if not d.is_dir():
+        return []
+    fixed = [d / "finalists_comparison.png", d / "bend_dispersion.png",
+             d / "profiles" / "compare_D_lambda.png", d / "profiles" / "compare_Dint.png"]
+    return [p for p in fixed if p.exists()] + sorted(d.glob("modes_*.png"))
+
+
 def choose_cross_section(run: Path, H: float, W: float) -> str:
     return save_fields(run, {"cross_section.height_um": float(H), "cross_section.width_um": float(W),
                              "cross_section.stop_after_map": False})
