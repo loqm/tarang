@@ -253,7 +253,8 @@ def tab_figures(run: Path):
         st.info("No figures yet.")
         return
     names = [g for g, _ in groups]
-    pick = st.radio("Group", names, horizontal=True)
+    pick = st.selectbox("Group", names, help="figures/ in the report's order, then the "
+                        "dispersion-engineering figures kept under results/")
     for f in dict(groups)[pick]:
         st.image(str(f), caption=str(f), width="stretch")
 
@@ -263,7 +264,7 @@ def tab_tables(run: Path):
     if not tabs:
         st.info("No tables yet.")
         return
-    i = st.selectbox("Table", range(len(tabs)), format_func=lambda k: tabs[k].name)
+    i = st.selectbox("Table", range(len(tabs)), format_func=lambda k: tabs[k].relative_to(run).as_posix())
     p = tabs[i]
     st.caption(str(p))
     _table(data.read_csv(p, limit=5000), height=420)

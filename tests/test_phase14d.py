@@ -273,3 +273,82 @@ def test_benchmark_pack_has_a_comparison_sheet_and_the_versions(tmp_path):
     import tarang
     assert f"Made with TARANG {tarang.__version__}, Tidy3D " in readme
     assert "## Sending your numbers back" in readme
+
+
+# ---- figures of each step; the dispersion-engineering suite ----------------------------- #
+def _write(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".png":
+        from PIL import Image
+        Image.new("RGB", (4, 3), "white").save(path)
+    else:
+        path.write_text("H_nm,W_nm,D_TE0\n700,1000,378.7\n", encoding="utf-8")
+
+
+def _suite_files(run):
+    m = run / "results" / "plots_map_50steps"
+    for rel in ("design_map.png", "maps/dashboard.png", "maps/map1_dispersion_D.png", "maps/map2_TE_TM_splitting.png",
+                "D_vs_width/H_0700nm.png", "modes_vs_height/W_1000nm.png", "target_geometries.csv"):
+        _write(m / rel)
+    for rel in ("mesh_convergence_plots/conv_summary.png", "mesh_convergence_plots/convergence_table.csv",
+                "finalist_report/finalists_comparison.png", "dispersion_profile_plots/profile_H700_W1000.png",
+                "map_50steps.jsonl"):
+        _write(run / "results" / rel)
+
+
+def test_each_step_shows_only_its_own_figures(tmp_path):
+    """The materials step showed figures 10-12 too ('^1' matched '10a_', '11a_', '12a_')."""
+    from tarang.gui import wizard as wz
+    run = _saved_design(tmp_path)
+    for n in ("1_materials", "10a_focusing_landscape", "11a_device_spectrum", "12a_edge_facet", "2b_mode_profiles"):
+        (run / "figures" / f"{n}.png").write_bytes(b"x")
+    names = lambda key: {f.name for f in wz.step_figures(run, wz.step(key))}        # noqa: E731
+    assert names("materials") == {"1_materials.png"}
+    assert "10a_focusing_landscape.png" in names("focus") and "12a_edge_facet.png" in names("edge")
+    assert "11a_device_spectrum.png" in names("device") and "2b_mode_profiles.png" in names("cross_section")
+    for st in wz.STEPS:                                  # no figure belongs to two steps
+        for other in wz.STEPS:
+            if st.key < other.key:
+                assert not names(st.key) & names(other.key), (st.key, other.key)
+
+
+def test_dispersion_map_suite_is_shown_listed_and_zipped(tmp_path):
+    import io
+    import zipfile
+    from tarang.gui import data, wizard as wz
+    run = _saved_design(tmp_path)
+    _suite_files(run)
+    groups = dict(data.dispersion_suite(run))
+    overview = groups["Dispersion map: overview (design map, decision dashboard)"]
+    assert [p.name for p in overview] == ["design_map.png", "dashboard.png"]
+    assert [p.name for p in groups["Dispersion map: the nine maps"]] == ["map1_dispersion_D.png",
+                                                                        "map2_TE_TM_splitting.png"]
+    xs = [t for t, _ in wz.suite(run, wz.step("cross_section"))]
+    assert xs[0].startswith("Dispersion map: overview") and "Mesh convergence of the chosen cross-section" in xs
+    assert not any(t.startswith("Ring") for t in xs)
+    assert [t for t, _ in wz.suite(run, wz.step("ring"))] == ["Ring: dispersion profile"]
+    assert wz.suite(run, wz.step("materials")) == []
+    assert any(t.startswith("Dispersion map") for t, _ in data.figures(run))         # All results tab too
+    assert {"target_geometries.csv", "convergence_table.csv"} <= {p.name for p in data.tables(run)}
+    names = zipfile.ZipFile(io.BytesIO(wz.design_zip(run))).namelist()
+    assert f"{run.name}/results/plots_map_50steps/maps/dashboard.png" in names
+    assert f"{run.name}/results/plots_map_50steps/target_geometries.csv" in names
+    assert not any(n.endswith(".jsonl") for n in names)                              # raw solver data stays out
+
+
+def test_cross_section_step_shows_the_map_while_waiting_for_the_choice(tmp_path):
+    run = _saved_design(tmp_path)
+    _suite_files(run)
+    p = run / "state.json"
+    s = json.loads(p.read_text(encoding="utf-8"))
+    s["stages"]["cross_section"] = {"key": "x", "results": dict(skipped=True, awaiting_choice=True, candidates=[
+        dict(H_um=0.7, W_um=1.0, D_TE0=378.7, target_neighbours="8/8")])}
+    p.write_text(json.dumps(s), encoding="utf-8")
+    at = _app(tmp_path)
+    at.session_state[f"step:{run}"] = "cross_section"
+    at.run()
+    _ok(at)
+    labels = [e.label for e in at.expander]
+    assert any(x.startswith("Dispersion map: overview") for x in labels)
+    assert any(x.startswith("Target geometries of the map") for x in labels)
+    assert "8/8 neighbours also targets" in at.selectbox(key="xs_pick").format_func(0)

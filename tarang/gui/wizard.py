@@ -66,7 +66,7 @@ STEPS: list[Step] = [
          picture=_start_picture),
     Step("materials", "Materials", ("materials",),
          "Refractive index of every material over the band, fitted for the solvers (local, free, "
-         "seconds).", ["run.band_um"], r"^1", lambda c: il.materials()),
+         "seconds).", ["run.band_um"], r"^1[a-z]?_", lambda c: il.materials()),
     Step("cross_section", "Cross-section", ("cross_section",),
          "A map of core heights × widths (local mode solver, free, minutes). For a comb the "
          "waveguide needs anomalous dispersion and one guided TE mode; for test waveguides one "
@@ -503,6 +503,16 @@ def step_figures(run: Path, st: Step) -> list[Path]:
     return [f for f in figs if rx.search(f.name)]
 
 
+def suite(run: Path, st: Step) -> list[tuple[str, list[Path]]]:
+    """The step's extra figures kept under results/ (the dispersion-engineering suite of the
+    cross-section map, the ring's dispersion profile), in groups."""
+    groups = data.dispersion_suite(run)
+    keep = {"cross_section": lambda t: not t.startswith("Ring"), "ring": lambda t: t.startswith("Ring")}
+    if st.key not in keep:
+        return []
+    return [(t, g) for t, g in groups if keep[st.key](t)]
+
+
 def key_numbers(run: Path, st: Step) -> list[dict]:
     rows = [r for r in data.summary_rows(run) if r.get("stage") in st.stages]
     return [dict(quantity=r["quantity"], value=r["value"], unit=r["unit"]) for r in rows]
@@ -716,7 +726,8 @@ def report_html(run: Path) -> Optional[str]:
 
 def design_zip(run: Path) -> bytes:
     """The design's results in one zip: settings, report (Markdown and HTML), figures,
-    tables, layout, LLE inputs and the benchmark pack (not the cloud data)."""
+    tables, layout, LLE inputs, the benchmark pack and the dispersion-map figures and tables
+    under results/ (not the cloud data, not the raw solver data)."""
     run = Path(run)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -732,6 +743,11 @@ def design_zip(run: Path) -> bytes:
                 for p in sorted(d.rglob("*")):
                     if p.is_file():
                         z.write(p, f"{run.name}/{p.relative_to(run).as_posix()}")
+        res = run / "results"                      # the dispersion-engineering suite (no raw data)
+        if res.exists():
+            for p in sorted(res.rglob("*")):
+                if p.is_file() and p.suffix.lower() in (".png", ".csv", ".md"):
+                    z.write(p, f"{run.name}/{p.relative_to(run).as_posix()}")
     return buf.getvalue()
 
 

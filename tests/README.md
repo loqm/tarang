@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `453 passed, 2 skipped` (quick check: `432 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
+Expected on Windows: `456 passed, 2 skipped` (quick check: `435 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -259,7 +259,7 @@ material loads and fits, a ridge-waveguide simulation passes Tidy3D's server-sid
 validation, the dynesty backend is available, and `python -m tarang.migrate` and `python -m tarang.design` work.
 No network, no FlexCredits.
 
-## `test_docs.py`: the documentation matches the code (24 tests, Phase 6)
+## `test_docs.py`: the documentation matches the code (25 tests, Phases 6 and 14D)
 
 The pre-v0.1.0 README described parameters and a function that no longer existed and an
 install procedure that did not work. These tests read the Markdown files (README,
@@ -274,7 +274,7 @@ material, unknown pip extra).
 | `test_python_examples_use_real_names_and_keywords[...]` (6) | Every TARANG name an example imports exists, and every keyword argument it passes to a TARANG function is a real parameter |
 | `test_shell_commands_name_real_modules_and_extras` | `python -m ...` commands name existing TARANG modules; `pip install -e ".[...]"` names existing extras |
 | `test_no_outdated_instructions` | Known-wrong pre-v0.1.0 instructions (`tarang-env`, the manual `pip install tidy3d pandas ...`, `sub_medium=`, a function that never existed) do not come back, and no code block imports or runs a module by its pre-v0.1.0 top-level name (`from media ...`, `python -m waveguide...`) |
-| `test_relative_links_resolve[...]` (6) | Every relative link and image points to an existing file, and every `#anchor` to an existing heading |
+| `test_relative_links_resolve[...]` (7) | Every relative link and image points to an existing file, and every `#anchor` to an existing heading |
 | `test_citation_matches_package` | `CITATION.cff` is CFF 1.2.0 with the package's version, licence and authors, and its release date matches the CHANGELOG |
 | `test_changelog_has_current_version` | `CHANGELOG.md` has a section for `tarang.__version__` |
 | `test_every_material_is_documented` | Every key in `tarang/media/media.json` and every CSV in `tarang/media/data/` is described in `SOURCES.md`, and every key is in the README's material table. Fails if the data folder holds no CSVs, so a moved folder cannot make it pass vacuously |
@@ -503,7 +503,61 @@ cloud for the cloud stages.
 | `test_report_has_the_test_waveguide_sections` | Report sections 3w and 7e for test waveguides |
 | `test_bend_loss_follows_the_waveguide_mode_not_a_substrate_mode` (slow) | Real local solves of the 700 × 1000 nm guide: bend loss tens of dB/cm at 5 µm, falling more than tenfold by 10 µm, below the solver's floor by 20 µm (the bent TE00 tracked by overlap, not the substrate whispering-gallery modes) |
 
-## `test_phase14d.py`: plausible values, defaults, papers, Tidy3D jobs, Exit, guided paths (13 tests, Phase 14D)
+## `test_phase14b.py`: edge coupler, chip-edge layout, facet cavity (28 tests, Phase 14B)
+
+| Test | Checks |
+|---|---|
+| `test_coupling_choice_picks_the_stages_and_keeps_old_keys` | `run.coupling = "grating"` keeps the grating, taper, apodise and focus stages and every earlier stage key; `"edge"` runs the edge stage instead (just before layout) |
+| `test_unknown_coupling_is_refused` | A coupling other than grating / edge stops the run |
+| `test_edge_settings_round_trip_through_the_toml` | The `[edge]` settings (shapes, facet width, layers) are saved and read back |
+| `test_gaussian_is_normalised_and_overlaps_match_the_closed_forms` | The fibre Gaussian carries unit power; the overlap of two Gaussians and of a shifted one equal their closed forms; the vector overlap of a plane wave is 1; Fresnel reflection ((n−1)/(n+1))² |
+| `test_facet_width_is_chosen_for_the_average_over_the_spot_sizes` | The facet width with the best mean coupling over MFD ± tolerance (4.75 µm), rounded to 0.25 µm; the default widths |
+| `test_taper_shapes_and_their_inverse[...]` (3) | Linear, parabolic and power-law widths run from the waveguide to the facet, rise monotonically and invert exactly; cell boundaries and outline |
+| `test_linear_cells_are_unchanged` | The linear taper's EME cells are those of Phase 12B (saved results stay valid) |
+| `test_smoothed_2d_taper_model_falls_with_length` | With sub-pixel smoothing the 2D taper loss falls with length and stays below 0.005 dB when long; without it, grid steps make a spurious rise |
+| `test_facet_sim_runs_the_waveguide_through_the_boundary` | The 3D facet simulation: waveguide and BOX through the absorbing boundary, port, back, out, fibre-plane (11 wavelengths) and side monitors, 101 port wavelengths, symmetry, fewer than 5 million cells |
+| `test_facet_analysis_finds_the_spot_and_its_tolerances` | From a synthetic emitted Gaussian: coupling, best fibre height, working distance, reflection, transmitted power, other spot sizes and the offset losses against the Gaussian formula |
+| `test_time_convention_is_read_from_a_diverging_field` | The sign of the phase curvature of a diverging field is found either way |
+| `test_edge_stage_without_cloud_runs` | Free parts only: facet width = recommended, taper shape and length below the accepted loss, coupler = facet × taper, figures 12a/12b, cached solves; price-only marks the stage skipped and keeps it off the mask |
+| `test_edge_stage_with_its_cloud_runs_writes_every_table` | With the EME and the 3D run answered from saved runs: EME per shape, 3D coupling and reflection, the spot-and-offset table (the 14B v1 crash), figure 12c, the coupler and reflection models used downstream |
+| `test_csv_tables_take_rows_of_different_kinds` | A CSV from rows with different fields takes the union of the fields |
+| `test_edge_coupler_model_and_budget` | Coupler model (butt estimate × taper), its length, the facet's Fresnel reflection, the bus length between the facets, the loss budget |
+| `test_edge_mask_runs_to_the_chip_edge` | Edge cells only, waveguides from facet to facet with the overhang, chip outline and dicing lanes on their own layers, devices at least the pitch apart, one top cell; a chip too small is reported |
+| `test_edge_spirals_have_the_facet_to_facet_length` | Cutback spirals have the requested facet-to-facet length; a length shorter than the chip is refused |
+| `test_edge_cutback_and_ring_device` | Edge cutback lengths, the facet Fabry–Perot ripple 20 log((1+R)/(1−R)), the Regener–Sohler note |
+| `test_report_has_the_edge_section_and_no_grating_parts` | Report section 5 (edge coupler), no grating limits or checks |
+| `test_budget_uses_the_3d_focusing_result_without_double_counting` | The focusing grating's 3D FDTD value is used alone (no extra tip-taper or in-plane factor) |
+| `test_focusing_3d_spectrum_is_not_multiplied_by_the_tip_taper` | The same in the whole-device coupler spectrum |
+| `test_coupler_spectrum_is_interpolated_in_log` | Coupler efficiency between simulated wavelengths is interpolated in dB |
+| `test_layout_figure_shows_the_critical_ring` | The layout figure shows the critical-gap ring cell |
+| `test_loss_test_report_has_no_ring_checks` | A test-waveguide report has no gap, mode-family or FSR checks, and no ring limits |
+| `test_bend_loss_below_the_floor_is_printed_as_a_bound` | Bend loss below the solver's floor prints as "< 0.001"; the CSV keeps the number |
+| `test_facet_mode_with_the_si_handle_is_the_core_mode` (slow) | Real local solve of the 4.75 µm facet with the Si handle: the core TE00 (n_eff 1.83–1.85, confinement > 0.8), H/E ratio = n_eff/η0, overlap 40–46 % |
+
+## `test_phase14c.py`: the guided GUI, three fixes from the 14B run (22 tests, Phase 14C)
+
+| Test | Checks |
+|---|---|
+| `test_steps_follow_the_goal_and_the_coupling[...]` (5) | The steps of every goal × coupling (and with apodised / focusing gratings on) |
+| `test_every_step_has_its_stages_settings_and_a_drawing` | Every stage belongs to exactly one step; every drawing is valid SVG; every form field has a label and a kind |
+| `test_form_values_are_parsed_in_the_settings_own_type` | Lists, optional numbers, choices ("(recommended)" = empty), integers |
+| `test_saving_settings_checks_them_and_a_new_preset_brings_its_losses` | A wrong value is refused and nothing changes; a new loss preset clears the old preset's losses |
+| `test_step_status_and_the_cross_section_choice` | "Waiting for your choice" with the candidates; choosing one saves H and W and clears the stop; later steps list the missing earlier ones |
+| `test_recommendation_is_shown_and_can_be_taken` | Recommended vs in use; "Use the recommended values" writes the cutback lengths and radius; information-only results are not settable |
+| `test_a_step_runs_its_own_stages_and_reads_its_price` | Estimate = `--only <stage> --price-only`; Run = `--spend-cap` and `--redo`; the total read from the output |
+| `test_report_html_holds_the_figures_and_tables` | The HTML report: headings, bold, code, tables, lists, embedded figures; the zip holds the report, settings and figures, not the cloud data |
+| `test_gds_preview_is_drawn_and_reused` | The GDS picture is drawn and not redrawn while the GDS is unchanged |
+| `test_drawings_embed_as_images` | Every drawing is SVG and embeds as an image |
+| `test_guided_view_lists_the_steps_and_opens_the_first_to_do` | The guided view (AppTest) lists the steps and opens one |
+| `test_a_new_design_starts_at_the_two_choices` | A new design opens at step 1 until its choices are saved |
+| `test_guided_start_step_saves_the_two_choices` | Step 1 saves goal and coupling, opens step 2 and the steps follow the choice |
+| `test_guided_cross_section_step_offers_the_candidates` | The cross-section step offers the candidates and the check button |
+| `test_guided_report_step_offers_the_downloads` | The report step offers the downloads |
+| `test_ring_phase_continues_past_the_end_resonances` | The ring phase beyond the first and last resonances follows the local FSR (figure 11a band ends) |
+| `test_edge_headline_value_is_at_the_design_wavelength` | The edge coupling is the spectrum's value at the design wavelength; the spot/offset maps state their own wavelength |
+| `test_device_length_wording_follows_the_coupling` | "from facet to facet" for edge, "between the gratings" for gratings |
+
+## `test_phase14d.py`: plausible values, defaults, papers, Tidy3D jobs, Exit, guided paths, dispersion-map suite (16 tests, Phase 14D)
 
 | Test | Checks |
 |---|---|
@@ -519,3 +573,6 @@ cloud for the cloud stages.
 | `test_guided_path_walks_every_step[path_A_ring_gratings]`, `[path_B_test_waveguides_edge]` | Headless walk through every step of both paths: each opens without an error, shows done, cloud steps list their Tidy3D jobs, recommendations shown; Run again starts that step's own stages |
 | `test_step_buttons_carry_no_hover_text` | The step buttons have no tooltip covering their neighbours |
 | `test_benchmark_pack_has_a_comparison_sheet_and_the_versions` | `comparison.csv` holds every number of `results.csv` with empty columns for another solver; the README gives the versions and how to send numbers back |
+| `test_each_step_shows_only_its_own_figures` | The materials step shows only figure 1 (its filter matched 10a, 11a and 12a before); no figure belongs to two steps |
+| `test_dispersion_map_suite_is_shown_listed_and_zipped` | The dispersion-engineering figures under `results/` (design map, dashboard, the nine maps, D and modes against width and height, convergence, finalists, ring profile) are grouped for the cross-section and ring steps and the Figures tab; their tables are listed; the zip holds them but not the raw solver data |
+| `test_cross_section_step_shows_the_map_while_waiting_for_the_choice` | While the cross-section waits for the choice, the map overview and the target geometries are shown; "8/8 neighbours also targets" |

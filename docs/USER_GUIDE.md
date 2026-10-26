@@ -217,6 +217,42 @@ one (the first is recommended) and click **Use this cross-section and check it**
 chosen cross-section is then solved again at a finer mesh, with ± its tolerance (the
 report gives D over the tolerance box).
 
+**The dispersion-engineering suite** comes with the map. It is shown in the step while it
+waits for your choice, and kept under `results/plots_map_<steps>steps/` (also in **All
+results → Figures** and in the zip download):
+
+- **Design map:** D(TE00) over H × W with the zero-dispersion contour, beside the regime
+  of every point. The regimes are normal dispersion; target (anomalous, one TE mode);
+  anomalous but multimode; and TE/TM near-degenerate (▽).
+- **Decision dashboard:** the nine maps below on one page.
+- **The nine maps:**
+
+  | Map | What it shows | Why it matters |
+  |---|---|---|
+  | 1. Dispersion D of the pump mode | with the D = 0 contour | anomalous (D > 0) is what a bright soliton needs |
+  | 2. TE/TM splitting n_TE0 − n_TM0 | < 0: TM is the fundamental mode; within ± 0.01 (dashed) TE and TM hybridise | avoided crossings and polarisation conversion in bends |
+  | 3. Distance from the 2nd TE mode's cut-off | n_cut − n_TE1, with the TE1 and TM1 cut-off lines | > 0: TE1 is not guided, so the waveguide is single-mode |
+  | 4. Sensitivity of D to a width error | \|∂D/∂W\| | lithography tolerance |
+  | 5. Sensitivity of D to a thickness error | \|∂D/∂H\| | film-thickness tolerance |
+  | 6. Robust design window | target points whose four neighbours (± 100 nm in W, ± 50 nm in H) are also targets | robust to both errors at once |
+  | 7. Group index n_g | sets FSR = c / (2π n_g R) | ring radius for the FSR |
+  | 8. Kerr coefficient γ = 2π n₂ / (λ A_eff) | higher γ, lower comb threshold | |
+  | 9. Core confinement Γ | power fraction in the core | more field outside means more sidewall scattering |
+
+- **D and the guided modes against width (one figure per height) and against height
+  (one per width).**
+- **Every target geometry** in a table, `target_geometries.csv`, with D, β₂, n_g,
+  n_eff(TE0), n_eff(TM0) and the guided-mode counts.
+- **After the check:** the mesh convergence of D at the chosen cross-section and the
+  comparison of the finalists.
+- **For the ring (Path A):** the Ring step adds the dispersion profile.
+
+For the 700 nm film at 1550 nm, these maps are why 0.7 × 1.0 µm is the comb waveguide:
+D ≈ 380 ps/(nm·km) and a single TE mode. It is also robust in map 6: its neighbours at
+± 100 nm width and ± 50 nm height are targets too. Its D is also the least sensitive to a
+width error (map 4, 0.06 ps/(nm·km) per nm). The candidate table ranks by all 8
+surrounding grid points instead of map 6's four.
+
 In the screenshots, the map of the 700 nm film recommends 0.7 × 0.7 µm (all 8 neighbours
 single-mode, TE/TM split 0.0295). The next candidate, 0.7 × 1.0 µm, is as robust and has
 almost the same split (0.0293); it was picked here because it is the width of the rings on
@@ -233,7 +269,7 @@ the same chip. Both choices are sound; the table lets you weigh such near-ties y
 **Check:** n_g and D at the pump, and that the mode figures show one TE00 mode confined
 in the core.
 
-<p align="center"><img src="assets/gui/04_cross_section_done.png" alt="Cross-section step done: key numbers (core, D, n_eff and n_g) and the figures of the cross-section and its modes." width="100%"></p>
+<p align="center"><img src="assets/gui/04_cross_section_done.png" alt="Cross-section step done: key numbers (core, D, n_eff and n_g), the figures of the cross-section and its modes, then the dispersion map: design map, decision dashboard and the nine maps." width="100%"></p>
 
 ### Ring
 

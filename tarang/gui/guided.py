@@ -298,9 +298,27 @@ def cross_section_choice(run: Path) -> None:
             st.rerun()
 
 
+def suite_panel(run: Path, s) -> None:
+    """The step's dispersion-engineering figures under results/ (map, convergence, ...)."""
+    groups = wz.suite(run, s)
+    for k, (title, figs) in enumerate(groups):
+        with st.expander(f"{title} ({len(figs)})", expanded=k < 2 and s.key == "cross_section"):
+            cols = st.columns(2) if len(figs) > 2 else [st.container()]
+            for j, f in enumerate(figs):
+                cols[j % len(cols)].image(str(f), caption=f.relative_to(run).as_posix(), width="stretch")
+    m = data.latest_map(run) if s.key == "cross_section" else None
+    if m is not None and (m / "target_geometries.csv").exists():
+        with st.expander("Target geometries of the map (anomalous D, one guided TE mode)"):
+            p = m / "target_geometries.csv"
+            _table(data.read_csv(p), width="stretch")
+            st.download_button("Download CSV", p.read_bytes(), file_name=f"{run.name}_target_geometries.csv",
+                               mime="text/csv", key="dl_targets")
+
+
 def results_panel(run: Path, s, status: str) -> None:
     if s.key == "cross_section" and status == "choose":
         cross_section_choice(run)
+        suite_panel(run, s)
         return
     if status not in ("done", "changed", "skipped"):
         return
@@ -334,6 +352,7 @@ def results_panel(run: Path, s, status: str) -> None:
         with st.expander(f"Figures ({len(figs)})", expanded=True):
             for f in figs:
                 st.image(str(f), caption=f.name, width="stretch")
+    suite_panel(run, s)
     if s.key == "report":
         downloads(run)
         rows = data.summary_rows(run)
