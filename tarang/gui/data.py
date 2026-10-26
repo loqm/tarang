@@ -240,7 +240,8 @@ FIGURE_GROUPS = [("1", "Materials"), ("2", "Cross-section"), ("3", "Ring and tes
 
 
 def figures(run: Path) -> list[tuple[str, list[Path]]]:
-    """PNG figures grouped by their number prefix (the report's order)."""
+    """PNG figures grouped by their number prefix (the report's order), then the
+    dispersion-engineering figures under results/ (:func:`dispersion_suite`)."""
     figs = sorted((Path(run) / "figures").glob("*.png"))
     groups = []
     for pre, name in FIGURE_GROUPS:
@@ -250,11 +251,52 @@ def figures(run: Path) -> list[tuple[str, list[Path]]]:
     rest = [f for f in figs if all(f not in g for _, g in groups)]
     if rest:
         groups.append(("Other", rest))
-    return groups
+    return groups + dispersion_suite(run)
+
+
+#: sub-folders of a dispersion map's plots folder, in the order they are shown
+MAP_GROUPS = [("D_vs_width", "Dispersion map: D against width, one figure per height"),
+              ("D_vs_height", "Dispersion map: D against height, one figure per width"),
+              ("modes_vs_width", "Dispersion map: guided modes against width, per height"),
+              ("modes_vs_height", "Dispersion map: guided modes against height, per width")]
+
+
+def latest_map(run: Path) -> Optional[Path]:
+    """The plots folder of the latest cross-section map (results/plots_map_<steps>steps)."""
+    maps = [p for p in (Path(run) / "results").glob("plots_map_*") if p.is_dir()]
+    return max(maps, key=lambda p: p.stat().st_mtime) if maps else None
+
+
+def dispersion_suite(run: Path) -> list[tuple[str, list[Path]]]:
+    """Every figure of the dispersion engineering kept under results/, in groups: the map
+    overview (design map and dashboard), the nine maps, D and the guided modes against
+    width and height, the mesh convergence and the finalists of the chosen cross-section,
+    and the ring's dispersion profile."""
+    res = Path(run) / "results"
+    groups: list[tuple[str, list[Path]]] = []
+    m = latest_map(run)
+    if m is not None:
+        groups.append(("Dispersion map: overview (design map, decision dashboard)",
+                       [p for p in (m / "design_map.png", m / "maps" / "dashboard.png") if p.exists()]))
+        groups.append(("Dispersion map: the nine maps", sorted((m / "maps").glob("map*.png"))))
+        groups += [(title, sorted((m / sub).glob("*.png"))) for sub, title in MAP_GROUPS]
+    groups.append(("Mesh convergence of the chosen cross-section",
+                   sorted((res / "mesh_convergence_plots").glob("*.png"))))
+    groups.append(("Finalists compared", sorted((res / "finalist_report").glob("*.png"))))
+    groups.append(("Ring: dispersion profile", sorted((res / "dispersion_profile_plots").glob("*.png"))))
+    return [(t, g) for t, g in groups if g]
 
 
 def tables(run: Path) -> list[Path]:
-    return sorted((Path(run) / "tables").glob("*.csv"))
+    """Every table of the design: tables/ and the dispersion-map tables under results/."""
+    run = Path(run)
+    extra = []
+    m = latest_map(run)
+    if m is not None:
+        extra += sorted(m.glob("*.csv"))
+    for sub in ("mesh_convergence_plots", "finalist_report", "dispersion_profile_plots"):
+        extra += sorted((run / "results" / sub).glob("*.csv"))
+    return sorted((run / "tables").glob("*.csv")) + extra
 
 
 def files(run: Path) -> list[dict]:

@@ -34,6 +34,14 @@ working until v0.2.0; old imports are updated with one command (see
   GUI with the value meant ("did you mean 0.7 µm (700 nm)?"), shown on every step with Run
   disabled, asked again in the terminal forms, and stops a design run before its first stage
   (`SettingsError`, a message instead of a traceback).
+- **GUI: the dispersion-engineering suite** is shown where it belongs: the cross-section
+  step (also while it waits for your choice) shows the design map, the decision dashboard,
+  the nine maps (D, TE/TM splitting, second-mode margin, sensitivity to width and to
+  thickness, robust window, group index, γ, confinement), D and the guided modes against
+  width and height, the mesh convergence, the finalists and the table of target geometries;
+  the ring step its dispersion profile. They were saved under `results/` but not shown. The
+  All results Figures and Tables tabs and the zip download include them (not the raw solver
+  data).
 - **Benchmark pack:** `comparison.csv` (every number of `results.csv` with empty columns for
   another solver's value, its settings, the difference and notes, to fill in and send back),
   and the TARANG, Tidy3D, NumPy and Python versions in its README.
@@ -381,6 +389,9 @@ working until v0.2.0; old imports are updated with one command (see
   defaults, and therefore FDTD costs, are unchanged.
 
 ### Fixed
+
+- GUI: the Materials step showed the figures of the focusing grating, the whole device and
+  the edge coupler too (its figure filter `^1` also matched `10a_`, `11a_`, `12a_`).
 
 - Whole-device spectrum: beyond the first and last computed resonance (half an FSR at each
   end of the band) the ring's phase was held at the end resonance, so the trace sat on a dip
