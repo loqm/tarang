@@ -34,6 +34,22 @@ working until v0.2.0; old imports are updated with one command (see
   GUI with the value meant ("did you mean 0.7 µm (700 nm)?"), shown on every step with Run
   disabled, asked again in the terminal forms, and stops a design run before its first stage
   (`SettingsError`, a message instead of a traceback).
+- **Choosing the cross-section from every candidate, after comparing them.** The map's
+  choice lists every target geometry (not only the top 8). The candidates you tick (the top
+  four by default) are compared side by side before the choice (`cross_section.compare`,
+  local, free): each at the check mesh with its tolerance box, TE/TM split and second-mode
+  margin, D and loss in a bend (the ring radius for the FSR, or the spiral radius), TE00/TM00
+  mode profiles, D over the band and D_int (`figures/2_candidates/`,
+  `tables/candidates_*.csv`). The chosen cross-section's finalist report now includes its
+  bend (its bend panels were empty).
+- **Dispersion-engineering figures and tables with the others.** The map, candidates,
+  finalists, mesh convergence and the ring's dispersion profile are written to
+  `figures/2_dispersion_map/`, `figures/2_candidates/`, `figures/2_finalists/`,
+  `figures/2_mesh_convergence/`, `figures/3_dispersion_profile/`; their tables to
+  `tables/`; the raw solver data stays in `results/` (what makes a repeated solve free).
+  `--plots-dir` on `dispersion_mapping.maps`, `.broadband` and `.convergence` (the default is
+  unchanged). Older designs keep `results/plots_*`; the GUI, report and benchmark pack read
+  both.
 - **GUI: the dispersion-engineering suite** is shown where it belongs: the cross-section
   step (also while it waits for your choice) shows the design map, the decision dashboard,
   the nine maps (D, TE/TM splitting, second-mode margin, sensitivity to width and to

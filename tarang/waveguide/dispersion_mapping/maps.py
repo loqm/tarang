@@ -444,6 +444,8 @@ def main():
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--overwrite", action="store_true",
                     help="reuse the existing plots folder instead of creating _v2, _v3, ...")
+    ap.add_argument("--plots-dir", type=Path, default=None,
+                    help="write the plots here (default: plots_<data name> next to the data)")
     a = ap.parse_args()
     a.sm_key = "guided_TE" if a.sm == "strict" else "guided_TE_margin"
     if not a.show:
@@ -455,7 +457,7 @@ def main():
         print(f"WARNING: {len(errs)} failed points skipped, e.g. {errs[0]}")
     if not rows:
         raise SystemExit("No valid results in " + str(a.data))
-    out = unique_dir(a.data.parent / f"plots_{a.data.stem}", a.overwrite)
+    out = unique_dir(a.plots_dir or a.data.parent / f"plots_{a.data.stem}", a.overwrite)
     print(f"Writing plots to {out.resolve()}")
     for sub in ("D_vs_width", "D_vs_height", "modes_vs_width", "modes_vs_height"):
         (out / sub).mkdir(parents=True, exist_ok=True)

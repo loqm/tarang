@@ -212,14 +212,41 @@ good survives the fabrication tolerance (± width, ± thickness).
 - **Path A:** anomalous dispersion and a single guided TE mode family.
 - **Path B:** a single guided TE mode, so the loss measured belongs to one mode.
 
-**You choose.** The map stops with 🟡 and a table of candidates, most robust first. Pick
-one (the first is recommended) and click **Use this cross-section and check it**. The
-chosen cross-section is then solved again at a finer mesh, with ± its tolerance (the
-report gives D over the tolerance box).
+**You choose.** The map stops with 🟡 and lists **every** candidate, most robust first.
+Choosing takes three steps:
+
+1. **Tick the candidates you want to compare.** The top four are ticked for you.
+2. **Click Compare the ticked candidates** (local, free, a few minutes each). Each ticked
+   candidate is solved at the check mesh and shown side by side:
+   - D over its ± tolerance box;
+   - the TE/TM split and the margin to the second TE mode's cut-off;
+   - D and the loss in a bend: the ring radius for your FSR, or for test waveguides the
+     spiral radius (`waveguides.bend_radius_um`, else 20 µm at 1550 nm);
+   - its TE00/TM00 mode profiles;
+   - its D over the band and, for a ring, D_int.
+
+   The table **Compared** gives the numbers; the figures are below it. They are kept in
+   `figures/2_candidates/` and `tables/candidates_*.csv`.
+3. **Pick one** ("(compared)" marks those you compared) and click **Use this
+   cross-section and check it**. The chosen cross-section is solved again at the check
+   mesh, with ± its tolerance and in its bend, and its mesh convergence is checked. The
+   report gives D over the tolerance box.
+
+From a terminal, the same comparison runs when `cross_section.compare` lists the
+candidates (e.g. `compare = ["0.7x1", "0.7x0.9"]`) and the cross-section is still empty.
 
 **The dispersion-engineering suite** comes with the map. It is shown in the step while it
-waits for your choice, and kept under `results/plots_map_<steps>steps/` (also in **All
-results → Figures** and in the zip download):
+waits for your choice, and kept with the other figures and tables:
+- figures in `figures/2_dispersion_map/`, `figures/2_candidates/`,
+  `figures/2_finalists/`, `figures/2_mesh_convergence/` and
+  `figures/3_dispersion_profile/`;
+- tables in `tables/` (e.g. `map_target_geometries.csv`, `finalists.csv`,
+  `mesh_convergence.csv`, `dispersion_profiles.csv`);
+- the raw solver data in `results/*.jsonl`. It stays there because it makes a repeated
+  solve free.
+
+Designs from before 14E keep their `results/plots_*` folders, and the GUI shows those too.
+All of it is also in **All results → Figures** and in the zip download.
 
 - **Design map:** D(TE00) over H × W with the zero-dispersion contour, beside the regime
   of every point. The regimes are normal dispersion; target (anomalous, one TE mode);
@@ -253,12 +280,18 @@ D ≈ 380 ps/(nm·km) and a single TE mode. It is also robust in map 6: its neig
 width error (map 4, 0.06 ps/(nm·km) per nm). The candidate table ranks by all 8
 surrounding grid points instead of map 6's four.
 
-In the screenshots, the map of the 700 nm film recommends 0.7 × 0.7 µm (all 8 neighbours
+The comparison screenshot (a small 700 nm map, 40 mesh steps per wavelength) shows why the
+comparison helps. 0.7 × 0.9 µm
+has nearly the same D as 0.7 × 1.0 µm at the centre (369 against 382 ps/(nm·km)). But its
+tolerance box reaches down to 295 and touches TE/TM-degenerate points, and its TE/TM split
+is 0.017 against 0.031. 0.7 × 1.0 µm stays between 358 and 411 within the tolerance.
+
+In the screenshots of the test-waveguide design, the map of the 700 nm film recommends 0.7 × 0.7 µm (all 8 neighbours
 single-mode, TE/TM split 0.0295). The next candidate, 0.7 × 1.0 µm, is as robust and has
 almost the same split (0.0293); it was picked here because it is the width of the rings on
 the same chip. Both choices are sound; the table lets you weigh such near-ties yourself.
 
-<p align="center"><img src="assets/gui/03_cross_section_choose.png" alt="Cross-section step waiting for the choice: the candidates table, most robust first, and the button to check the chosen one." width="100%"></p>
+<p align="center"><img src="assets/gui/03_cross_section_choose.png" alt="Cross-section step waiting for the choice: every candidate with compare ticks, the comparison of the ticked ones (tolerance box, bend, D over the band, D_int, mode profiles), then the choice and the button to check it." width="100%"></p>
 
 **Settings:**
 - the heights and widths to map. With a fixed film, the heights are the film ± its

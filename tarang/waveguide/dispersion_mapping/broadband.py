@@ -145,7 +145,7 @@ def analyse(rec, R_um, deg=8, mu_max=None):
                 wl_raw=wl, n_raw=n)
 
 
-def plot_all(data_path, R_um, overwrite, deg):
+def plot_all(data_path, R_um, overwrite, deg, plots_dir=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -155,7 +155,8 @@ def plot_all(data_path, R_um, overwrite, deg):
             r = json.loads(line)
             if "error" not in r:
                 recs[(r["H"], r["W"], r["bend_radius"], r["steps"], r.get("core", "si3n4"), r.get("substrate", "sio2"), r.get("cladding") or None)] = r
-    out = unique_dir(Path(data_path).parent / "dispersion_profile_plots", overwrite)
+    out = unique_dir(Path(plots_dir) if plots_dir else Path(data_path).parent / "dispersion_profile_plots",
+                     overwrite)
     out.mkdir(parents=True, exist_ok=True)
     figD, axD = plt.subplots(figsize=(9, 5.5), dpi=140)
     figI, axI = plt.subplots(figsize=(9, 5.5), dpi=140)
@@ -244,6 +245,8 @@ def main():
     ap.add_argument("--data", default="results/dispersion_profiles.jsonl")
     ap.add_argument("--plot-only", action="store_true")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--plots-dir", default=None,
+                    help="write the plots here (default: dispersion_profile_plots next to the data)")
     a = ap.parse_args()
     clad = None if str(a.cladding).lower() in ("", "air", "none") else a.cladding
     data = Path(a.data); data.parent.mkdir(parents=True, exist_ok=True)
@@ -272,7 +275,7 @@ def main():
                 f.write(json.dumps(rec) + "\n")
             print(f"{H}x{W} R={a.bend_radius}: {rec.get('error', 'ok')} ({rec['secs']}s)",
                   flush=True)
-    plot_all(data, a.radius, a.overwrite, a.fit_degree)
+    plot_all(data, a.radius, a.overwrite, a.fit_degree, a.plots_dir)
 
 
 if __name__ == "__main__":
