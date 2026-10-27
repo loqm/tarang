@@ -33,6 +33,8 @@ Plots: results/dispersion_profile_plots[_vN]/
 """
 from __future__ import annotations
 
+from tarang.figures import save as save_fig
+
 from tarang.waveguide.dispersion_mapping._console import safe_console
 
 import argparse
@@ -98,7 +100,7 @@ def solve_profile(H, W, wl_min, wl_max, nwl, steps, bend_radius, num_modes=10, m
                 core=mat.get("core", sc.DEFAULT_CORE),
                 substrate=mat.get("substrate", sc.DEFAULT_SUBSTRATE),
                 cladding=None if sc.is_air(top_key) else top_key, pump=pump,
-                wl=list(map(float, wls)),
+                snap=bool(mat.get("snap", False)), wl=list(map(float, wls)),
                 neff_TE0=neff, te_frac_TE0=tefrac, n_cut=ncut)
 
 
@@ -193,7 +195,7 @@ def plot_all(data_path, R_um, overwrite, deg, plots_dir=None):
                      fontsize=12)
         fig.tight_layout()
         tag = f"profile_H{H*1e3:.0f}_W{W*1e3:.0f}" + (f"_R{Rb:g}um" if Rb else "")
-        fig.savefig(out / f"{tag}.png"); plt.close(fig)
+        save_fig(fig, out / f"{tag}.png", layout=False)
         axD.plot(A["wf"], A["D"], lw=2, label=name)
         axI.plot(A["lam_mu"], A["Dint"] / (2 * np.pi) / 1e9, lw=2, label=name)
         rows.append(dict(geometry=name, steps=st, pump_um=A["pump"], D_pump=round(A["D_pump"], 1),
@@ -211,7 +213,7 @@ def plot_all(data_path, R_um, overwrite, deg, plots_dir=None):
         axx.axhline(0, color="k", lw=0.8); axx.grid(alpha=0.3); axx.legend(fontsize=8)
         axx.set_ylabel(yl)
         axx.set_xlabel("wavelength (µm)" if axx is axD else "resonance wavelength (nm)")
-        f.tight_layout(); f.savefig(out / fn)
+        f.tight_layout(); save_fig(f, out / fn, close=False, layout=False)
     if rows:
         with open(out / "profiles_summary.csv", "w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
@@ -247,6 +249,8 @@ def main():
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--plots-dir", default=None,
                     help="write the plots here (default: dispersion_profile_plots next to the data)")
+    ap.add_argument("--snap", action="store_true",
+                    help="grid lines through the four core edges (steadier D from mesh to mesh)")
     a = ap.parse_args()
     clad = None if str(a.cladding).lower() in ("", "air", "none") else a.cladding
     data = Path(a.data); data.parent.mkdir(parents=True, exist_ok=True)
@@ -256,16 +260,19 @@ def main():
             for line in data.read_text(encoding="utf-8").splitlines():
                 if line.strip():
                     r = json.loads(line)
-                    done.add((r["H"], r["W"], r["bend_radius"], r["steps"], r.get("core", "si3n4"), r.get("substrate", "sio2"), r.get("cladding") or None))
+                    done.add((r["H"], r["W"], r["bend_radius"], r["steps"], r.get("core", "si3n4"),
+                              r.get("substrate", "sio2"), r.get("cladding") or None,
+                              bool(r.get("snap", False))))
         for tok in a.points.split(","):
             H, W = (round(float(v), 4) for v in tok.lower().split("x"))
-            if (H, W, a.bend_radius, a.steps, a.core, a.substrate, clad) in done:
+            if (H, W, a.bend_radius, a.steps, a.core, a.substrate, clad, a.snap) in done:
                 print(f"skip {H}x{W} (done)"); continue
             t = time.time()
             try:
                 rec = solve_profile(H, W, a.wl_min, a.wl_max, a.nwl, a.steps, a.bend_radius,
                                     mat=dict(core=a.core, substrate=a.substrate, cladding=clad,
-                                             box=a.box, cladding_height=a.cladding_height),
+                                             box=a.box, cladding_height=a.cladding_height,
+                                             snap=a.snap),
                                     pump=a.pump)
             except Exception as e:
                 rec = dict(H=H, W=W, steps=a.steps, bend_radius=a.bend_radius,

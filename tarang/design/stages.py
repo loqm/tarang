@@ -44,7 +44,8 @@ class Context:
         self._media: dict = {}
         from tarang.design import visuals
         try:
-            visuals.configure(cfg.run.figure_formats, cfg.run.figure_dpi)
+            visuals.configure(cfg.run.figure_formats, cfg.run.figure_dpi,
+                              cfg.run.figure_style, cfg.run.figure_data)
         except ValueError as err:
             ui.say(f"  ({err}; using png + pdf)")
         self.stage = ""
@@ -120,7 +121,9 @@ class Context:
         cmd = [sys.executable, "-m", f"tarang.waveguide.dispersion_mapping.{name}",
                *map(str, args)]
         self.ui.say(f"  $ {' '.join(cmd[1:])}")
-        env = dict(os.environ, PYTHONIOENCODING="utf-8")     # λ, µm on any Windows console
+        from tarang import figures
+        env = dict(os.environ, PYTHONIOENCODING="utf-8",     # λ, µm on any Windows console
+                   **figures.env())                          # formats, dpi, style, data
         proc = subprocess.Popen(cmd, cwd=self.out, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8",
                                 errors="replace", env=env)
@@ -169,7 +172,8 @@ class Context:
     def stack_args(self) -> list[str]:
         m, s = self.cfg.materials, self.cfg.stack
         return ["--core", m.core, "--substrate", m.box, "--cladding", m.cladding,
-                "--box", s.box_height_um, "--cladding-height", s.cladding_height_um]
+                "--box", s.box_height_um, "--cladding-height", s.cladding_height_um,
+                *(["--snap"] if self.cfg.cross_section.snap_grid else [])]
 
     def cloud_limit(self):
         """Context manager: cap every cloud run at run.max_cost_per_run."""
@@ -701,18 +705,28 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
                "Consider another candidate.")
 
     conv_file = ctx.path("results", "convergence.jsonl")
-    ladder = ",".join(map(str, sorted({steps, dsteps, dsteps + 20})))
-    ctx.tool("convergence", "--points", f"{H}x{W}", "--steps-list", ladder,
+    meshes = sorted({int(x) for x in (cfg.cross_section.mesh_ladder or [])} | {dsteps})
+    snap = bool(cfg.cross_section.snap_grid)
+    ctx.tool("convergence", "--points", f"{H}x{W}", "--steps-list", ",".join(map(str, meshes)),
              "--wl", wl, "--workers", cfg.run.workers,
              "--data", conv_file.relative_to(ctx.out), "--overwrite", "--plots-dir", CONV_DIR,
              *ctx.stack_args())
-    _to_tables(ctx, ctx.out / CONV_DIR, {"convergence_table.csv": "mesh_convergence.csv"})
+    _to_tables(ctx, ctx.out / CONV_DIR, {"convergence_table.csv": "mesh_convergence.csv",
+                                         "mesh_band.csv": "mesh_band.csv"})
     conv = sorted((r for r in _read_jsonl(conv_file)
-                   if abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6), key=lambda r: r["steps"])
+                   if "error" not in r and abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6
+                   and r.get("bend_radius") is None and bool(r.get("snap", False)) == snap
+                   and r["steps"] in meshes), key=lambda r: r["steps"])
+    band = ng_band = None
     if len(conv) >= 2:
+        from tarang.waveguide.dispersion_mapping.convergence import mesh_band
         change = abs(conv[-1]["D_TE0"] - conv[-2]["D_TE0"]) / max(abs(conv[-1]["D_TE0"]), 1e-9)
-        ui.say("Mesh check: D = " + ", ".join(f"{r['D_TE0']:.1f} ({r['steps']})" for r in conv)
-               + f"; last change {change * 100:.1f} %")
+        band = mesh_band({r["steps"]: r["D_TE0"] for r in conv})
+        ng_band = mesh_band({r["steps"]: r["ng_TE0"] for r in conv})
+        ui.say(f"Mesh check ({len(conv)} meshes, grid {'snapped to' if snap else 'not snapped to'}"
+               " the core edges): D = " + ", ".join(f"{r['D_TE0']:.1f} ({r['steps']})" for r in conv)
+               + f"\n  -> D = {band['value']:.1f} ± {band['band']:.1f} ps/(nm km) (median ± largest "
+               f"distance), n_g = {ng_band['value']:.4f} ± {ng_band['band']:.4f}")
     else:
         change = None
     from tarang.design import visuals
@@ -728,6 +742,9 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
                 guided_TM=centre["guided_TM"], aeff_um2=centre.get("Aeff_TE0_um2"),
                 D_min_tol=float(rep["D_min_tol"]), D_max_tol=float(rep["D_max_tol"]),
                 tolerance_box_target=robust, mesh_change=change,
+                D_mesh=band["value"] if band else None, D_mesh_band=band["band"] if band else None,
+                ng_mesh=ng_band["value"] if ng_band else None,
+                ng_mesh_band=ng_band["band"] if ng_band else None, grid_snapped=snap,
                 map_file=str(grid_file) if grid_file else None,
                 map_figure=str(plots / "design_map.png") if plots else None,
                 candidates=cands, recommend=recommend,
@@ -1589,7 +1606,8 @@ FIGURE_VERSION = 3
 
 # Settings that only label where a value came from (the values themselves are hashed):
 # changing them must not repeat a stage.
-KEY_IGNORE = {"ring": {"loss_preset"}, "cross_section": {"stop_after_map", "compare"}}
+KEY_IGNORE = {"ring": {"loss_preset"},
+              "cross_section": {"stop_after_map", "compare", "mesh_ladder"}}
 
 
 def settings_key(cfg: DesignConfig, stage: str) -> str:

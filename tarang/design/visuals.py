@@ -2,7 +2,8 @@
 
 Every function writes one figure into ``<run>/figures`` (PNG at ``run.figure_dpi``, plus
 PDF and/or SVG per ``run.figure_formats``: vector files for papers and slides, with text
-kept as text) and returns the PNG path. They never stop a run: a figure that cannot be
+kept as text), with the plotted numbers in ``<name>_data.csv`` and the labels, versions
+and settings in ``<name>_meta.json`` (``run.figure_data``), and returns the PNG path. They never stop a run: a figure that cannot be
 drawn is reported and skipped (``safe``); a file that cannot be replaced because another
 program has it open is written next to it as ``<name>_new.<ext>``.
 """
@@ -20,20 +21,17 @@ C_UM = 2.99792458e14
 # Okabe-Ito colours: distinguishable with every common colour-vision deficiency
 PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#F0E442",
            "#000000"]
-SETTINGS = {"formats": ["png", "pdf"], "dpi": 300}
+from tarang import figures as _figures
+
+SETTINGS = _figures.SETTINGS          # formats, dpi, style, data: shared with the map tools
+SETTINGS.update(formats=["png", "pdf"])
 _LAST_NOTES: list[str] = []
 
 
-def configure(formats=None, dpi=None) -> None:
-    """Figure files to write (png, pdf, svg) and the PNG resolution."""
-    if formats:
-        fm = [str(f).lower().lstrip(".") for f in formats]
-        bad = set(fm) - {"png", "pdf", "svg"}
-        if bad:
-            raise ValueError(f"unknown figure format(s) {sorted(bad)}; use png, pdf, svg")
-        SETTINGS["formats"] = fm
-    if dpi:
-        SETTINGS["dpi"] = int(dpi)
+def configure(formats=None, dpi=None, style=None, data=None) -> None:
+    """Figure files to write (png, pdf, svg), the PNG resolution, the style ('screen' or
+    'paper') and whether each figure's numbers are saved next to it."""
+    _figures.configure(formats, dpi, style, data)
 
 
 def _plt():
@@ -49,6 +47,7 @@ def _plt():
         "savefig.bbox": "tight", "savefig.pad_inches": 0.05,
         "pdf.fonttype": 42, "ps.fonttype": 42, "svg.fonttype": "none",   # editable text
         "image.cmap": "magma"})
+    _figures.apply_style(plt)
     return plt
 
 
@@ -68,40 +67,13 @@ def safe(ctx, label: str, fn: Callable, *args, **kwargs) -> Optional[Path]:
 
 
 def _write(fig, target: Path, **kw) -> Path:
-    """Save via a temporary file and swap it in; if the old file is held open by another
-    program (e.g. a Windows image viewer), keep it and write <name>_new.<ext>."""
-    tmp = target.with_name(target.stem + ".tmp" + target.suffix)
-    fig.savefig(tmp, **kw)
-    try:
-        os.replace(tmp, target)
-        return target
-    except OSError:
-        alt = target.with_name(target.stem + "_new" + target.suffix)
-        try:
-            os.replace(tmp, alt)
-        except OSError:
-            tmp.unlink(missing_ok=True)
-            raise
-        _LAST_NOTES.append(f"{target.name} is open in another program; saved as {alt.name}")
-        return alt
+    return _figures._write(fig, target, _LAST_NOTES, **kw)
 
 
-def _save(fig, path: Path) -> Path:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fig.tight_layout()
-    except Exception:
-        pass
-    out = None
-    for fmt in SETTINGS["formats"]:
-        target = path.with_suffix("." + fmt)
-        kw = {"dpi": SETTINGS["dpi"]} if fmt == "png" else {}
-        written = _write(fig, target, **kw)
-        if fmt == "png" or out is None:
-            out = written
-    _plt().close(fig)
-    return out
+def _save(fig, path: Path, meta: Optional[dict] = None) -> Path:
+    """Every format of ``run.figure_formats``, and the figure's numbers (CSV) and settings
+    (JSON) next to it (see tarang.figures)."""
+    return _figures.save(fig, path, meta=meta, notes=_LAST_NOTES)
 
 
 # =============================================================== cross-section

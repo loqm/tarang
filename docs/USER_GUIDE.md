@@ -275,7 +275,7 @@ All of it is also in **All results → Figures** and in the zip download.
 - **For the ring (Path A):** the Ring step adds the dispersion profile.
 
 For the 700 nm film at 1550 nm, these maps are why 0.7 × 1.0 µm is the comb waveguide:
-D ≈ 380 ps/(nm·km) and a single TE mode. It is also robust in map 6: its neighbours at
+D ≈ 374 ± 3 ps/(nm·km) (mesh check, below) and a single TE mode. It is also robust in map 6: its neighbours at
 ± 100 nm width and ± 50 nm height are targets too. Its D is also the least sensitive to a
 width error (map 4, 0.06 ps/(nm·km) per nm). The candidate table ranks by all 8
 surrounding grid points instead of map 6's four.
@@ -296,11 +296,30 @@ the same chip. Both choices are sound; the table lets you weigh such near-ties y
 **Settings:**
 - the heights and widths to map. With a fixed film, the heights are the film ± its
   tolerance; the widths default to 0.39–1.16 × λ.
-- the mesh: 50 steps per wavelength for the map, 70 for the check;
-- the parallel workers.
+- the mesh: 50 steps per wavelength for the map, 70 for the check, and the mesh ladder of
+  the mesh check (`cross_section.mesh_ladder`, default 50, 60, 70, 80, 90);
+- whether the grid is snapped to the core edges (`cross_section.snap_grid`, on; a design
+  whose cross-section was computed before keeps it off, so its numbers stay, until you set
+  it to `true`);
+- the parallel workers (about 1.5 GB of memory each).
 
 **Check:** n_g and D at the pump, and that the mode figures show one TE00 mode confined
 in the core.
+
+**How exact is D?** D is a second derivative of n_eff(λ), so small mesh errors are
+amplified. The mode solver's n_eff moves by about 10⁻³ from one grid to the next, even as
+the grid is refined, and D does not settle monotonically. The largest part comes from
+where the core edges fall in their cells. With `snap_grid` (on by default), grid lines go
+through the four core edges, and the spread of D over the mesh ladder drops about four
+times. For 700 × 1000 nm at 1550 nm:
+
+| | 50 | 60 | 70 | 80 | 90 | 100 | median ± spread |
+|---|---|---|---|---|---|---|---|
+| not snapped | 378.7 | 373.6 | 361.6 | 372.5 | 374.6 | | 373.6 ± 12.0 |
+| snapped | 374.0 | 374.0 | 376.8 | 373.8 | 370.9 | 373.7 | 373.9 ± 3.0 |
+
+So quote D as the mesh check's **median ± spread** (report, key numbers and
+`tables/mesh_band.csv`), not as the value at one mesh.
 
 <p align="center"><img src="assets/gui/04_cross_section_done.png" alt="Cross-section step done: key numbers (core, D, n_eff and n_g), the figures of the cross-section and its modes, then the dispersion map: design map, decision dashboard and the nine maps." width="100%"></p>
 
@@ -534,11 +553,25 @@ next run picks it up.
 |---|---|
 | `design.toml` | every setting, with its explanation; rerun exactly with `python -m tarang.design --config design.toml --yes` |
 | `report.md` | every result with how it was obtained, the assumed values with their sources, known limits |
-| `figures/`, `tables/` | every figure (PNG and PDF) and table (CSV) |
+| `figures/`, `tables/` | every figure (PNG and PDF) and table (CSV); next to each figure its plotted numbers (`<name>_data.csv`, maps in `<name>_data.npz`) and its labels, versions and settings (`<name>_meta.json`) |
+| `figures_paper/` | journal-sized copies of the figures, when `run.figure_style = "paper"` (below) |
 | `layout/` | `design.gds`, `parameters.json`, `spirals.csv`, `chip.json` |
 | `lle/` | comb-simulation inputs (Path A) |
 | `benchmark_pack/` | everything another solver needs to repeat the design (below) |
 | `cloud/` | the Tidy3D results, each with `simulation.json` and `task.json` (link) |
+
+**Figures for a paper.** Every figure comes with its numbers, so it can be redrawn in any
+plotting program. `<name>_data.csv` has one row per plotted point: `panel` (0, 1, … left to
+right, top to bottom), `series` (the legend name), `kind` (line, points, bars, errorbar,
+hline, vline), `x`, `y`, `z` (the colour value of coloured points), `lo` and `hi` (error-bar
+ends). The axis labels and units are in `<name>_meta.json`. For journal-sized figures (3.4 in
+wide for one column of panels, 7 in otherwise, text 6–8.5 pt, titles moved to the caption in
+the JSON), set
+`run.figure_style = "paper"` and run the steps again with `--redo`. Every cloud simulation
+is read from its saved results, so this costs nothing as long as no other setting changed
+(a design made before Phase 15A keeps `snap_grid = false` by itself, so its cross-section
+and everything built on it stay the same). The copies go to `figures_paper/`, and
+`figures/` stays as it was.
 
 **The benchmark pack** lets another group or another solver check every number:
 

@@ -5,6 +5,50 @@ All notable changes to TARANG are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) (before 1.0, a minor release may contain
 breaking changes; they are announced here first).
 
+## [Unreleased]
+
+Phase 15A: figures for papers, and how exact D is.
+
+### Added
+
+- **Every figure is saved with its numbers.** Next to each figure, `<name>_data.csv` holds
+  every plotted line, point set, bar set, error bar and reference line, one row per point.
+  Maps and images go to `<name>_data.npz`. `<name>_meta.json` holds the axis labels, scales,
+  limits and series names, the TARANG, Tidy3D, numpy and matplotlib versions, and the
+  settings. Turn it off with `run.figure_data = false`. The writer is `tarang.figures`,
+  shared by the design run and the dispersion-mapping tools.
+- **Paper style** (`run.figure_style = "paper"`): each figure is saved 3.4 in wide for one
+  column of panels and 7 in otherwise, into `figures_paper/`. Text (6–8.5 pt), lines and
+  markers are scaled to that size. Titles move to the caption in `<name>_meta.json`, since a
+  paper puts them in the caption. Dense in-cell numbers of maps are left out, and legends
+  under a panel get at most two columns. The screen
+  figures stay. A run with `--redo` reads every cloud result from its cache, so it is free
+  when no other setting changed.
+- **The dispersion-mapping tools** (map, broadband, mesh check, finalist report) now write
+  the design's formats (PDF as well as PNG) and the numbers.
+- **Mesh band of D.** The mesh check runs `cross_section.mesh_ladder` (default 50, 60, 70,
+  80, 90 steps per wavelength). D and n_g are quoted as the median over the ladder ± the
+  largest distance of any mesh from it, in the report, the GUI's key numbers and
+  `tables/mesh_band.csv`. The convergence figures show that band.
+
+### Changed
+
+- **The mode solver's grid is snapped to the four core edges** (`cross_section.snap_grid`,
+  on). Without it, where an edge falls inside a cell changes from mesh to mesh, and D
+  zig-zags. For 700 × 1000 nm at 1550 nm the spread over 50–90 steps was ±12 ps/(nm·km)
+  (378.7, 373.6, 361.6, 372.5, 374.6); snapped it is ±3 (374.0, 374.0, 376.8, 373.8, 370.9,
+  373.7). A design whose cross-section was computed before keeps its numbers: it runs on
+  with `snap_grid = false` (said when it starts). To move it to the snapped grid, set
+  `snap_grid = true` in its `design.toml`; its cross-section is then mapped again (local,
+  free). Records carry `snap`, so snapped and unsnapped results are never mixed.
+- The mesh-check figures give the cell size from the core index at the design wavelength.
+  It was always taken at 1550 nm before. They no longer mark the old 20-step default.
+
+### Fixed
+
+- **Landscape legends** (grating, apodised, focusing): the key of the simulated points took
+  the colour of one point of the colour map. It is now neutral grey.
+
 ## [0.1.0] - unreleased
 
 First public release. Compared with the pre-release code on `main`, TARANG is now

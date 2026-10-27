@@ -24,6 +24,8 @@ The default is 0, so no margin is assumed by the package.
 """
 from __future__ import annotations
 
+from tarang.figures import save as save_fig
+
 from tarang.waveguide.dispersion_mapping._console import safe_console
 
 import argparse
@@ -141,7 +143,7 @@ def plot_D(series, xkey, fixed_lbl, fname, a, plt):
     ax.legend(handles=ax.get_legend_handles_labels()[0] + h, fontsize=7,
               loc="upper left", bbox_to_anchor=(1.01, 1.0))
     fig.tight_layout()
-    fig.savefig(fname)
+    save_fig(fig, fname, close=False, layout=False)
     plt.close(fig) if not a.show else None
 
 
@@ -182,7 +184,7 @@ def plot_modes(series, xkey, fixed_lbl, fname, a, plt):
                  f"(green = single guided TE mode; faded = below cutoff)", fontsize=10)
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(fname)
+    save_fig(fig, fname, close=False, layout=False)
     plt.close(fig) if not a.show else None
 
 
@@ -229,7 +231,7 @@ def plot_map(rows, outdir, a, plt):
         ax.set_ylabel("Core thickness H (µm)")
     fig.suptitle(f"{_stack(rows[0])} — design map at {rows[0]['wl0']*1e3:.0f} nm", fontsize=11)
     fig.tight_layout()
-    fig.savefig(outdir / "design_map.png")
+    save_fig(fig, outdir / "design_map.png", close=False, layout=False)
     plt.close(fig) if not a.show else None
 
 
@@ -310,7 +312,8 @@ def plot_extra_maps(rows, outdir, a, plt):
     made = {}
 
     def save(fig, name):
-        fig.tight_layout(); fig.savefig(md / name); made[name] = True
+        fig.tight_layout()
+        made[name] = save_fig(fig, md / name, close=False, layout=False)   # where it went
         if not a.show:
             plt.close(fig)
 
@@ -413,16 +416,20 @@ def plot_extra_maps(rows, outdir, a, plt):
                      fontsize=10)
         save(fig, "map9_confinement.png")
 
-    # dashboard of the six decision maps
-    fig, axs = plt.subplots(2, 3, figsize=(20, 10.5), dpi=120)
+    # dashboard of the six decision maps (from their png files, wherever the style put them)
     panels = [("map1_dispersion_D.png", "1"), ("map2_TE_TM_splitting.png", "2"),
               ("map3_second_mode_margin.png", "3"), ("map4_sensitivity_width.png", "4"),
               ("map6_robust_window.png", "6"), ("map7_group_index.png", "7")]
-    for ax, (fn, _) in zip(axs.flat, panels):
-        ax.imshow(plt.imread(md / fn)); ax.axis("off")
+    pngs = [Path(made.get(fn) or md / fn) for fn, _ in panels]
+    if not all(p.suffix == ".png" and p.exists() for p in pngs):
+        print(f"maps: {len(made)} files -> {md} (no dashboard: it is made from png files)")
+        return
+    fig, axs = plt.subplots(2, 3, figsize=(20, 10.5), dpi=120)
+    for ax, p in zip(axs.flat, pngs):
+        ax.imshow(plt.imread(p)); ax.axis("off")
     fig.suptitle(f"{_stack(rows[0])} — decision dashboard at "
                  f"{wl*1e3:.0f} nm", fontsize=14)
-    fig.tight_layout(); fig.savefig(md / "dashboard.png")
+    fig.tight_layout(); save_fig(fig, md / "dashboard.png", close=False, layout=False)
     if not a.show:
         plt.close(fig)
     print(f"maps: {len(made) + 1} files -> {md}")

@@ -97,9 +97,12 @@ def stack_label(core=DEFAULT_CORE, substrate=DEFAULT_SUBSTRATE, cladding=None, b
 
 def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
               substrate=DEFAULT_SUBSTRATE, cladding=None, cladding_height=2.0,
-              n_shift=0.0, si_handle=False, si_thick=2.0, margin_y=2.0, band=None):
+              n_shift=0.0, si_handle=False, si_thick=2.0, margin_y=2.0, band=None,
+              snap=False):
     """Tidy3D simulation of the cross-section (lengths in um). Materials are fitted over
-    a range covering ``band`` (default wl0 +/- 0.1 um)."""
+    a range covering ``band`` (default wl0 +/- 0.1 um). ``snap``: grid lines through the
+    four core edges, so the edges sit on cell faces at every mesh (without it, where an
+    edge falls inside a cell changes from mesh to mesh)."""
     lo, hi = band or (wl0 - 0.1, wl0 + 0.1)
     core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
     sub_m = medium_for(substrate, lo, hi)
@@ -110,6 +113,9 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
         top_cladding_height=(cladding_height if top_m is not None else 0.0),
         fine_steps_per_wvl=steps, margin_y=margin_y)
     sim = wg.sim
+    if snap:
+        pts = ((None, -width / 2, 0.0), (None, width / 2, height))
+        sim = sim.updated_copy(grid_spec=sim.grid_spec.updated_copy(snapping_points=pts))
     if si_handle:
         (x0, y0, z0), (x1, y1, z1) = sim.bounds
         z0_new = z0 - si_thick
@@ -148,7 +154,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                 substrate: str = DEFAULT_SUBSTRATE, cladding=None,
                 cladding_height: float = 2.0, n_shift: float = 0.0,
                 si_handle: bool = False, pml: int = 0,
-                bend_radius: float | None = None) -> dict:
+                bend_radius: float | None = None, snap: bool = False) -> dict:
     """Analyse one cross-section.
 
     core / substrate / cladding : media.json keys (cladding None or "air" = air top)
@@ -166,7 +172,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     sim = build_sim(height, width, wl0=wl0, steps=steps, box=box, core=core,
                     substrate=substrate, cladding=cladding, cladding_height=cladding_height,
                     n_shift=n_shift, si_handle=si_handle, margin_y=(3.0 if bent else 2.0),
-                    band=(lo, hi))
+                    band=(lo, hi), snap=snap)
     wls = np.linspace(lo, hi, npts)
     plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
     core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
@@ -220,7 +226,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     te_like = [d for d in modes if d["te_frac"] >= 0.5]
     tm_like = [d for d in modes if d["te_frac"] < 0.5]
     return dict(
-        H=round(height, 4), W=round(width, 4), wl0=wl0, steps=steps,
+        H=round(height, 4), W=round(width, 4), wl0=wl0, steps=steps, snap=bool(snap),
         core=core, substrate=substrate, cladding=(None if is_air(cladding) else cladding),
         box=box, n_shift=n_shift, n_cut=round(n_cut, 5), margin=margin,
         si_handle=si_handle, pml=pml, bend_radius=bend_radius,

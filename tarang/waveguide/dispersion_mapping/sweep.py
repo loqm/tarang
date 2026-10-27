@@ -83,6 +83,8 @@ def main():
     ap.add_argument("--bend-radius", type=float, default=None,
                     help="ring radius in um (bent-waveguide mode solve); omit = straight")
     ap.add_argument("--out", default=None, help="output .jsonl path")
+    ap.add_argument("--snap", action="store_true",
+                    help="grid lines through the four core edges (steadier D from mesh to mesh)")
     a = ap.parse_args()
 
     if a.points:
@@ -125,6 +127,7 @@ def main():
                 same = (r.get("steps") == a.steps and abs(r.get("wl0", 1.55) - a.wl) < 1e-9
                         and r.get("bend_radius") == a.bend_radius
                         and bool(r.get("si_handle", False)) == a.si_handle
+                        and bool(r.get("snap", False)) == a.snap
                         and r.get("core", "si3n4") == a.core
                         and r.get("substrate", "sio2") == a.substrate
                         and (r.get("cladding") or None) == clad
@@ -133,7 +136,7 @@ def main():
                     done.add((round(r["H"], 4), round(r["W"], 4)))
 
     kw = dict(wl0=a.wl, steps=a.steps, box=a.box, margin=a.margin,
-              si_handle=a.si_handle, pml=a.pml, bend_radius=a.bend_radius,
+              si_handle=a.si_handle, pml=a.pml, bend_radius=a.bend_radius, snap=a.snap,
               core=a.core, substrate=a.substrate, cladding=clad,
               cladding_height=a.cladding_height, n_shift=a.n_shift)
     todo = [(H, W, kw) for (H, W) in pts if (H, W) not in done]
