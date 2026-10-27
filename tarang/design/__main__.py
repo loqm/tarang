@@ -32,6 +32,15 @@ from tarang.design.ui import Prompter
 
 
 def main(argv=None) -> int:
+    from tarang.design.config import SettingsError
+    try:
+        return _main(argv)
+    except SettingsError as err:          # a setting that cannot be right: a message, exit 2
+        print(f"\n{err}")
+        return 2
+
+
+def _main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m tarang.design",
                                  description="Guided device design with TARANG.",
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -95,12 +104,7 @@ def main(argv=None) -> int:
         return 0
     only = [s.strip() for s in a.only.split(",")] if a.only else None
     redo = [s.strip() for s in a.redo.split(",") if s.strip()]
-    from tarang.design.config import SettingsError
-    try:
-        run(cfg, out, interactive=interactive, only=only, redo=redo, prompter=ui)
-    except SettingsError as err:
-        print(f"\n{err}")
-        return 2
+    run(cfg, out, interactive=interactive, only=only, redo=redo, prompter=ui)
     return 0
 
 

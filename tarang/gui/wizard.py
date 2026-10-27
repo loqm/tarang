@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import datetime as dt
 import html
 import io
 import json
@@ -624,6 +625,29 @@ def comparison_figures(run: Path) -> list[Path]:
     return [p for p in fixed if p.exists()] + sorted(d.glob("modes_*.png"))
 
 
+def choice_status(run: Path) -> Optional[str]:
+    """While the cross-section step runs from the choice panel: what it is doing and since
+    when (the buttons are greyed until it finishes)."""
+    info = data.job(run)
+    if not info.get("running"):
+        return None
+    try:
+        since = dt.datetime.fromisoformat(info["started"]).strftime("%H:%M")
+    except (KeyError, TypeError, ValueError):
+        since = "?"
+    xs = data.load_config(run).cross_section
+    if xs.height_um and xs.width_um:
+        what = (f"Checking {xs.height_um:g} × {xs.width_um:g} µm (tolerance box, bend, mesh "
+                "convergence)")
+    elif xs.compare:
+        what = f"Comparing {len(xs.compare)} candidate(s) (tolerance box, bend, profiles each)"
+    else:
+        what = "Running the cross-section step"
+    return (f"{what} since {since}. The buttons come back when it finishes; the log shows "
+            "progress. A tolerance point takes about 1 to 2 min on a laptop, so this can take "
+            "15 to 20 min per cross-section.")
+
+
 def choose_cross_section(run: Path, H: float, W: float) -> str:
     return save_fields(run, {"cross_section.height_um": float(H), "cross_section.width_um": float(W),
                              "cross_section.stop_after_map": False})
@@ -725,7 +749,9 @@ def report_html(run: Path) -> Optional[str]:
         if m:
             flush()
             p = (run / m.group(2)).resolve()
-            if p.exists() and p.suffix.lower() == ".png":
+            # only pictures inside the design folder: a report.md edited by hand must not
+            # pull any other file of the computer into the page
+            if p.is_relative_to(run.resolve()) and p.exists() and p.suffix.lower() == ".png":
                 b64 = base64.b64encode(p.read_bytes()).decode("ascii")
                 out.append(f'<figure><img src="data:image/png;base64,{b64}"/>'
                            f"<figcaption>{html.escape(m.group(1))}</figcaption></figure>")

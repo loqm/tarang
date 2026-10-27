@@ -81,7 +81,7 @@ class ResonatorArc(BaseResonator):
     def _legacy_dir_name(self) -> str:
         """Directory name used before v0.1.0 (verified before reuse)."""
         sig = f"{self.wg_width:.4f}_{self.wg_height:.4f}_{self.core_medium}_{self.top_cladding_medium}_{self.box_medium}"
-        h = hashlib.md5(sig.encode()).hexdigest()[:8]
+        h = hashlib.md5(sig.encode(), usedforsecurity=False).hexdigest()[:8]
         return f"arc_R{self.radius:.2f}um_deg{self.bend_angle_deg:.1f}_{self.wavelength_um:.3f}um_{h}"
 
     # --------------------------------

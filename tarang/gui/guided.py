@@ -286,6 +286,9 @@ def cross_section_choice(run: Path) -> None:
     if not cands:
         return
     running = bool(data.job(run).get("running"))
+    status = wz.choice_status(run) if running else None
+    if status:
+        st.info("⏳ " + status)
     st.markdown(f"**Choose the cross-section**: all {len(cands)} candidates of the map, most robust "
                 "first. Tick the ones to compare side by side (their tolerance box, a bend, mode "
                 "profiles and D over the band; local, free, a few minutes each), then choose.")
