@@ -78,6 +78,10 @@ class CrossSection:
     mesh_ladder: list = _f([50, 60, 70, 80, 90], "Meshes (steps per wavelength) of the mesh "
                                                  "check of the chosen geometry: D is quoted as "
                                                  "their median +/- the largest distance from it")
+    pump_mode: str = _f("TE00", "Mode the comb is pumped in (and test waveguides carry): 'TE00' "
+                                "or 'TM00'. The map's targets, the check, the ring's dispersion "
+                                "and the LLE inputs follow it. At short wavelengths TM00 is often "
+                                "anomalous where TE00 is not (map 10)")
     snap_grid: bool = _f(True, "Put grid lines through the four core edges in every mode solve "
                                "(D varies about 4x less from mesh to mesh; false reproduces "
                                "designs made before v0.1.0)")
@@ -280,6 +284,10 @@ class Edge:
 class Assumptions:
     n2_m2_w: float = _f(2.4e-19, "Kerr index of the core for the threshold estimate (Si3N4: "
                                  "Ikeda et al., Opt. Express 16, 12987 (2008))", "m^2/W")
+    dn_dT_core_per_K: float = _f(2.45e-5, "Thermo-optic coefficient of the core (LPCVD Si3N4: "
+                                          "Arbabi and Goddard, Opt. Lett. 38, 3878 (2013))", "1/K")
+    dn_dT_box_per_K: float = _f(0.95e-5, "Thermo-optic coefficient of the BOX (SiOx: Arbabi and "
+                                         "Goddard, Opt. Lett. 38, 3878 (2013))", "1/K")
 
 
 @dataclass
@@ -330,7 +338,7 @@ class Device:
 # If a run folder already has results for the stage and its design.toml lacks the setting,
 # the legacy value is used (so saved simulations stay valid), and the stage's settings key
 # leaves it out (so the stage is not repeated).
-LEGACY = {"cross_section": {"snap_grid": False},
+LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00"},
           "gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
           "apodise": {"prefer": "efficiency", "ramp_check": False},
           "focus": {"mesh_steps": 12}}
@@ -502,4 +510,8 @@ def implausible(cfg: "DesignConfig") -> dict[str, str]:
         msg = range_problem(dotted, getattr(getattr(cfg, sec), key))
         if msg:
             out[dotted] = msg
+    pm = str(getattr(cfg.cross_section, "pump_mode", "TE00")).strip().upper()
+    if pm not in ("TE00", "TM00"):
+        out["cross_section.pump_mode"] = (f"Pump mode {cfg.cross_section.pump_mode!r}: use "
+                                          "TE00 or TM00.")
     return out

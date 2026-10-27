@@ -7,7 +7,40 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
-Phase 15A: figures for papers, and how exact D is.
+Phase 15A: figures for papers, and how exact D is. Phase 15B: the simulation figures of a
+comb paper.
+
+### Added (15B)
+
+- **Dispersive waves:** the zeros of D_int(μ) away from the pump (|μ| ≥ 3) are marked on the
+  ring's D_int panel, listed in `tables/dispersion_profiles.csv` (`DW_nm`), the ring stage's
+  messages and the report.
+- **A_eff(λ) and γ(λ)** of TE00 over the band (`gamma_<geometry>.png`; the broadband records
+  carry `aeff_TE0_um2`). The tool takes `--n2`, which the design passes from
+  `assumptions.n2_m2_w`.
+- **Map 10: TE00 and TM00 anomalous regions** on one map, with both zero-dispersion contours
+  and the guided TE/TM counts (`maps/map10_TE_TM_anomalous.png`; needs the map's TM data).
+- **Resonance shift with temperature** in the ring stage and the report: dλ/dT =
+  (λ / n_g) dn_eff/dT, as a range from the core fraction of the mode. New assumptions
+  `dn_dT_core_per_K` (2.45e-5) and `dn_dT_box_per_K` (0.95e-5), from Arbabi and Goddard,
+  Opt. Lett. 38, 3878 (2013), are shown in the assumptions table.
+- **TM00 as the pump mode** (`cross_section.pump_mode = "TM00"`, also in the GUI's
+  cross-section step), for any wavelength. The map ranks TM00 targets by the TM00 rule
+  (anomalous D_TM0 and one guided TM mode), then by the index distance from TM00 to the
+  nearest guided TE mode. TM00 lies between the TE modes of a wide guide and hybridises
+  where it crosses one; closer than 0.01 is marked degenerate on the maps. The rule carries through the candidate comparison, the check (finalists,
+  bend, mesh band), the ring's broadband dispersion, D_int and γ, the bend loss, the
+  bent-mode figure, the LLE inputs and the ring-bus gap. There the 3D FDTD launches and
+  records TM00 (`ModeSortSpec` on the TM fraction; TE designs keep their one-mode spec, so
+  their simulations and cached results are unchanged). The report, key numbers and tables
+  name the mode. The couplers (grating, edge), their checks, the layout and the
+  whole-device model are designed for TE00 only so far: a TM00 design stops before them
+  with a message saying which steps to run. The tools take `--pump TE00|TM00` (maps,
+  report, convergence) and `--pump-mode` (broadband); solver records now also carry
+  A_eff, core fraction, loss and second-mode gap of TM00.
+- **`validation/pylle_soliton/run_pylle.py`** (outside the package): runs pyLLE on a design's
+  `lle/` files and saves the soliton steps, comb spectrum and intracavity pulse with their
+  numbers. It checks the inputs without pyLLE (`--dry-run`).
 
 ### Added
 

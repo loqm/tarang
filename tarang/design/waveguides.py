@@ -56,7 +56,7 @@ FLOOR_DB_CM = 1e-3        # below this the mode solver cannot resolve the loss
 
 
 def bend_loss_db_cm(ctx, H: float, W: float, R: float) -> Optional[float]:
-    """Loss (dB/cm) of the TE00 mode bent at radius R: local mode solve in the bend's
+    """Loss (dB/cm) of the pump mode (TE00 or TM00) bent at radius R: local mode solve in the bend's
     conformal frame with absorbing layers, the domain reaching past the radiation caustic
     x_c = R (n_eff / n_BOX - 1) so the radiated light is absorbed, and the bent mode
     picked by its overlap with the straight TE00 mode (in a tight bend the highest-index
@@ -80,14 +80,20 @@ def bend_loss_db_cm(ctx, H: float, W: float, R: float) -> Optional[float]:
         spec = dict(num_pml=(15, 15), **kw)
         return ModeSolver(simulation=sim, plane=plane, freqs=[td.C_0 / wl],
                           mode_spec=td.ModeSpec(**spec)).solve()
-    straight = solve(num_modes=2, target_neff=ctx.n(cfg.materials.core))
+    from tarang.design.stages import pump_mode
+    te_pump = pump_mode(cfg) == "TE00"
+    nm = 2 if te_pump else 6                     # TM00 lies below one or more TE modes
+    straight = solve(num_modes=nm, target_neff=ctx.n(cfg.materials.core))
     bent = solve(num_modes=12, target_neff=n_eff + 0.01, bend_radius=float(R), bend_axis=1)
 
     def field(d, i, c):
         return np.squeeze(getattr(d, c).isel(mode_index=i, f=0).values)
-    te = max(range(2), key=lambda i: float(np.real(straight.n_eff.isel(mode_index=i, f=0)))
-             if float(np.sum(np.abs(field(straight, i, "Ey")) ** 2))
-             > float(np.sum(np.abs(field(straight, i, "Ez")) ** 2)) else -1)
+    def is_pump_pol(i):
+        ey = float(np.sum(np.abs(field(straight, i, "Ey")) ** 2))
+        ez = float(np.sum(np.abs(field(straight, i, "Ez")) ** 2))
+        return (ey > ez) == te_pump
+    te = max(range(nm), key=lambda i: float(np.real(straight.n_eff.isel(mode_index=i, f=0)))
+             if is_pump_pol(i) else -1)              # the pump mode (TE00 or TM00)
     s2 = sum(float(np.sum(np.abs(field(straight, te, c)) ** 2)) for c in ("Ey", "Ez"))
 
     def overlap(i):

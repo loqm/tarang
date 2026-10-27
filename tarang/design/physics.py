@@ -89,3 +89,19 @@ def loaded_q(q_int: float, ratio: float) -> float:
 
 def round_to(x: float, step: float) -> float:
     return float(np.round(x / step) * step)
+
+
+def thermal_shift_pm_per_K(wavelength_um: float, n_group: float, core_fraction: float,
+                           dn_dT_core: float, dn_dT_box: float) -> tuple[float, float]:
+    """Resonance shift with temperature, dλ/dT = (λ / n_g) dn_eff/dT, in pm/K.
+
+    dn_eff/dT is the power-weighted sum of the materials' dn/dT (first-order perturbation:
+    the fraction of the mode's energy in each material). Only the core fraction Γ is known
+    from the mode solve; the rest is split between BOX and air (dn/dT of air about -1e-6,
+    taken as 0), so the result is a range: rest all in air (low) to rest all in the BOX
+    (high)."""
+    g = min(max(float(core_fraction), 0.0), 1.0)
+    lo = g * dn_dT_core
+    hi = lo + (1.0 - g) * dn_dT_box
+    k = wavelength_um * 1e6 / n_group                       # µm -> pm, divided by n_g
+    return lo * k, hi * k

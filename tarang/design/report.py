@@ -179,7 +179,8 @@ def write(ctx) -> dict:
     L += ["## Summary", "", "| quantity | value |", "|---|---|"]
     if xs:
         L.append(f"| core cross-section | {xs['height_um'] * 1e3:.0f} nm × {xs['width_um'] * 1e3:.0f} nm |")
-        L.append(f"| D, n_g (TE00, {wl} µm) | {xs['D']:.1f} ps/(nm·km), {xs['n_group']:.4f} |")
+        L.append(f"| D, n_g ({xs.get('pump_mode', 'TE00')}, {wl} µm) | {xs['D']:.1f} ps/(nm·km), "
+                 f"{xs['n_group']:.4f} |")
     if ring:
         L.append(f"| ring radius, FSR | {ring['radius_um']} µm, {ring['fsr_ghz']:.1f} GHz |")
         L.append(f"| intrinsic Q (assumed losses) | {ring['q_intrinsic']:.3g} |")
@@ -226,9 +227,11 @@ def write(ctx) -> dict:
     if xs:
         conv = xs.get("convergence") or []
         conv_txt = ", ".join(f"{c['D']:.1f} ({c['steps']})" for c in conv) or "-"
+        pm = xs.get("pump_mode", "TE00")
         L += ["## 2. Cross-section", "",
+              f"Pump mode: **{pm}** (cross_section.pump_mode).", "",
               "Method: local finite-difference mode solver over a map of core heights and "
-              "widths; at each point the TE00 effective index is solved at 9 wavelengths and "
+              f"widths; at each point the {pm} effective index is solved at 9 wavelengths and "
               "fitted with a 4th-order polynomial, giving n_g and D. A point is a target when D "
               "≥ 0 (anomalous) and exactly one TE mode is guided (n_eff above the higher of the "
               "BOX and top-cladding indices). Candidates are ranked by how many of their 8 "
@@ -241,9 +244,9 @@ def write(ctx) -> dict:
         L += [f"Chosen: **{xs['height_um'] * 1e3:.0f} nm × {xs['width_um'] * 1e3:.0f} nm** "
               f"({xs['steps']} mesh steps per wavelength).", "",
               "| quantity | value |", "|---|---|",
-              f"| D (TE00) | {xs['D']:.1f} ps/(nm·km) |",
+              f"| D ({pm}) | {xs['D']:.1f} ps/(nm·km) |",
               f"| D over the tolerance box | {xs['D_min_tol']:.1f} to {xs['D_max_tol']:.1f} ps/(nm·km) |",
-              f"| n_eff / n_g (TE00) | {xs['n_eff']:.5f} / {xs['n_group']:.4f} |",
+              f"| n_eff / n_g ({pm}) | {xs['n_eff']:.5f} / {xs['n_group']:.4f} |",
               f"| effective area A_eff | {xs.get('aeff_um2')} µm² |",
               f"| guided TE / TM modes | {xs['guided_TE']} / {xs['guided_TM']} |",
               f"| TE00/TM00 index split | {'-' if xs.get('te_tm_split') is None else round(xs['te_tm_split'], 4)} |",
@@ -253,7 +256,8 @@ def write(ctx) -> dict:
         if xs.get("D_mesh") is not None:
             L += [f"| D over the mesh check (median ± largest distance) | "
                   f"**{xs['D_mesh']:.1f} ± {xs['D_mesh_band']:.1f} ps/(nm·km)** |",
-                  f"| n_g over the mesh check | {xs['ng_mesh']:.4f} ± {xs['ng_mesh_band']:.4f} |"]
+                  *([f"| n_g over the mesh check | {xs['ng_mesh']:.4f} ± {xs['ng_mesh_band']:.4f} |"]
+                    if xs.get("ng_mesh") is not None else [])]
         L += ["", ("The mode solver's n_eff jitters by about 1e-3 from mesh to mesh, so D does "
                    "not converge monotonically. "
                    + ("The grid was snapped to the core edges, which removes most of it; quote "
@@ -279,14 +283,22 @@ def write(ctx) -> dict:
               f"| Q_i | {ring['q_intrinsic']:.3g} |",
               f"| D2/2π, D3/2π | {ring.get('D2_2pi_MHz')} MHz, {ring.get('D3_2pi_kHz')} kHz |",
               f"| zero-dispersion wavelengths | {ring.get('zdw_nm')} |"]
+        if ring.get("dw_nm"):
+            L.append(f"| dispersive waves (D_int = 0, first order) | {ring['dw_nm']} nm |")
+        if ring.get("thermal_shift_pm_K"):
+            t_ = ring["thermal_shift_pm_K"]
+            L.append(f"| resonance shift with temperature | {t_[0]:.1f} to {t_[1]:.1f} pm/K "
+                     "(core dn/dT weighted by the core fraction; the rest in air to the rest in "
+                     "the BOX) |")
         if pth_c:
             L.append(f"| threshold, critical coupling (comparative, ±~2×) | {pth_c:.0f} mW |")
         if pth_o:
             L.append(f"| threshold, over-coupled K = {K:g} | {pth_o:.0f} mW |")
         L += [""] + _fig(ctx, ring.get("profile_figure"), "dispersion profile")
-        L += _fig(ctx, ctx.out / "figures" / "3b_bent_mode.png", "straight and bent TE00")
+        pm = (xs or {}).get("pump_mode", "TE00")
+        L += _fig(ctx, ctx.out / "figures" / "3b_bent_mode.png", f"straight and bent {pm}")
         if ring.get("bent_mode_shift_nm") is not None:
-            L += [f"In the bend the TE00 mode moves {ring['bent_mode_shift_nm']:+.1f} nm towards "
+            L += [f"In the bend the {pm} mode moves {ring['bent_mode_shift_nm']:+.1f} nm towards "
                   "the outside of the ring (local bent-mode solve).", ""]
 
     L += _waveguides_section(ctx, st.get("waveguides", {}))
@@ -462,10 +474,11 @@ def _check_values(cfg, mat, xs, ring, gap, gc, pth_c=None) -> list[dict]:
     if xs:
         how = (f"local mode solver, {xs['height_um']} x {xs['width_um']} um core, "
                f"{cfg.stack.box_height_um} um box, {xs['steps']} steps/lambda")
-        add("n_eff TE00", xs["n_eff"], "", how)
-        add("n_g TE00", xs["n_group"], "", how + "; polynomial fit of n_eff(lambda)")
-        add("D TE00", xs["D"], "ps/(nm km)", how + "; second derivative of the same fit")
-        add("A_eff TE00", xs.get("aeff_um2"), "um^2", how)
+        pm = xs.get("pump_mode", "TE00")
+        add(f"n_eff {pm}", xs["n_eff"], "", how)
+        add(f"n_g {pm}", xs["n_group"], "", how + "; polynomial fit of n_eff(lambda)")
+        add(f"D {pm}", xs["D"], "ps/(nm km)", how + "; second derivative of the same fit")
+        add(f"A_eff {pm}", xs.get("aeff_um2"), "um^2", how)
         add("guided TE modes", xs["guided_TE"], "", "modes with n_eff above the cladding index")
         add("TE00-TM00 index split", xs.get("te_tm_split"), "", how)
     if ring:
@@ -473,7 +486,8 @@ def _check_values(cfg, mat, xs, ring, gap, gc, pth_c=None) -> list[dict]:
         add("FSR", round(ring["fsr_ghz"], 3), "GHz", "c / (n_g 2 pi R)")
         add("Q_int", round(ring["q_intrinsic"], 0), "", "2 pi n_g / (lambda alpha), alpha from "
             "the assumed losses")
-        add("bend loss TE00", ring["bend_loss_db_cm"], "dB/cm", "local bent-mode solve with PML")
+        add(f"bend loss {(xs or {}).get('pump_mode', 'TE00')}", ring["bend_loss_db_cm"], "dB/cm",
+            "local bent-mode solve with PML")
         add("D2/2pi", ring.get("D2_2pi_MHz"), "MHz", "broadband mode solve, D_int fit")
         add("threshold (critical, comparative)", None if pth_c is None else round(pth_c, 1), "mW",
             "1.54 (pi/2) n_eff^2 A_eff 2 pi R / (n2 lambda Q_L^2)")

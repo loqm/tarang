@@ -22,8 +22,11 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from tarang.design.config import DesignConfig
-from tarang.design.stages import STAGE_NAMES, STAGES, Context, applies, settings_key
+from tarang.design.stages import STAGE_NAMES, STAGES, Context, applies, pump_mode, settings_key
 from tarang.design.ui import Prompter, Stop
+
+#: steps designed for TE00 only so far (a TM00 design stops before them)
+TE_ONLY_STAGES = {"grating", "checks", "taper", "apodise", "focus", "edge", "layout", "device"}
 
 __all__ = ["DesignConfig", "run", "STAGE_NAMES"]
 
@@ -84,6 +87,13 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
                 ui.say(f"\n[{i}/{len(STAGES)}] {title}: done earlier with the same settings "
                        "(delete it from state.json or pass --redo to repeat)")
                 continue
+            if name in TE_ONLY_STAGES and pump_mode(cfg) == "TM00":
+                raise SettingsError(
+                    f"pump_mode = TM00: TARANG designs the cross-section, the ring, the test "
+                    f"waveguides and the ring-bus gap for TM00, but the '{name}' step (couplers, "
+                    "their checks, the layout and the whole-device model built on them) is "
+                    "designed for TE00 only so far. Run the TM00 steps with "
+                    "--only materials,cross_section,ring,waveguides,gap,report.")
             ui.heading(f"[{i}/{len(STAGES)}] {title}  ({kind}"
                        f"{', priced before it runs' if kind == 'cloud' else ', free'})")
             ctx.stage = name

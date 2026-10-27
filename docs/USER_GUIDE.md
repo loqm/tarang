@@ -268,6 +268,9 @@ All of it is also in **All results → Figures** and in the zip download.
 
 - **D and the guided modes against width (one figure per height) and against height
   (one per width).**
+- **Map 10: which polarisation is anomalous.** Cells coloured by whether TE00, TM00, both
+  or neither have D ≥ 0, with both zero-dispersion contours (TE solid, TM dashed) and the
+  guided TE/TM mode counts. At short wavelengths TM00 is often anomalous where TE00 is not.
 - **Every target geometry** in a table, `target_geometries.csv`, with D, β₂, n_g,
   n_eff(TE0), n_eff(TM0) and the guided-mode counts.
 - **After the check:** the mesh convergence of D at the chosen cross-section and the
@@ -301,7 +304,14 @@ the same chip. Both choices are sound; the table lets you weigh such near-ties y
 - whether the grid is snapped to the core edges (`cross_section.snap_grid`, on; a design
   whose cross-section was computed before keeps it off, so its numbers stay, until you set
   it to `true`);
-- the parallel workers (about 1.5 GB of memory each).
+- the parallel workers (about 1.5 GB of memory each);
+- the **pump mode**, TE00 (default) or TM00 (`cross_section.pump_mode`). At short wavelengths
+  TM00 is often anomalous where TE00 is not (map 10). With TM00 the map's targets are
+  judged by TM00, which must be anomalous and the only guided TM mode. They are ranked by
+  how far TM00 lies in index from the nearest guided TE mode, because it hybridises where
+  it crosses one. The check, the ring, the gap and the LLE inputs then
+  follow TM00. The couplers and the layout are designed for TE00 only so far, so a TM00
+  design runs materials, cross-section, ring, test waveguides and gap.
 
 **Check:** n_g and D at the pump, and that the mode figures show one TE00 mode confined
 in the core.
@@ -335,6 +345,24 @@ So quote D as the mesh check's **median ± spread** (report, key numbers and
 - **Bend loss** at R, from a bent-mode solve.
 - **Integrated dispersion** D_int(μ) of the ring modes, from a broadband solve; the
   `lle/` files give it in pyLLE's format for comb simulations.
+- **Dispersive waves.** A soliton comb sheds light where its lines are phase-matched to the
+  ring's resonances, D_int(μ) = 0 away from the pump. These wavelengths are marked on the
+  D_int panel and listed in the report (to first order: the Kerr shift moves them slightly
+  towards the pump).
+- **Effective area and Kerr coefficient over the band:** A_eff(λ) and γ(λ) = 2π n₂ /
+  (λ A_eff) of TE00 (`figures/3_dispersion_profile/gamma_*.png`).
+- **Resonance shift with temperature,** dλ/dT = (λ / n_g) dn_eff/dT. dn_eff/dT is the
+  thermo-optic coefficients weighted by where the mode's power is: Si₃N₄ 2.45 × 10⁻⁵ /K and
+  SiO₂ 0.95 × 10⁻⁵ /K (Arbabi and Goddard 2013). Only the core fraction is known, so the
+  report gives a range, from the rest of the power in air to the rest in the BOX. For
+  700 × 1000 nm at 1550 nm this is about 14–15 pm/K. It sets how far the thermal triangle
+  drags the resonance when you scan the pump into it.
+
+**A soliton from this design (proof, outside TARANG).**
+`validation/pylle_soliton/run_pylle.py <design folder>` hands the `lle/` files to pyLLE. It
+runs the detuning sweep at 4× the threshold and saves the soliton steps, the comb spectrum
+and the intracavity pulse. It needs Julia ≥ 1.8 and `pip install pyLLE`; the top of the
+script says how. TARANG itself does not depend on either.
 
 **Settings:**
 - the FSR;

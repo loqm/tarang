@@ -71,14 +71,37 @@ def load(paths):
     return rows
 
 
+#: the pump mode's record fields (set by --pump; TE00 by default)
+PUMP = "TE00"
+F: dict = {}
+
+
+def set_pump(mode: str) -> None:
+    from tarang.waveguide.dispersion_mapping.core import PUMP_FIELDS, pol_of
+    global PUMP, F
+    PUMP = "TE00" if pol_of(mode) == "TE" else "TM00"
+    F = PUMP_FIELDS[pol_of(mode)]
+
+
+set_pump("TE00")
+
+
+def degenerate(r, deg_tol) -> bool:
+    """The pump mode hybridises with the other polarisation: TE00 with TM00, TM00 with any
+    guided TE mode."""
+    if PUMP == "TE00":
+        return abs(r["neff_TE"][0] - r["neff_TM"][0]) < deg_tol
+    return any(abs(n - r["neff_TM"][0]) < deg_tol for n in r["neff_TE"] if n > r["n_cut"])
+
+
 def classify(r, dmargin, deg_tol):
-    if r["D_TE0"] < 0:
+    if r[F["D"]] < 0:
         return "NORMAL"
-    if r["D_TE0"] < dmargin:
+    if r[F["D"]] < dmargin:
         return "MARGINAL"
-    if r["guided_TE"] != 1:
+    if r[F["guided"]] != 1:
         return "MULTIMODE"
-    if abs(r["neff_TE"][0] - r["neff_TM"][0]) < deg_tol:
+    if degenerate(r, deg_tol):
         return "DEGENERATE"
     return "TARGET"
 
@@ -87,10 +110,10 @@ def interp_D(straight, H, W):
     """D at (H, W): exact if computed, else linear interpolation along W, then H."""
     key = (round(H, 4), round(W, 4), None)
     if key in straight:
-        return straight[key]["D_TE0"], "exact"
+        return straight[key][F["D"]], "exact"
 
     def along_W(h):
-        pts = sorted((k[1], v["D_TE0"]) for k, v in straight.items() if k[0] == round(h, 4))
+        pts = sorted((k[1], v[F["D"]]) for k, v in straight.items() if k[0] == round(h, 4))
         xs = [p[0] for p in pts]
         if len(xs) >= 2 and xs[0] <= W <= xs[-1]:
             return float(np.interp(W, xs, [p[1] for p in pts]))
@@ -110,21 +133,21 @@ def interp_D(straight, H, W):
 
 def bend_metrics(r, a):
     R = r["bend_radius"] * 1e-6
-    ng = r["ng_TE0"]
-    beta2 = r["beta2_TE0"] * 1e-27            # ps^2/km -> s^2/m
+    ng = r[F["ng"]]
+    beta2 = r[F["beta2"]] * 1e-27            # ps^2/km -> s^2/m
     D1 = C / (ng * R)                          # rad/s
     fsr = D1 / (2 * math.pi)
     D2 = -(C / ng) * D1 ** 2 * beta2           # rad/s
-    a_bend = r.get("loss_TE0_dB_cm", 0.0)
+    a_bend = r.get(F["loss"]) or 0.0
     a_tot = a.alpha_scat + a.alpha_abs + a_bend
     alpha = a_tot * 100 / (10 * math.log10(math.e))       # 1/m (power)
     lam = r["wl0"] * 1e-6
     Qi = 2 * math.pi * ng / (lam * alpha)
     QL = Qi / 2
-    V = r["Aeff_TE0_um2"] * 1e-12 * 2 * math.pi * R
-    n = r["neff_TE"][0]
+    V = r[F["aeff"]] * 1e-12 * 2 * math.pi * R
+    n = r[F["neff"]][0]
     Pth = 1.54 * (math.pi / 2) * n ** 2 * V / (a.n2 * lam * QL ** 2)
-    return dict(R_um=r["bend_radius"], D_bend=r["D_TE0"], FSR_GHz=fsr / 1e9,
+    return dict(R_um=r["bend_radius"], D_bend=r[F["D"]], FSR_GHz=fsr / 1e9,
                 D2_2pi_MHz=D2 / (2 * math.pi) / 1e6, bend_loss_dB_cm=a_bend,
                 Qi=Qi, Pth_mW=Pth * 1e3,
                 dn_TE_TM=r["neff_TE"][0] - r["neff_TM"][0],
@@ -153,14 +176,17 @@ def main():
     ap.add_argument("--alpha-abs", type=float, default=0.1, help="dB/cm")
     ap.add_argument("--n2", type=float, default=2.4e-19, help="Kerr index of the core, m^2/W (default: Si3N4)")
     ap.add_argument("--out", default="results/finalist_report")
+    ap.add_argument("--pump", default="TE00", choices=["TE00", "TM00"], help="the pump mode")
     ap.add_argument("--overwrite", action="store_true",
                     help="reuse --out instead of creating _v2, _v3, ...")
     a = ap.parse_args()
+    set_pump(a.pump)
 
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    M1 = "TE1" if PUMP == "TE00" else "TM1"       # the pump's second-order mode
     straight = {k: v for k, v in load(a.straight).items() if k[2] is None}
     bends = load(glob.glob(a.bends)) if a.bends else {}
     dW, dH = (float(x) for x in a.tol.split(","))
@@ -190,18 +216,19 @@ def main():
         hplus, _ = interp_D(straight, H + dH, W); hminus, _ = interp_D(straight, H - dH, W)
         rows.append(dict(
             name=f"{H*1e3:.0f}x{W*1e3:.0f}", H_nm=H * 1e3, W_nm=W * 1e3,
-            D=r["D_TE0"], beta2=r["beta2_TE0"], ng=r["ng_TE0"], steps=r["steps"],
+            D=r[F["D"]], beta2=r[F["beta2"]], ng=r[F["ng"]], steps=r["steps"], pump=PUMP,
             guided_TE=r["guided_TE"], guided_TM=r["guided_TM"],
             n_TE0=r["neff_TE"][0], n_TM0=r["neff_TM"][0],
             dn_TE_TM=r["neff_TE"][0] - r["neff_TM"][0],
             TE1_margin=cut - te1, TM1_margin=cut - tm1,
+            pump1_margin=cut - (te1 if PUMP == "TE00" else tm1),
             D_min_tol=np.nanmin(Ds), D_max_tol=np.nanmax(Ds),
             dD_dW=(dplus - dminus) / (2 * dW * 1e3), dD_dH=(hplus - hminus) / (2 * dH * 1e3),
             class_center=classify(r, a.dmargin, a.deg_tol),
             all_neighbours_target=(None if "UNKNOWN" in worst_cls
                                    else all(c == "TARGET" for c in worst_cls)),
             neighbour_classes=",".join(sorted(set(worst_cls))),
-            tol_source="+".join(sorted(srcs)), Aeff=r.get("Aeff_TE0_um2")))
+            tol_source="+".join(sorted(srcs)), Aeff=r.get(F["aeff"])))
         for k, b in sorted(bends.items(), key=lambda kv: kv[0][2]):
             if k[0] == round(H, 4) and k[1] == round(W, 4):
                 bm = bend_metrics(b, a); bm["name"] = rows[-1]["name"]
@@ -209,7 +236,7 @@ def main():
                     print(f"WARNING {rows[-1]['name']} R={b['bend_radius']}: bend run at "
                           f"{b['steps']} steps vs straight at {r['steps']}; dD_vs_straight "
                           "mixes mesh error with bend effect -- use equal --steps.")
-                bm["dD_vs_straight"] = bm["D_bend"] - r["D_TE0"]
+                bm["dD_vs_straight"] = bm["D_bend"] - r[F["D"]]
                 bend_rows.append(bm)
 
     base = rows[0]
@@ -239,19 +266,19 @@ def main():
     if a.dmargin > 0:
         ax.axhline(a.dmargin, ls=":", color="k")
     ax.axhline(0, ls="--", color="b")
-    ax.set_xticks(x, names); ax.set_ylabel("D(TE00) straight [ps/(nm·km)]")
+    ax.set_xticks(x, names); ax.set_ylabel(f"D({PUMP}) straight [ps/(nm·km)]")
     ax.set_title(f"Straight D with fabrication range (W±{dW*1e3:.0f} nm, H±{dH*1e3:.0f} nm)",
                  fontsize=10)
     ax = axs[0, 1]
     wbar = 0.38
     ax.bar(x - wbar / 2, [abs(r["dn_TE_TM"]) for r in rows], wbar, label="|n_TE0 − n_TM0|",
            color="purple", alpha=0.7)
-    ax.bar(x + wbar / 2, [r["TE1_margin"] for r in rows], wbar, label="TE1 cutoff margin",
+    ax.bar(x + wbar / 2, [r["pump1_margin"] for r in rows], wbar, label=f"{M1} cutoff margin",
            color="deepskyblue", alpha=0.8)
     ax.axhline(a.deg_tol, color="purple", ls=":", label=f"degeneracy threshold {a.deg_tol}")
     ax.axhline(0, color="k", lw=0.8)
     ax.set_xticks(x, names); ax.set_ylabel("index difference")
-    ax.set_title("Distance from hazards (bigger = safer; TE1 margin < 0 → multimode)",
+    ax.set_title(f"Distance from hazards (bigger = safer; {M1} margin < 0 → multimode)",
                  fontsize=10)
     ax.legend(fontsize=8)
     ax = axs[1, 0]; ax2 = axs[1, 1]
@@ -268,7 +295,7 @@ def main():
             ax.axhline(a.dmargin, ls=":", color="k")
         ax.axhline(0, ls="--", color="b")
         ax.set_xscale("log"); ax.set_xlabel("Ring radius R (µm)")
-        ax.set_ylabel("D(TE00) in bend [ps/(nm·km)]")
+        ax.set_ylabel(f"D({PUMP}) in bend [ps/(nm·km)]")
         ax.set_title("Bend dispersion (dotted = straight value)", fontsize=10)
         ax.legend(fontsize=8)
         ax2.set_xscale("log"); ax2.set_yscale("log"); ax2.set_xlabel("Ring radius R (µm)")
@@ -303,7 +330,7 @@ def main():
             bx[1, 1].axhline(abs(r["dn_TE_TM"]), color=cols[i], ls=":", lw=1)
         if a.dmargin > 0:
             bx[0, 0].axhline(a.dmargin, color="k", ls="--", lw=0.8)
-        bx[0, 0].set_ylabel("D(TE00) in bend [ps/(nm·km)]")
+        bx[0, 0].set_ylabel(f"D({PUMP}) in bend [ps/(nm·km)]")
         bx[0, 0].set_title("Bend dispersion (dotted = straight guide)", fontsize=10, pad=34)
         bx[0, 1].axhline(0, color="k", lw=0.8)
         bx[0, 1].set_ylabel("D_bend − D_straight [ps/(nm·km)]")
@@ -328,20 +355,20 @@ def main():
         fb.tight_layout(); save_fig(fb, out / "bend_dispersion.png", close=False, layout=False)
 
     # ---------------- markdown report
-    L = [f"# Finalist comparison (baseline = {base['name']} nm)", "",
+    L = [f"# Finalist comparison (baseline = {base['name']} nm, pump {PUMP})", "",
          f"Straight-waveguide data: {base['steps']} steps/λ. Tolerance: W ± {dW*1e3:.0f} nm, "
          f"H ± {dH*1e3:.0f} nm (source: {', '.join(sorted({r['tol_source'] for r in rows}))}).",
          (f"Classes use D ≥ {a.dmargin:g} ps/(nm·km) (user margin) as 'safely anomalous' and "
           if a.dmargin > 0 else "Classes use D ≥ 0 as anomalous (no margin applied) and ") +
          f"|Δn(TE0,TM0)| ≥ {a.deg_tol} as 'non-degenerate'.", "",
          "| Geometry | D | worst-case D | dD/dW (per nm) | dD/dH (per nm) | guided TE/TM | "
-         "|Δn TE–TM| | TE1 margin | centre class | all neighbours TARGET? |",
+         f"|Δn TE–TM| | {M1} margin | centre class | all neighbours TARGET? |",
          "|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         L.append(f"| {r['name']}{' (baseline)' if r is base else ''} | {r['D']:.0f} | "
                  f"{r['D_min_tol']:.0f} | {r['dD_dW']:.2f} | {r['dD_dH']:.2f} | "
                  f"{r['guided_TE']}/{r['guided_TM']} | {abs(r['dn_TE_TM']):.4f} | "
-                 f"{r['TE1_margin']:+.4f} | {r['class_center']} | "
+                 f"{r['pump1_margin']:+.4f} | {r['class_center']} | "
                  f"{tol_text(r)} |")
     if bend_rows:
         L += ["", "## Bent waveguide", "",
@@ -361,7 +388,7 @@ def main():
         v.append(f"width sensitivity {abs(r['dD_dW']):.2f} vs {abs(base['dD_dW']):.2f} per nm "
                  f"({'less' if abs(r['dD_dW']) < abs(base['dD_dW']) else 'more'} sensitive)")
         v.append(f"TE/TM splitting {abs(r['dn_TE_TM']):.4f} vs {abs(base['dn_TE_TM']):.4f}")
-        v.append(f"TE1 cutoff margin {r['TE1_margin']:+.4f} vs {base['TE1_margin']:+.4f}")
+        v.append(f"{M1} cutoff margin {r['pump1_margin']:+.4f} vs {base['pump1_margin']:+.4f}")
         v.append({True: "tolerance box fully TARGET",
                   None: "tolerance box not computed exactly (run the runner with --tol)"}
                  .get(r["all_neighbours_target"],

@@ -293,10 +293,11 @@ def cross_section_choice(run: Path) -> None:
                 "first. Tick the ones to compare side by side (their tolerance box, a bend, mode "
                 "profiles and D over the band; local, free, a few minutes each), then choose.")
     ticked = set(wz.compare_list(run)) or {wz.hw_key(c) for c in cands[:4]}
-    rows = [dict(compare=wz.hw_key(c) in ticked, **{k: c.get(k) for k in wz.CANDIDATE_COLUMNS})
+    cols = wz.candidate_columns(cands)
+    rows = [dict(compare=wz.hw_key(c) in ticked, **{k: c.get(k) for k in cols})
             for c in cands]
     edited = st.data_editor(rows, hide_index=True, key="xs_table", width="stretch",
-                            disabled=list(wz.CANDIDATE_COLUMNS),
+                            disabled=list(cols),
                             column_config={"compare": st.column_config.CheckboxColumn("compare")})
     chosen = [wz.hw_key(c) for c, r in zip(cands, edited) if r.get("compare")]
     if st.button(f"Compare the {len(chosen)} ticked candidates (free)", disabled=running or not chosen,
@@ -317,7 +318,7 @@ def cross_section_choice(run: Path) -> None:
             for j, f in enumerate(figs):
                 cols[j % 2].image(str(f), caption=f.name, width="stretch")
     done = {wz.hw_key(r) for r in (comp or {}).get("rows") or []}
-    labels = [f"{c['H_um']} × {c['W_um']} µm: D = {c.get('D_TE0', 0):.0f} ps/(nm·km), "
+    labels = [f"{c['H_um']} × {c['W_um']} µm: D = {wz.cand_D(c):.0f} ps/(nm·km), "
               f"{c.get('target_neighbours', '?')} neighbours also targets"
               + ("  (recommended)" if k == 0 else "") + ("  (compared)" if wz.hw_key(c) in done else "")
               for k, c in enumerate(cands)]

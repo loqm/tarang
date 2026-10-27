@@ -34,6 +34,8 @@ LOSS_PRESETS: dict[str, dict] = {
 
 N2_SOURCE = ("Ikeda, Saperstein, Alic, Fainman, Opt. Express 16, 12987 (2008); the value "
              "used by Ji et al., Optica 4, 619 (2017)")
+DNDT_SOURCE = ("Arbabi and Goddard, Opt. Lett. 38, 3878 (2013), doi:10.1364/OL.38.003878: "
+               "Si3N4 (2.45 ± 0.09)e-5 /K, SiOx (0.95 ± 0.10)e-5 /K")
 MFD_SOURCE = "Corning SMF-28 single-mode fibre: MFD 10.4 ± 0.5 µm at 1550 nm (datasheet)"
 
 
@@ -70,6 +72,10 @@ def table(cfg, results: Optional[dict] = None) -> list[dict]:
                   "larger value for unannealed films."),
         dict(quantity="Kerr index n2 of the core", value=cfg.assumptions.n2_m2_w, unit="m^2/W",
              source=N2_SOURCE, note="Used only for the comparative threshold estimate (±~2x)."),
+        dict(quantity="thermo-optic coefficient of the core", value=cfg.assumptions.dn_dT_core_per_K,
+             unit="1/K", source=DNDT_SOURCE, note="For the resonance shift with temperature only."),
+        dict(quantity="thermo-optic coefficient of the BOX", value=cfg.assumptions.dn_dT_box_per_K,
+             unit="1/K", source=DNDT_SOURCE, note="PECVD SiOx; thermal oxide is close."),
         dict(quantity="fibre mode-field diameter", value=g.mfd_um, unit="um",
              source=MFD_SOURCE, note="Gaussian beam with its waist at the source plane."),
         dict(quantity="fibre angle from vertical", value=g.fiber_angle_deg, unit="deg",

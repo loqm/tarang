@@ -73,7 +73,8 @@ STEPS: list[Step] = [
          "waveguide needs anomalous dispersion and one guided TE mode; for test waveguides one "
          "guided TE mode. Pick one of the recommended candidates; it is then checked at a finer "
          "mesh with its fabrication tolerance.",
-         ["cross_section.heights_um", "cross_section.widths_um", "cross_section.tolerance_width_um",
+         ["cross_section.pump_mode", "cross_section.heights_um", "cross_section.widths_um",
+          "cross_section.tolerance_width_um",
           "cross_section.tolerance_height_um", "cross_section.map_steps",
           "cross_section.decision_steps", "run.workers"], r"^2", _xs_picture),
     Step("ring", "Ring", ("ring",),
@@ -174,6 +175,7 @@ for _k in ("edge.chip_length_um", "edge.chip_width_um", "edge.dicing_lane_um", "
 # short form labels (the full explanation is the field's help, shown on hover)
 LABELS = {
     "run.band_um": "Band half-width for the material fit (µm)",
+    "cross_section.pump_mode": "Pump mode (TE00 or TM00)",
     "cross_section.heights_um": "Core heights to map (µm)", "cross_section.widths_um": "Core widths to map (µm)",
     "cross_section.tolerance_width_um": "Width tolerance ± (µm)",
     "cross_section.tolerance_height_um": "Thickness tolerance ± (µm)",
@@ -232,7 +234,8 @@ def _choices() -> dict:
             "apodise.prefer": ["bandwidth", "efficiency"], "focus.teeth": ["best", "uniform", "apodised"],
             "layout.coupler": list(COUPLER_SETTINGS), "layout.tone": ["structure", "trench"],
             "gap.reference": ["ring_port", "bus_only", "source"],
-            "ring.loss_preset": list(LOSS_PRESETS), "edge.profile": ["(recommended)", *PROFILES]}
+            "ring.loss_preset": list(LOSS_PRESETS), "edge.profile": ["(recommended)", *PROFILES],
+            "cross_section.pump_mode": ["TE00", "TM00"]}
 
 
 CHOICE_LABELS = {
@@ -586,9 +589,23 @@ def candidates(run: Path) -> list[dict]:
     return list(r.get("candidates") or (r.get("recommend") or {}).get("choices") or [])
 
 
-#: columns of the candidates table in the choice
+#: columns of the candidates table in the choice (TE00 designs; see candidate_columns)
 CANDIDATE_COLUMNS = ("H_um", "W_um", "D_TE0", "ng_TE0", "guided_TE", "guided_TM", "TE_TM_split",
                      "target_neighbours")
+
+
+def candidate_columns(cands: list) -> tuple:
+    """The candidate table's columns: D and n_g of the pump mode the candidates were ranked
+    for (D_TE0 / D_TM0)."""
+    if cands and "D_TM0" in cands[0] and "D_TE0" not in cands[0]:
+        return tuple(c.replace("TE0", "TM0") if c in ("D_TE0", "ng_TE0") else c
+                     for c in CANDIDATE_COLUMNS)
+    return CANDIDATE_COLUMNS
+
+
+def cand_D(c: dict) -> float:
+    """A candidate's dispersion, whichever pump mode it was ranked for."""
+    return float(c.get("D_TE0", c.get("D_TM0", 0.0)) or 0.0)
 
 
 def hw_key(c) -> str:

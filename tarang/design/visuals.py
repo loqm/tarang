@@ -195,7 +195,8 @@ def mode_profiles(rows: list, H: float, W: float, path: Path, title: str,
     return _save(fig, path)
 
 
-def bent_mode(straight: dict, bent: dict, H: float, W: float, R: float, path: Path) -> Path:
+def bent_mode(straight: dict, bent: dict, H: float, W: float, R: float, path: Path,
+              mode: str = "TE00") -> Path:
     """Straight and bent TE00 (|E|^2 maps) and a cut through the middle of the core: the
     bend pushes the mode towards the outside of the ring by a few nm, too little to see in
     the maps but clear in the cut and its centroid."""
@@ -210,7 +211,7 @@ def bent_mode(straight: dict, bent: dict, H: float, W: float, R: float, path: Pa
         ax.axvline(m["yc"], color="#56B4E9", lw=1, ls="--")
         ax.set(xlim=(-W / 2 - 1.2, W / 2 + 1.2), ylim=(-1.0, H + 0.9), aspect="equal",
                xlabel="y (µm), outside of the ring → +y", ylabel="z (µm)",
-               title=f"TE00 {lab}: n_eff {m['neff']:.5f}")
+               title=f"{mode} {lab}: n_eff {m['neff']:.5f}")
         fig.colorbar(im, ax=ax, shrink=0.75, label="|E|² (normalised)")
     ax = axes[2]
     cuts = {}
@@ -233,7 +234,7 @@ def bent_mode(straight: dict, bent: dict, H: float, W: float, R: float, path: Pa
     ax.set(xlim=(-W / 2 - 1.2, W / 2 + 1.2), ylim=(0, 1.05), xlabel="y (µm)",
            ylabel="|E|² through the middle of the core", title=f"outward shift {shift:+.1f} nm")
     ax.legend(fontsize=8)
-    fig.suptitle(f"Bent mode: the bend (R = {R:g} µm) shifts TE00 by {shift:+.1f} nm towards the "
+    fig.suptitle(f"Bent mode: the bend (R = {R:g} µm) shifts {mode} by {shift:+.1f} nm towards the "
                  "outside of the ring")
     return _save(fig, path)
 
