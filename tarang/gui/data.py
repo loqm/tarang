@@ -165,6 +165,9 @@ def summary_rows(run: Path) -> list[dict]:
     add("core height x width", f"{xs['height_um']:g} x {xs['width_um']:g}" if xs.get("height_um") else None,
         "um", "cross_section")
     add("dispersion D at the pump", xs.get("D"), "ps/(nm km)", "cross_section")
+    if xs.get("D_mesh") is not None and xs.get("D_mesh_band") is not None:
+        add("D over the mesh check (median ± spread)",
+            f"{xs['D_mesh']:.1f} ± {xs['D_mesh_band']:.1f}", "ps/(nm km)", "cross_section")
     add("effective / group index", f"{xs['n_eff']:.4f} / {xs['n_group']:.4f}" if xs.get("n_eff") else None,
         "", "cross_section")
     add("ring radius", ring.get("radius_um"), "um", "ring")

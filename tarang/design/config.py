@@ -39,6 +39,13 @@ class Run:
     figure_formats: list = _f(["png", "pdf"], "Figure files to write: png (raster), pdf and/or svg "
                                               "(vector, for papers and slides)")
     figure_dpi: int = _f(300, "Resolution of png figures", "dpi")
+    figure_style: str = _f("screen", "Figure look: 'screen' (as drawn, for the GUI and "
+                                     "slides) or 'paper' (8 pt text, thinner lines, 3.4 in "
+                                     "wide for one column of panels, 7 in otherwise; written "
+                                     "to figures_paper/)")
+    figure_data: bool = _f(True, "Save each figure's plotted numbers (<name>_data.csv, maps "
+                                 "in <name>_data.npz) and its labels, versions and settings "
+                                 "(<name>_meta.json) next to it, to redraw it anywhere")
     sim_pictures: bool = _f(True, "Save a picture of the geometry of every cloud simulation "
                                   "(figures/sims/, named like its cloud folder)")
 
@@ -68,6 +75,12 @@ class CrossSection:
     widths_um: list = _f([], "Core widths to map (default: 0.39-1.16 x wavelength)", "um")
     map_steps: int = _f(50, "Mesh steps per wavelength for the map (>= 50)")
     decision_steps: int = _f(70, "Mesh steps per wavelength for the chosen geometry (>= 70)")
+    mesh_ladder: list = _f([50, 60, 70, 80, 90], "Meshes (steps per wavelength) of the mesh "
+                                                 "check of the chosen geometry: D is quoted as "
+                                                 "their median +/- the largest distance from it")
+    snap_grid: bool = _f(True, "Put grid lines through the four core edges in every mode solve "
+                               "(D varies about 4x less from mesh to mesh; false reproduces "
+                               "designs made before v0.1.0)")
     tolerance_width_um: float = _f(0.05, "Fabrication tolerance of the width (+/-)", "um")
     tolerance_height_um: float = _f(0.02, "Fabrication tolerance of the film thickness (+/-)", "um")
     stop_after_map: bool = _f(False, "Stop after the map so a candidate can be chosen (the GUI "
@@ -317,7 +330,8 @@ class Device:
 # If a run folder already has results for the stage and its design.toml lacks the setting,
 # the legacy value is used (so saved simulations stay valid), and the stage's settings key
 # leaves it out (so the stage is not repeated).
-LEGACY = {"gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
+LEGACY = {"cross_section": {"snap_grid": False},
+          "gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
           "apodise": {"prefer": "efficiency", "ramp_check": False},
           "focus": {"mesh_steps": 12}}
 

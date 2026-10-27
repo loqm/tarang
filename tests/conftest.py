@@ -238,5 +238,7 @@ def fast_figures(request, monkeypatch):
     from tarang.design import visuals
     monkeypatch.setitem(visuals.SETTINGS, "formats", ["png"])
     monkeypatch.setitem(visuals.SETTINGS, "dpi", 72)
-    monkeypatch.setattr(visuals, "configure", lambda formats=None, dpi=None: None)
+    monkeypatch.setitem(visuals.SETTINGS, "style", "screen")
+    monkeypatch.setitem(visuals.SETTINGS, "data", False)      # tests of the numbers turn it on
+    monkeypatch.setattr(visuals, "configure", lambda *a, **k: None)
     yield

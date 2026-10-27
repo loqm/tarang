@@ -30,6 +30,8 @@ typical of air-clad LPCVD SiN rings; replace with your cutback / ring measuremen
 """
 from __future__ import annotations
 
+from tarang.figures import save as save_fig
+
 from tarang.waveguide.dispersion_mapping._console import safe_console
 
 import argparse
@@ -282,7 +284,7 @@ def main():
         axx.grid(alpha=0.3)
     fig.suptitle(f"Finalists vs baseline {base['name']} nm ({stack}, "
                  f"{r0.get('wl0', 1.55) * 1e3:.0f} nm)", fontsize=12)
-    fig.tight_layout(); fig.savefig(out / "finalists_comparison.png")
+    fig.tight_layout(); save_fig(fig, out / "finalists_comparison.png", close=False, layout=False)
 
     # ---------------- dedicated bend-dispersion figure
     if bend_rows:
@@ -323,7 +325,7 @@ def main():
                               lambda f: C / (2 * math.pi * ng0 * np.maximum(f, 1e-3) * 1e9) * 1e6))
         sec.set_xlabel(f"≈ FSR (GHz) for n_g = {ng0:.2f}")
         fb.suptitle(f"Bent-waveguide dispersion of the finalists ({stack})", fontsize=12)
-        fb.tight_layout(); fb.savefig(out / "bend_dispersion.png")
+        fb.tight_layout(); save_fig(fb, out / "bend_dispersion.png", close=False, layout=False)
 
     # ---------------- markdown report
     L = [f"# Finalist comparison (baseline = {base['name']} nm)", "",

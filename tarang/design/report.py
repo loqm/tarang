@@ -249,10 +249,19 @@ def write(ctx) -> dict:
               f"| TE00/TM00 index split | {'-' if xs.get('te_tm_split') is None else round(xs['te_tm_split'], 4)} |",
               f"| whole tolerance box anomalous + single-mode | "
               f"{'yes' if xs['tolerance_box_target'] else 'no'} |",
-              f"| D against mesh (steps per wavelength) | {conv_txt}; last change {mesh_change} |",
-              "", "D moves by a few per cent between meshes (the core edges fall differently "
-              "on each grid); treat it as ±5 % when comparing with another solver. n_eff and "
-              "n_g are stable to the third decimal.", "",
+              f"| D against mesh (steps per wavelength) | {conv_txt}; last change {mesh_change} |"]
+        if xs.get("D_mesh") is not None:
+            L += [f"| D over the mesh check (median ± largest distance) | "
+                  f"**{xs['D_mesh']:.1f} ± {xs['D_mesh_band']:.1f} ps/(nm·km)** |",
+                  f"| n_g over the mesh check | {xs['ng_mesh']:.4f} ± {xs['ng_mesh_band']:.4f} |"]
+        L += ["", ("The mode solver's n_eff jitters by about 1e-3 from mesh to mesh, so D does "
+                   "not converge monotonically. "
+                   + ("The grid was snapped to the core edges, which removes most of it; quote "
+                      "D as the median over the mesh check with its band."
+                      if xs.get("grid_snapped") else
+                      "This design was made without grid snapping (before v0.1.0): treat D as "
+                      "±5 %, or rerun the cross-section with cross_section.snap_grid = true.")),
+              "",
               f"Finalist report: `{_rel(ctx, xs['report'])}`.", ""]
 
     # ---- 3 ring

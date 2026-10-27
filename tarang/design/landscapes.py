@@ -57,7 +57,16 @@ def _panel(ax, fig, panel: dict):
     ax.set(xlabel=panel["xlabel"], ylabel=panel["ylabel"])
     ax.set_title(panel["title"], fontsize=10)
     fig.colorbar(drawn if drawn is not None else sc, ax=ax, label="Efficiency (%)")
-    ax.legend(fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=False)
+    # legend keys drawn by hand: the scatter's own key takes the colour of one point of the
+    # colour map, which reads as a meaning it does not have
+    from matplotlib.lines import Line2D
+    keys = [Line2D([], [], ls="none", marker="o", ms=6, mfc="0.6", mec="w" if drawn else "k",
+                   mew=0.6, label=sc.get_label())]
+    if panel.get("chosen") is not None:
+        keys.append(Line2D([], [], ls="none", marker="x", ms=9, mew=2.6, color="red",
+                           label=panel.get("chosen_label", "chosen design")))
+    ax.legend(handles=keys, fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.16),
+              ncol=2, frameon=False)
     if panel.get("note"):
         ax.text(0.0, -0.32, panel["note"], transform=ax.transAxes, fontsize=7.5, color="0.35")
 

@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `479 passed, 2 skipped` (quick check: `458 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
+Expected on Windows: `491 passed, 2 skipped` (quick check: `470 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -604,3 +604,20 @@ cloud for the cloud stages.
 | `test_choice_panel_says_what_is_running_and_since_when` | "Comparing 2 candidate(s) … since 14:05", "Checking 0.7 × 1 µm …"; nothing when no run |
 | `test_name_hashes_are_unchanged_by_marking_them_not_for_security` | `usedforsecurity=False` gives the same MD5 (same file names as before) |
 | `test_map_goes_on_one_at_a_time_when_a_worker_is_killed` | When a mode-solver worker is killed (out of memory), the map says so and finishes the remaining points with one worker; each point is saved once |
+
+## `test_phase15a.py`: figures for papers and the mesh band of D (12 tests, Phase 15A)
+
+| Test | Checks |
+|---|---|
+| `test_figure_is_saved_with_its_numbers_and_labels` | A two-panel figure (line, axhline, axvline, error bars, bars, coloured points, a map with a colour bar) gives `_data.csv` with every series and kind, the error-bar ends, the colour values; `_meta.json` with two panels (the colour bar is not one), labels, title, versions, the caller's settings; the map in `_data.npz` |
+| `test_numbers_can_be_switched_off` | With `figure_data` off only the figure is written |
+| `test_paper_style_is_journal_sized_and_keeps_the_screen_figures` | Paper style: 8 pt text, 3.4 in wide for one column of panels, 7 in for three; written to `figures_paper/` (the screen figures stay); back to 10 pt in screen style |
+| `test_settings_reach_the_tools_and_are_checked` | Formats, dpi, style and data travel as environment variables; unknown style or format refused |
+| `test_design_settings_round_trip_and_leave_stage_keys_alone` | `run.figure_style` and `run.figure_data` are saved and read back and change no stage key |
+| `test_map_tool_writes_pdf_and_numbers_when_asked` | `dispersion_mapping.maps` started with the design's settings writes `design_map.png`, `.pdf`, `_data.csv`, `_meta.json` |
+| `test_grid_can_be_snapped_to_the_core_edges` | With `snap`, grid lines pass through the four core edges at 50 and 70 steps; without it the top edge falls inside a cell |
+| `test_landscape_legend_keys_are_neutral` | The landscape legend shows a grey dot for the points and a red X for the chosen design (not a colour of the colour map) |
+| `test_mesh_band_is_the_median_and_the_largest_distance` | The measured 700 × 1000 nm ladders: snapped 373.9 ± 3.0, unsnapped ± 12.0 ps/(nm·km) |
+| `test_convergence_plot_shows_the_band_and_writes_its_table` | The mesh-check tool writes `mesh_band.csv` (median, band, snapped) and draws the band, named in the legend |
+| `test_snap_and_ladder_settings` | `snap_grid` on and the 50–90 ladder by default; the ladder leaves the stage key alone, snapping changes it; the tools get `--snap` |
+| `test_paper_style_moves_titles_to_the_caption_and_keeps_legends_readable` | Paper style: the figure and panel titles go to the JSON's caption, dense in-cell annotations are hidden, a 4-column legend under a panel becomes 2 columns, every text is 6–8.5 pt |

@@ -275,7 +275,8 @@ def test_settings_added_later_keep_old_results_and_fingerprints(tmp_path):
     assert settings_key(ctx.cfg, "gap") not in (after,)
     fresh = _ctx(tmp_path / "b")
     del fresh.state["stages"]["gap"]                      # a new design: no legacy values
-    assert fresh.apply_legacy() == [] and fresh.cfg.gap.band_points == 11
+    notes = fresh.apply_legacy()                          # (cross_section's are kept)
+    assert not any(n.startswith("gap.") for n in notes) and fresh.cfg.gap.band_points == 11
 
 
 # ---- checks: tolerances, mode families, loss budget ----------------------------------- #
