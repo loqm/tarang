@@ -95,7 +95,7 @@ def get_file_hash(filepath: Path) -> str:
     """Computes a quick MD5 hash of a file to check for staleness.
     Read the input in chunks and return its hexadecimal digest.
     """
-    hasher = hashlib.md5()
+    hasher = hashlib.md5(usedforsecurity=False)  # a cache key, not security
     with open(
         filepath,
         "rb",

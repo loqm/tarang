@@ -109,6 +109,18 @@ jobs:
           "$RUNNER_TEMP/venv/bin/python" -m pip show tarang-photonics
           "$RUNNER_TEMP/venv/bin/python" -I "$GITHUB_WORKSPACE/tests/installed_smoke.py"
 
+      - name: Known vulnerabilities in the installed dependencies (pip-audit; warns, does not fail)
+        # Audits exactly what `pip install tarang-photonics` installed. A finding shows as a
+        # warning on the run's page; it does not block the merge, because a fix often waits for
+        # another package (tidy3d pins filelock < 4). Act on it with `pip install -U <package>`
+        # or a version floor in pyproject.toml.
+        run: |
+          python -m pip install pip-audit
+          "$RUNNER_TEMP/venv/bin/python" -m pip freeze --exclude tarang-photonics > "$RUNNER_TEMP/installed.txt"
+          if ! pip-audit -r "$RUNNER_TEMP/installed.txt" --no-deps --disable-pip; then
+            echo "::warning title=pip-audit::Known vulnerabilities in installed dependencies; see this step's log"
+          fi
+
   multinest:
     # The MultiNest backend needs the native library; conda-forge provides it on Linux.
     name: ubuntu / MultiNest backend

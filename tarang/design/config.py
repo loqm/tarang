@@ -35,7 +35,7 @@ class Run:
     max_cost_per_run: float = _f(1.0, "Largest cost of any single cloud run",
                                  "FlexCredits")
     max_total_cost: float = _f(10.0, "Budget for all cloud stages together", "FlexCredits")
-    workers: int = _f(2, "Parallel processes for local mode solving (about 1 GB RAM each)")
+    workers: int = _f(2, "Parallel processes for local mode solving (about 1.5 GB RAM each)")
     figure_formats: list = _f(["png", "pdf"], "Figure files to write: png (raster), pdf and/or svg "
                                               "(vector, for papers and slides)")
     figure_dpi: int = _f(300, "Resolution of png figures", "dpi")
@@ -359,13 +359,15 @@ class DesignConfig:
             known = {f.name: f for f in fields(sec_cls)}
             unknown = set(values) - set(known)
             if unknown:
-                raise ValueError(f"[{sec_name}] has unknown setting(s) {sorted(unknown)} in {path}")
+                raise SettingsError(f"[{sec_name}] has unknown setting(s) {sorted(unknown)} in {path}")
             sec = getattr(cfg, sec_name)
+            hints = _hints(sec_cls)
             for key, value in values.items():
+                value = _typed(f"[{sec_name}] {key}", value, hints.get(key), path)
                 setattr(sec, key, value)
                 cfg.given.add(f"{sec_name}.{key}")
         if data:
-            raise ValueError(f"Unknown section(s) {sorted(data)} in {path}")
+            raise SettingsError(f"Unknown section(s) {sorted(data)} in {path}")
         return cfg
 
     def save(self, path: Path | str) -> Path:
@@ -392,6 +394,41 @@ class DesignConfig:
 
     def section_dict(self, *names: str) -> dict[str, Any]:
         return {n: dataclasses.asdict(getattr(self, n)) for n in names}
+
+
+def _hints(sec_cls) -> dict:
+    import typing
+    return typing.get_type_hints(sec_cls)
+
+
+def _typed(where: str, value, hint, path):
+    """``value`` as the type its setting expects; a SettingsError naming the setting when it
+    cannot be (a word where a number belongs, a number where a list belongs)."""
+    import typing
+    if hint is None:
+        return value
+    args = typing.get_args(hint)
+    if typing.get_origin(hint) is typing.Union:          # Optional[X]
+        hint = next(a for a in args if a is not type(None))
+    want = {float: "a number", int: "a whole number", bool: "true or false",
+            str: "text in quotes", list: "a list in [ ]"}.get(hint)
+    if want is None:
+        return value
+    ok = value
+    if hint is float:
+        ok = float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    elif hint is int:
+        if isinstance(value, int) and not isinstance(value, bool):
+            ok = value
+        elif isinstance(value, float) and value.is_integer():
+            ok = int(value)
+        else:
+            ok = None
+    elif not isinstance(value, hint):
+        ok = None
+    if ok is None:
+        raise SettingsError(f"{where} = {value!r} in {path}: expected {want}.")
+    return ok
 
 
 def _toml_value(v) -> str:

@@ -26,6 +26,7 @@ import multiprocessing as mp
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 
@@ -63,7 +64,7 @@ def main():
     ap.add_argument("--margin", type=float, default=0.005,
                     help="n_eff margin above n_SiO2 for 'robustly guided'")
     ap.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) // 2)),
-                    help="parallel processes (each needs ~1 GB RAM)")
+                    help="parallel processes (each needs ~1.5 GB RAM)")
     ap.add_argument("--core", default="si3n4", help="core medium key in media.json")
     ap.add_argument("--substrate", default="sio2", help="substrate (BOX) medium key")
     ap.add_argument("--cladding", default="air", help='top cladding medium key, or "air"')
@@ -147,35 +148,57 @@ def main():
 
     t_start = time.time()
     with open(out, "a", encoding="utf-8") as f:
-        if a.workers <= 1:
-            iterator = (_work(t) for t in todo)
-        else:
-            pool = ProcessPoolExecutor(max_workers=a.workers)
-            iterator = (fut.result() for fut in as_completed([pool.submit(_work, t) for t in todo]))
+        saved: set = set()
         i = 0
+
+        def record(r):
+            nonlocal i
+            i += 1
+            f.write(json.dumps(r) + "\n")
+            f.flush()
+            saved.add((r["H"], r["W"]))
+            if "error" in r:
+                msg = f"ERROR {r['error']}"
+            else:
+                msg = (f"D_TE0={r['D_TE0']:8.1f}  guided TE/TM={r['guided_TE']}/{r['guided_TM']}"
+                       f"  n_TE0={r['neff_TE'][0]:.4f}  n_TM0={r['neff_TM'][0]:.4f}")
+            eta = (time.time() - t_start) / i * (len(todo) - i)
+            print(f"[{i:3d}/{len(todo)}] H={r['H']:.3f} W={r['W']:.3f}  {msg}  "
+                  f"({r['secs']:.0f}s, ETA {eta/60:.0f} min)", flush=True)
+
+        pool = None
         try:
-            for i, r in enumerate(iterator, 1):
-                f.write(json.dumps(r) + "\n")
-                f.flush()
-                if "error" in r:
-                    msg = f"ERROR {r['error']}"
-                else:
-                    msg = (f"D_TE0={r['D_TE0']:8.1f}  guided TE/TM={r['guided_TE']}/{r['guided_TM']}"
-                           f"  n_TE0={r['neff_TE'][0]:.4f}  n_TM0={r['neff_TM'][0]:.4f}")
-                eta = (time.time() - t_start) / i * (len(todo) - i)
-                print(f"[{i:3d}/{len(todo)}] H={r['H']:.3f} W={r['W']:.3f}  {msg}  "
-                      f"({r['secs']:.0f}s, ETA {eta/60:.0f} min)", flush=True)
+            if a.workers <= 1:
+                for t in todo:
+                    record(_work(t))
+            else:
+                pool = ProcessPoolExecutor(max_workers=a.workers)
+                try:
+                    for fut in as_completed([pool.submit(_work, t) for t in todo]):
+                        record(fut.result())
+                except BrokenProcessPool:
+                    # a worker was killed, nearly always by the system for lack of memory;
+                    # the finished points are saved, so go on with the rest one at a time
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    pool = None
+                    rest = [t for t in todo if (t[0], t[1]) not in saved]
+                    print(f"A worker process was killed (usually out of memory: each needs "
+                          f"about 1.5 GB). {i} point(s) saved; going on with the other "
+                          f"{len(rest)} with one worker. Next time use fewer workers "
+                          f"(--workers {max(1, a.workers - 1)}, or the run.workers setting).", flush=True)
+                    for t in rest:
+                        record(_work(t))
         except KeyboardInterrupt:
             # Ctrl+C: drop the queued points (finished ones are saved above; a rerun skips
             # them) instead of letting the pool finish every queued point at exit
-            if a.workers > 1:
+            if pool is not None:
                 for proc in list((getattr(pool, "_processes", None) or {}).values()):
                     proc.terminate()             # a worker inside the mode solver would
                 pool.shutdown(wait=False, cancel_futures=True)    # otherwise run on alone
             print(f"Stopped: {i} of {len(todo)} points saved; "
                   "the same command continues.", flush=True)
             raise
-        if a.workers > 1:
+        if pool is not None:
             pool.shutdown()
     print("Done. Now run:  python -m tarang.waveguide.dispersion_mapping.maps --data", out)
 

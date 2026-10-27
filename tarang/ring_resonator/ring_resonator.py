@@ -99,7 +99,7 @@ class BaseResonator(CloudCachedDevice, RenamedAttributes):
             f"{self.wg_length:.4f}_{self.box_height:.4f}_{self.top_cladding_height:.4f}_"
             f"{span_angle:.4f}_{self.core_medium}_{self.box_medium}_{self.top_cladding_medium}"
         )
-        h = hashlib.md5(sig.encode()).hexdigest()[:8]
+        h = hashlib.md5(sig.encode(), usedforsecurity=False).hexdigest()[:8]
         return f"{res_type}_R{self.radius:.2f}um_gap{self.gap*1000:.0f}nm_{self.wavelength_um:.3f}um_{h}"
 
     @staticmethod

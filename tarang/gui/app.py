@@ -337,7 +337,10 @@ def main():
         st.title(f"{cfg.run.name}  ·  {cfg.run.wavelength_um:g} µm")
     except Exception as err:                                          # noqa: BLE001
         st.title(run.name)
-        st.error(f"design.toml not readable: {err}")
+        st.error(f"design.toml not readable: {err}\n\nCorrect that line in "
+                 f"{run / 'design.toml'} (any text editor), then reload this page.")
+        st.caption(f"Folder: {run.resolve()}")
+        return
     st.caption(f"Folder: {run.resolve()}")
     if st.session_state.get("mode", "Guided design") == "Guided design":
         from tarang.gui import guided

@@ -405,6 +405,46 @@ def pid_alive(pid: int) -> bool:
         return True
 
 
+def process_start(pid: int) -> Optional[float]:
+    """When the process ``pid`` started (seconds since the epoch), or None if unknown."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32                          # type: ignore[attr-defined]
+            h = k32.OpenProcess(0x1000, False, int(pid))
+            if not h:
+                return None
+            try:
+                t = [wintypes.FILETIME() for _ in range(4)]
+                if not k32.GetProcessTimes(h, *[ctypes.byref(x) for x in t]):
+                    return None
+                ticks = (t[0].dwHighDateTime << 32) | t[0].dwLowDateTime   # 100 ns since 1601
+                return ticks / 1e7 - 11644473600.0
+            finally:
+                k32.CloseHandle(h)
+        if os.path.exists("/proc/stat"):
+            with open(f"/proc/{int(pid)}/stat", encoding="utf-8") as f:
+                ticks = int(f.read().split(")")[-1].split()[19])          # field 22: starttime
+            with open("/proc/stat", encoding="utf-8") as f:
+                boot = next(int(x.split()[1]) for x in f if x.startswith("btime"))
+            return boot + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, StopIteration, AttributeError):
+        return None
+    return None
+
+
+def _same_process(info: dict) -> bool:
+    """False when the saved pid now belongs to another program (after a restart of the
+    computer the number is reused): its start time is far from the job's."""
+    try:
+        started = dt.datetime.fromisoformat(info["started"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return True
+    t = process_start(int(info.get("pid", 0)))
+    return t is None or abs(t - started) < 120
+
+
 def job(run: Path) -> dict:
     """The last run started from the GUI: its info, whether it is still going and its exit
     code when known."""
@@ -421,7 +461,8 @@ def job(run: Path) -> dict:
         code = proc.poll()
         info.update(running=code is None, returncode=code)
     else:
-        info.update(running=pid_alive(int(info.get("pid", 0))), returncode=None)
+        pid = int(info.get("pid", 0))
+        info.update(running=pid_alive(pid) and _same_process(info), returncode=None)
     return info
 
 

@@ -41,6 +41,7 @@ dependencies = [
     "pydantic>=2",           # also required by tidy3d; imported directly by tarang.media
     "matplotlib",
     "dynesty>=2.1.5",        # nested sampling on every OS (pure Python)
+    "pillow>=13",            # used by matplotlib and streamlit; 13.0 fixes known vulnerabilities
 ]
 
 [project.optional-dependencies]

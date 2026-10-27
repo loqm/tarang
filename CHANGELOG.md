@@ -533,6 +533,44 @@ working until v0.2.0; old imports are updated with one command (see
 - `import pymultinest` without its native library no longer ends the Python process.
 - Notebook calls to settings removed in Tidy3D 2.12.
 
+### Security
+
+Found by an audit before the release (bandit on the code, pip-audit on the installed
+dependencies) and fixed:
+
+- **A `design.toml` value of the wrong kind** (a word where a number belongs, `2.5` for a
+  number of workers, a single value for a list) is refused when the file is read, naming the
+  setting and what it expects (`SettingsError`, exit code 2), instead of failing later inside
+  a stage. Whole numbers given as `3.0` and integers given for lengths are taken. Unknown
+  settings and sections are a `SettingsError` too (still a `ValueError`). The GUI shows the
+  message with the file to correct instead of a traceback.
+- **The HTML report** (GUI, Report tab) embeds only pictures inside the design's folder: a
+  hand-edited `report.md` cannot pull another file of the computer into the page.
+- **A run started from the GUI is no longer shown as running forever** when its process
+  number has been reused by another program (after a restart of the computer): the
+  process's start time must match the job's.
+- **`pillow>=13`** (used by matplotlib and streamlit; 13.0 fixes known vulnerabilities in
+  12.x).
+- **pip-audit in CI**: the packaging job audits exactly what `pip install` installed and
+  warns on the run's page (it does not block a merge). Known and accepted: `filelock` < 4 is
+  pinned by tidy3d.
+- The MD5 hashes that shorten simulation and cache file names are marked
+  `usedforsecurity=False` (same names as before; they never were a security measure).
+
+### Fixed (wrap-up)
+
+- **A map or mesh check no longer stops when a worker process is killed** (nearly always by
+  the system, for lack of memory: a 780 nm map point needs about 1.5 GB per worker). The
+  finished points are saved as before; the tool says what happened and finishes the
+  remaining points with one worker instead of ending with a `BrokenProcessPool` traceback.
+  The help of `run.workers` and `--workers` now says about 1.5 GB per worker.
+
+### Changed (wrap-up)
+
+- **Choice panel**: while a comparison or the check runs, it says which ("Comparing 3
+  candidates", "Checking 0.7 × 1 µm") and since when; the buttons are greyed until it
+  finishes (15 to 20 min per cross-section on a laptop).
+
 ### Deprecated
 
 The old class, parameter and attribute names in the table below work in v0.1.0 with a

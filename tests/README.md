@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `465 passed, 2 skipped` (quick check: `444 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
+Expected on Windows: `479 passed, 2 skipped` (quick check: `458 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -590,3 +590,17 @@ cloud for the cloud stages.
 | `test_compare_choice_is_saved_for_the_next_run` | Ticked candidates are saved as `cross_section.compare` and the cross-section is emptied |
 | `test_choice_lists_every_candidate_and_compares_the_ticked_ones` | All 10 candidates in the choice (not only 8); the top four pre-ticked; Compare saves them and reruns only the cross-section, which stops again for the choice |
 | `test_choice_shows_the_comparison` | The comparison table and figures in the choice; compared candidates marked; not shown twice |
+
+## `test_phase14f.py`: the v0.1.0 wrap-up audit (14 tests, Phase 14F)
+
+| Test | Checks |
+|---|---|
+| `test_a_value_of_the_wrong_kind_is_refused_with_its_setting` (6 cases) | A word or `true` for a length, `2.5` workers, `"yes"` for a switch, a single value for a list, a number for text: refused when `design.toml` is read, naming the setting and what it expects |
+| `test_values_of_a_close_kind_are_taken` | `wavelength_um = 1` is read as 1.0, `workers = 3.0` as 3 |
+| `test_the_shipped_examples_and_a_saved_default_still_load` | `examples/*.toml` load; a saved default reads back equal |
+| `test_design_run_stops_with_exit_code_2` | `python -m tarang.design` with such a file prints the message and returns 2 (no traceback) |
+| `test_report_page_embeds_only_pictures_of_its_own_folder` | The HTML report embeds `figures/in.png` but not `../outside.png` |
+| `test_a_reused_process_number_is_not_a_running_job` | A saved job whose process started at another time (pid reused) is not running; older job files without a time are still checked by pid |
+| `test_choice_panel_says_what_is_running_and_since_when` | "Comparing 2 candidate(s) … since 14:05", "Checking 0.7 × 1 µm …"; nothing when no run |
+| `test_name_hashes_are_unchanged_by_marking_them_not_for_security` | `usedforsecurity=False` gives the same MD5 (same file names as before) |
+| `test_map_goes_on_one_at_a_time_when_a_worker_is_killed` | When a mode-solver worker is killed (out of memory), the map says so and finishes the remaining points with one worker; each point is saved once |

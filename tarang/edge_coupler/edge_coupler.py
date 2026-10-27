@@ -151,7 +151,7 @@ class EdgeCoupler(CloudCachedDevice, RenamedAttributes):
             f"{self.fine_steps_per_wvl}_{self.coarse_steps_per_wvl}_{self.settling_buffer_length:.6f}_"
             f"{self.symmetry[0]}_{self.symmetry[1]}_{self.symmetry[2]}"
         )
-        h = hashlib.md5(sig.encode()).hexdigest()[:8]
+        h = hashlib.md5(sig.encode(), usedforsecurity=False).hexdigest()[:8]
 
         sym_str = f"sym{self.symmetry[0]}{self.symmetry[1]}{self.symmetry[2]}"
         return f"coupler_Wtip{self.tip_width:.2f}um_Ltaper{self.taper_length:.2f}um_{mode_str}_{sym_str}_{self.wavelength_um:.3f}um_{h}"

@@ -32,6 +32,7 @@ import os
 import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 N_SIN_1550 = 1.996
@@ -181,18 +182,35 @@ def main():
         if jobs:
             from tarang.waveguide.dispersion_mapping import core as sweep_core  # noqa: F401  (fit/cache materials once)
             with open(data, "a", encoding="utf-8") as f:
-                if a.workers <= 1:
-                    it = (_work(j) for j in jobs)
-                else:
-                    pool = ProcessPoolExecutor(max_workers=a.workers)
-                    it = (fu.result() for fu in as_completed([pool.submit(_work, j) for j in jobs]))
-                for i, r in enumerate(it, 1):
+                saved: set = set()
+
+                def record(i, r):
                     f.write(json.dumps(r) + "\n"); f.flush()
+                    saved.add((r["H"], r["W"], r["steps"]))
                     msg = r.get("error") or f"D={r['D_TE0']:.1f} n_eff={r['neff_TE'][0]:.5f}"
                     print(f"[{i}/{len(jobs)}] H={r['H']} W={r['W']} steps={r['steps']} "
                           f"R={r.get('bend_radius')}  {msg}  ({r['secs']}s)", flush=True)
-                if a.workers > 1:
-                    pool.shutdown()
+
+                if a.workers <= 1:
+                    for i, j in enumerate(jobs, 1):
+                        record(i, _work(j))
+                else:
+                    pool = ProcessPoolExecutor(max_workers=a.workers)
+                    i = 0
+                    try:
+                        for fu in as_completed([pool.submit(_work, j) for j in jobs]):
+                            i += 1
+                            record(i, fu.result())
+                        pool.shutdown()
+                    except BrokenProcessPool:
+                        # a worker was killed (nearly always out of memory): finish one at a time
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        rest = [j for j in jobs if (j[0], j[1], j[2]) not in saved]
+                        print(f"A worker process was killed (usually out of memory). Going on "
+                              f"with the other {len(rest)} run(s) one at a time.", flush=True)
+                        for j in rest:
+                            i += 1
+                            record(i, _work(j))
     plot(data, a.overwrite, a.tol_pct, a.plots_dir)
 
 
