@@ -579,7 +579,7 @@ benchmark pack, CHANGELOG): e.g. the linear apodisation ramp of Marchetti et al.
 [pyLLE](https://github.com/gregmoille/pyLLE) (Moille, Li, Lu, Srinivasan, *J. Res. NIST*
 **124**, 124012 (2019)).
 
-**Authors:**  Divyanshu Tiwari and Esraaj Sarkar Gupta. Developed at the
+**Authors:** Divyanshu Tiwari and Esraaj Sarkar Gupta. Developed at the
 [Laboratory of Optics of Quantum Materials (LOQM)](https://loqm.tech), Indian Institute of
 Technology Bombay. **Licence:** MIT, © 2026 Laboratory of Optics of Quantum Materials
 ([LICENSE](LICENSE)).

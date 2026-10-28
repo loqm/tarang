@@ -7,8 +7,27 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
-Phase 15A: figures for papers, and how exact D is. Phase 15B: the simulation figures of a
-comb paper. Phase 15D: the lab's look, the web page, and your measured values.
+## [0.1.0] - 2026-10-28
+
+First release. Compared with the pre-release code on `main`, TARANG is now
+installable, tested on Linux and Windows, safer with cloud credits, and uses
+consistent names inside a single `tarang` package. Old class and parameter names keep
+working until v0.2.0; old imports are updated with one command (see
+[Upgrading](#upgrading-from-pre-010-code)). The repository stays private until the paper;
+the public release and PyPI follow it.
+
+The last part of the work before the release (Phase 15) comes first below: figures for
+papers and how exact D is (15A), the simulation figures of a comb paper and TM00 as the
+pump mode (15B), and the lab's look, the web page and your measured values (15D). The
+sections after it are the earlier work of this release.
+
+Not in this release, planned next: fits of measured transmission scans (Lorentzian and
+split resonances, Q histogram, Q_c against the gap, measured D_int, cutback), the grating
+spectrum near 1650 nm and the grating efficiency against the fibre angle, and TM00 for the
+couplers.
+
+The authors are listed as Divyanshu Tiwari and Esraaj Sarkar Gupta, in this order, in the
+README, `CITATION.cff`, the package metadata and the web page.
 
 ### Added (15D)
 
@@ -115,13 +134,8 @@ comb paper. Phase 15D: the lab's look, the web page, and your measured values.
 - **Landscape legends** (grating, apodised, focusing): the key of the simulated points took
   the colour of one point of the colour map. It is now neutral grey.
 
-## [0.1.0] - unreleased
+**Earlier work of this release:**
 
-First public release. Compared with the pre-release code on `main`, TARANG is now
-installable, tested on Linux and Windows, safer with cloud credits, and uses
-consistent names inside a single `tarang` package. Old class and parameter names keep
-working until v0.2.0; old imports are updated with one command (see
-[Upgrading](#upgrading-from-pre-010-code)).
 
 ### Added
 
@@ -743,3 +757,6 @@ existing calls keep their behaviour. Passing an old and a new name together rais
 Cached results from before v0.1.0 are reused automatically when the stored simulation
 matches the new one exactly; otherwise TARANG explains what differs and runs again. Old
 result folders are never modified or deleted.
+
+[Unreleased]: https://github.com/loqm/tarang/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/loqm/tarang/releases/tag/v0.1.0

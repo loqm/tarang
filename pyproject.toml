@@ -22,8 +22,8 @@ readme = "Readme.md"
 requires-python = ">=3.11"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Esraaj Sarkar Gupta" },
     { name = "Divyanshu Tiwari" },
+    { name = "Esraaj Sarkar Gupta" },
 ]
 keywords = ["photonics", "silicon nitride", "tidy3d", "FDTD", "mode solver", "dispersion", "microresonator", "frequency comb"]
 classifiers = [
