@@ -291,6 +291,7 @@ def get_active_simulation(
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
     inner_box_recess_um: float = 0.1,  # Air pocket in the BOX inside the ring (um); see get_passive_simulation.
     monitor_freqs=None,  # Frequencies (Hz) recorded by the mode monitors; None = the design wavelength only.
+    mode_pol: Optional[str] = None,  # "tm": launch and record TM00 (the highest-index mostly-TM mode); None/"te": TE00 as before.
 ) -> PartialRingResonator:
     """Add bus excitation and coupling monitors to the passive partial ring.
     The span is the total angle; clipped ring ends require reflection checks.
@@ -332,9 +333,18 @@ def get_active_simulation(
     if not any(np.isclose(f, frequency, rtol=1e-12) for f in freqs):
         raise ValueError("monitor_freqs must include the design frequency c / wavelength_um.")
     target_neff = core_target_neff(core_medium, frequency)
+    tm = str(mode_pol or "te").lower() == "tm"
+    # TM00 lies below TE00 (and below higher TE modes of a wide guide): solve a few modes and
+    # put the TM ones first, so mode 0 is TM00. TE keeps the original one-mode spec, so the
+    # simulations (and their cached results) of TE designs are unchanged.
+    pol_kw = dict(num_modes=1)
+    if tm:                                       # TM-dominant modes first, highest index first
+        pol_kw = dict(num_modes=4, sort_spec=td.ModeSortSpec(
+            filter_key="TM_fraction", filter_reference=0.5, filter_order="over",
+            sort_key="n_eff", sort_order="descending"))
     mode_spec = td.ModeSpec(
-        num_modes=1,
         target_neff=target_neff,
+        **pol_kw,
     )
     y_bus = -(radius + wg_width + gap)
     z_core = wg_height / 2
@@ -400,8 +410,8 @@ def get_active_simulation(
                 size=(0, ring_mon_w, mon_h),
                 freqs=freqs,
                 mode_spec=td.ModeSpec(
-                    num_modes=1,
                     target_neff=target_neff,
+                    **pol_kw,
                     angle_theta=abs(beta),
                     angle_phi=0.0 if beta >= 0 else float(np.pi),
                 ),

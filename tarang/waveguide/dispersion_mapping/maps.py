@@ -12,7 +12,7 @@ Writes to results/plots_<name>/ :
   design_map.png            2-D (W, H) map: D contours + regime classes
   target_geometries.csv     every point classified TARGET, sorted by margin
 
-Classification of each (H, W) point  (TE00 is the pump mode):
+Classification of each (H, W) point for the pump mode (TE00, or TM00 with --pump TM00):
   NORMAL      D < 0                                  (grey)
   TARGET      D >= 0 and exactly 1 guided TE mode    (green)
   MULTIMODE   D >= 0 and >= 2 guided TE modes        (red)
@@ -79,8 +79,10 @@ def load(path: Path):
     return list(rows.values()), errs
 
 
-def classify(r, dmargin, sm_key):
-    D = r["D_TE0"]
+def classify(r, dmargin, sm_key, dkey="D_TE0"):
+    """NORMAL / MARGINAL / TARGET / MULTIMODE for the pump mode (dkey: its D field, sm_key:
+    its guided-mode count)."""
+    D = r[dkey]
     if D < 0:
         return "NORMAL"
     if D < dmargin:
@@ -88,8 +90,13 @@ def classify(r, dmargin, sm_key):
     return "TARGET" if r[sm_key] == 1 else "MULTIMODE"
 
 
-def degenerate(r, tol):
-    return abs(r["neff_TE"][0] - r["neff_TM"][0]) < tol
+def degenerate(r, tol, pol="TE"):
+    """The pump mode is (nearly) degenerate with a mode of the other polarisation, where they
+    hybridise: TE00 with TM00; TM00 with any guided TE mode (TM00 usually lies between TE
+    modes of a wide guide)."""
+    if pol == "TE":
+        return abs(r["neff_TE"][0] - r["neff_TM"][0]) < tol
+    return any(abs(n - r["neff_TM"][0]) < tol for n in r["neff_TE"] if n > r["n_cut"])
 
 
 def bands(xs):
@@ -118,26 +125,26 @@ def legend_patches(dmargin=0.0):
 def plot_D(series, xkey, fixed_lbl, fname, a, plt):
     series = sorted(series, key=lambda r: r[xkey])
     xs = [r[xkey] for r in series]
-    D = [r["D_TE0"] for r in series]
-    cls = [classify(r, a.dmargin, a.sm_key) for r in series]
+    D = [r[a.f["D"]] for r in series]
+    cls = [classify(r, a.dmargin, a.sm_key, a.f["D"]) for r in series]
     fig, ax = plt.subplots(figsize=(10.5, 5), dpi=140)
     shade(ax, xs, cls)
     ax.axhline(0, color="b", ls="--", lw=1)
     for y in ((a.dmargin, -a.dmargin) if a.dmargin > 0 else ()):
         ax.axhline(y, color="0.4", ls=":", lw=1)
-    ax.plot(xs, D, "k-o", lw=1.8, ms=5, label="TE00", zorder=3)
+    ax.plot(xs, D, "k-o", lw=1.8, ms=5, label=a.pump, zorder=3)
     if a.tm:
-        ax.plot(xs, [r["D_TM0"] for r in series], "--s", color="crimson", ms=4, lw=1.2,
-                label="TM00", zorder=3)
+        ax.plot(xs, [r[a.f["other_D"]] for r in series], "--s", color="crimson", ms=4, lw=1.2,
+                label=a.other, zorder=3)
     for x, d, r in zip(xs, D, series):
-        if degenerate(r, a.deg_tol):
+        if degenerate(r, a.deg_tol, a.pol):
             ax.plot(x, d, "v", color="purple", ms=10, zorder=4)
         ax.annotate(f"{r[a.sm_key]}", (x, d), textcoords="offset points", xytext=(0, 7),
                     ha="center", fontsize=7, color="0.25")
     ax.set_xlabel(("Waveguide width" if xkey == "W" else "Core thickness") + " (µm)")
     ax.set_ylabel(r"$D$ at %.0f nm [ps/(nm·km)]" % (series[0]["wl0"] * 1e3))
     ax.set_title(f"{_stack(series[0])} — {fixed_lbl}   "
-                 f"(numbers = guided TE modes, {series[0]['steps']} steps/λ)", fontsize=10)
+                 f"(numbers = guided {a.pol} modes, {series[0]['steps']} steps/λ)", fontsize=10)
     ax.grid(alpha=0.3)
     h = legend_patches(a.dmargin)
     ax.legend(handles=ax.get_legend_handles_labels()[0] + h, fontsize=7,
@@ -199,8 +206,8 @@ def plot_map(rows, outdir, a, plt):
         for j, W in enumerate(Ws):
             r = idx.get((H, W))
             if r:
-                Dm[i, j] = r["D_TE0"]
-                Cm[i, j] = order.index(classify(r, a.dmargin, a.sm_key))
+                Dm[i, j] = r[a.f["D"]]
+                Cm[i, j] = order.index(classify(r, a.dmargin, a.sm_key, a.f["D"]))
     from matplotlib.colors import ListedColormap, TwoSlopeNorm
     fig, axs = plt.subplots(1, 2, figsize=(13, 5), dpi=140)
     # Clip the colour scale: near-cutoff points reach -2000+ and would wash out the
@@ -213,17 +220,17 @@ def plot_map(rows, outdir, a, plt):
         cs = axs[0].contour(Ws, Hs, Dm, levels=lv, colors=["k"] * len(lv),
                             linestyles=["-", "--"][:len(lv)])
         axs[0].clabel(cs, fmt="%g", fontsize=8)
-    fig.colorbar(im, ax=axs[0], extend="min", label="D(TE00) [ps/(nm·km)], clipped")
-    axs[0].set_title("D(TE00): solid contour = zero dispersion"
+    fig.colorbar(im, ax=axs[0], extend="min", label=f"D({a.pump}) [ps/(nm·km)], clipped")
+    axs[0].set_title(f"D({a.pump}): solid contour = zero dispersion"
                      + (f", dashed = {a.dmargin:g}" if a.dmargin > 0 else ""), fontsize=10)
     axs[1].pcolormesh(Ws, Hs, Cm, cmap=ListedColormap([CLASS_COL[k] for k in order]),
                       vmin=-0.5, vmax=len(order) - 0.5, shading="nearest")
     for (H, W), r in idx.items():
-        t = f"{r['D_TE0']:.0f}\n{r[a.sm_key]}TE"
+        t = f"{r[a.f['D']]:.0f}\n{r[a.sm_key]}{a.pol}"
         axs[1].text(W, H, t, ha="center", va="center", fontsize=6)
-        if degenerate(r, a.deg_tol):
+        if degenerate(r, a.deg_tol, a.pol):
             axs[1].plot(W + ((Ws[1] - Ws[0]) * 0.33 if len(Ws) > 1 else 0.03), H + ((Hs[1] - Hs[0]) * 0.30 if len(Hs) > 1 else 0.015), "v", color="purple", ms=7)
-    axs[1].set_title("Regime (text: D, guided TE count; ▽ TE/TM degenerate)", fontsize=10)
+    axs[1].set_title(f"Regime (text: D, guided {a.pol} count; ▽ TE/TM degenerate)", fontsize=10)
     axs[1].legend(handles=legend_patches(a.dmargin), fontsize=7, loc="upper center",
                   bbox_to_anchor=(0.5, -0.13), ncol=3)
     for ax in axs:
@@ -281,8 +288,8 @@ def robust_class(rows, a):
     TARGET -> ROBUST; TARGET with a failing neighbour -> EDGE; neighbour missing -> BORDER."""
     Hs, Ws, idx = _grid(rows)
     def ok(r):
-        return (r is not None and classify(r, a.dmargin, a.sm_key) == "TARGET"
-                and not degenerate(r, a.deg_tol))
+        return (r is not None and classify(r, a.dmargin, a.sm_key, a.f["D"]) == "TARGET"
+                and not degenerate(r, a.deg_tol, a.pol))
     out = {}
     for i, H in enumerate(Hs):
         for j, W in enumerate(Ws):
@@ -318,13 +325,13 @@ def plot_extra_maps(rows, outdir, a, plt):
             plt.close(fig)
 
     wl = rows[0]["wl0"]
-    Dm = _mat(Hs, Ws, idx, lambda r: r["D_TE0"])
+    Dm = _mat(Hs, Ws, idx, lambda r: r[a.f["D"]])
     lim = max(float(np.nanmax(Dm)), a.dmargin) * 1.1
 
     # 1  D map
     fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
     _heat(ax, Ws, Hs, np.clip(Dm, -lim, lim), "RdBu_r", TwoSlopeNorm(0, -lim, lim),
-          "D(TE00) [ps/(nm·km)], clipped", fig, fmt=lambda v: f"{v:.0f}",
+          f"D({a.pump}) [ps/(nm·km)], clipped", fig, fmt=lambda v: f"{v:.0f}",
           contours=[(0, "k", "-")] + ([(a.dmargin, "k", "--")] if a.dmargin > 0 else []),
           extend="min", text_M=Dm)
     ax.set_title("1. Dispersion D of the pump mode (solid contour = zero dispersion)", fontsize=10)
@@ -375,7 +382,7 @@ def plot_extra_maps(rows, outdir, a, plt):
     fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
     ax.pcolormesh(Ws, Hs, C, cmap=ListedColormap(cols), vmin=-0.5, vmax=3.5, shading="nearest")
     for (H, W), r in idx.items():
-        ax.text(W, H, f"{r['D_TE0']:.0f}", ha="center", va="center", fontsize=6,
+        ax.text(W, H, f"{r[a.f['D']]:.0f}", ha="center", va="center", fontsize=6,
                 color="w" if rc[(H, W)] == "ROBUST" else "k")
     from matplotlib.patches import Patch
     lbl = {"NOT_TARGET": ("not target (normal/marginal/multimode/degenerate)" if a.dmargin > 0
@@ -391,15 +398,15 @@ def plot_extra_maps(rows, outdir, a, plt):
     save(fig, "map6_robust_window.png")
 
     # 7  group index
-    ng = _mat(Hs, Ws, idx, lambda r: r["ng_TE0"])
+    ng = _mat(Hs, Ws, idx, lambda r: r[a.f["ng"]])
     fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
-    _heat(ax, Ws, Hs, ng, "viridis", None, "n_g(TE00)", fig, fmt=lambda v: f"{v:.3f}")
+    _heat(ax, Ws, Hs, ng, "viridis", None, f"n_g({a.pump})", fig, fmt=lambda v: f"{v:.3f}")
     ax.set_title("7. Group index (sets FSR = c / (2π n_g R) for a chosen ring radius)",
                  fontsize=10)
     save(fig, "map7_group_index.png")
 
     # 8/9  mode area, nonlinear coefficient, confinement (only if recorded)
-    Ae = _mat(Hs, Ws, idx, lambda r: r["Aeff_TE0_um2"])
+    Ae = _mat(Hs, Ws, idx, lambda r: r.get(a.f["aeff"]) if r.get(a.f["aeff"]) is not None else np.nan)
     if np.isfinite(Ae).any():
         g = 2 * np.pi * a.n2 / (wl * 1e-6 * Ae * 1e-12)          # 1/(W m)
         fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
@@ -407,7 +414,7 @@ def plot_extra_maps(rows, outdir, a, plt):
               fmt=lambda v: f"{v:.2f}")
         ax.set_title("8. Kerr nonlinear coefficient γ (higher = lower threshold)", fontsize=10)
         save(fig, "map8_nonlinear_gamma.png")
-    Gm = _mat(Hs, Ws, idx, lambda r: r["Gamma_TE0"])
+    Gm = _mat(Hs, Ws, idx, lambda r: r.get(a.f["gamma"]) if r.get(a.f["gamma"]) is not None else np.nan)
     if np.isfinite(Gm).any():
         fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
         _heat(ax, Ws, Hs, Gm * 100, "YlGn", None, "Γ = power fraction in the core (%)", fig,
@@ -415,6 +422,39 @@ def plot_extra_maps(rows, outdir, a, plt):
         ax.set_title("9. Core confinement Γ (more field outside → more sidewall scattering)",
                      fontsize=10)
         save(fig, "map9_confinement.png")
+
+    # 10  which polarisation is anomalous: TE00 and TM00 zero-dispersion contours on one map
+    Dte = _mat(Hs, Ws, idx, lambda r: r["D_TE0"])
+    Dtm = _mat(Hs, Ws, idx, lambda r: r.get("D_TM0", np.nan))
+    if np.isfinite(Dtm).any():
+        gte = _mat(Hs, Ws, idx, lambda r: r["guided_TE"])
+        gtm = _mat(Hs, Ws, idx, lambda r: r["guided_TM"])
+        cls = np.where(np.isfinite(Dte) & np.isfinite(Dtm),
+                       (Dte >= 0).astype(float) + 2 * (Dtm >= 0).astype(float), np.nan)
+        cmap = ListedColormap(["#d9d9d9", "#9ecae1", "#fdae6b", "#a1d99b"])
+        fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)
+        ax.pcolormesh(Ws, Hs, cls, cmap=cmap, vmin=-0.5, vmax=3.5, shading="nearest")
+        for M, ls, lab in ((Dte, "-", "D(TE00) = 0"), (Dtm, "--", "D(TM00) = 0")):
+            if len(Hs) > 1 and len(Ws) > 1 and np.nanmin(M) < 0 < np.nanmax(M):
+                ax.contour(Ws, Hs, M, levels=[0], colors=["k"], linestyles=[ls], linewidths=1.6)
+        for i, H in enumerate(Hs):
+            for j, W in enumerate(Ws):
+                if np.isfinite(cls[i, j]):
+                    ax.text(W, H, f"{gte[i, j]:.0f}/{gtm[i, j]:.0f}", ha="center", va="center",
+                            fontsize=6)
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Patch
+        keys = [Patch(color=c, label=t) for c, t in zip(
+                    cmap.colors, ("both normal", "TE00 anomalous", "TM00 anomalous",
+                                  "both anomalous"))]
+        keys += [Line2D([], [], color="k", ls="-", label="D(TE00) = 0"),
+                 Line2D([], [], color="k", ls="--", label="D(TM00) = 0")]
+        ax.legend(handles=keys, fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.13),
+                  ncol=3, frameon=False)
+        ax.set_xlabel("Width W (µm)"); ax.set_ylabel("Core thickness H (µm)")
+        ax.set_title("10. Anomalous dispersion of TE00 and TM00 (text: guided TE/TM modes)",
+                     fontsize=10)
+        save(fig, "map10_TE_TM_anomalous.png")
 
     # dashboard of the six decision maps (from their png files, wherever the style put them)
     panels = [("map1_dispersion_D.png", "1"), ("map2_TE_TM_splitting.png", "2"),
@@ -446,7 +486,10 @@ def main():
                     help="|n_TE0 - n_TM0| below this is flagged degenerate")
     ap.add_argument("--single-mode", dest="sm", choices=["strict", "margin"], default="strict",
                     help="strict: any TE mode above the cladding cutoff counts; margin: above cutoff+margin")
-    ap.add_argument("--tm", action="store_true", help="also plot D of TM00")
+    ap.add_argument("--tm", action="store_true",
+                    help="also plot D of the other fundamental mode (TM00, or TE00 with --pump TM00)")
+    ap.add_argument("--pump", default="TE00", choices=["TE00", "TM00"],
+                    help="the pump mode the targets are judged by")
     ap.add_argument("--n2", type=float, default=2.4e-19, help="Kerr index of the core, m^2/W (default: Si3N4)")
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--overwrite", action="store_true",
@@ -454,7 +497,11 @@ def main():
     ap.add_argument("--plots-dir", type=Path, default=None,
                     help="write the plots here (default: plots_<data name> next to the data)")
     a = ap.parse_args()
-    a.sm_key = "guided_TE" if a.sm == "strict" else "guided_TE_margin"
+    from tarang.waveguide.dispersion_mapping.core import PUMP_FIELDS
+    a.pol = a.pump[:2]
+    a.f = PUMP_FIELDS[a.pol]
+    a.other = "TM00" if a.pol == "TE" else "TE00"
+    a.sm_key = a.f["guided"] if a.sm == "strict" else a.f["guided_margin"]
     if not a.show:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -486,17 +533,18 @@ def main():
     plot_map(rows, out, a, plt)
     plot_extra_maps(rows, out, a, plt)
 
-    tgt = [r for r in rows if classify(r, a.dmargin, a.sm_key) == "TARGET"]
-    tgt.sort(key=lambda r: -r["D_TE0"])
+    tgt = [r for r in rows if classify(r, a.dmargin, a.sm_key, a.f["D"]) == "TARGET"]
+    tgt.sort(key=lambda r: -r[a.f["D"]])
     with open(out / "target_geometries.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["H_nm", "W_nm", "D_TE0", "beta2_TE0_ps2_km", "ng_TE0", "n_TE0", "n_TM0",
+        P = a.pol + "0"                                       # TE0 or TM0 in the names
+        w.writerow(["H_nm", "W_nm", f"D_{P}", f"beta2_{P}_ps2_km", f"ng_{P}", "n_TE0", "n_TM0",
                     "dn_TE0_TM0", "TE_TM_degenerate", "guided_TE", "guided_TM", "steps"])
         for r in tgt:
             dn = r["neff_TE"][0] - r["neff_TM"][0]
-            w.writerow([round(r["H"]*1e3), round(r["W"]*1e3), r["D_TE0"], r["beta2_TE0"],
-                        r["ng_TE0"], r["neff_TE"][0], r["neff_TM"][0], round(dn, 4),
-                        degenerate(r, a.deg_tol), r["guided_TE"], r["guided_TM"], r["steps"]])
+            w.writerow([round(r["H"]*1e3), round(r["W"]*1e3), r[a.f["D"]], r[a.f["beta2"]],
+                        r[a.f["ng"]], r["neff_TE"][0], r["neff_TM"][0], round(dn, 4),
+                        degenerate(r, a.deg_tol, a.pol), r["guided_TE"], r["guided_TM"], r["steps"]])
     print(f"{len(rows)} points plotted -> {out.resolve()}")
     print(f"{len(tgt)} TARGET geometries -> {out / 'target_geometries.csv'}")
     if a.show:

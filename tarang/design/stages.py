@@ -73,8 +73,8 @@ class Context:
             if not done or done.get("skipped"):
                 continue
             for key, old in values.items():
-                if f"{sec}.{key}" in self.cfg.given:
-                    continue
+                if f"{sec}.{key}" in self.cfg.given or getattr(getattr(self.cfg, sec), key) == old:
+                    continue                          # set by the user, or nothing to keep
                 setattr(getattr(self.cfg, sec), key, old)
                 self.cfg.given.add(f"{sec}.{key}")
                 notes.append(f"{sec}.{key} = {old}: kept as in this run's saved {sec} results "
@@ -372,6 +372,30 @@ def _read_csv(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def pump_mode(cfg) -> str:
+    """'TE00' or 'TM00': the mode the design is for (cross_section.pump_mode)."""
+    from tarang.waveguide.dispersion_mapping.core import pol_of
+    return "TE00" if pol_of(cfg.cross_section.pump_mode) == "TE" else "TM00"
+
+
+def pump_fields(cfg) -> dict:
+    """The solver-record fields of the pump mode (core.PUMP_FIELDS)."""
+    from tarang.waveguide.dispersion_mapping.core import PUMP_FIELDS
+    return PUMP_FIELDS[pump_mode(cfg)[:2]]
+
+
+def other_split(r: dict, mode: str) -> float:
+    """Index distance of the pump mode to the nearest mode of the other polarisation:
+    |n_TE0 - n_TM0| for TE00; for TM00 the nearest guided TE mode (TM00 sits between the
+    TE modes of a wide guide, and hybridises where it crosses one)."""
+    if not r.get("neff_TM") or not r.get("neff_TE"):
+        return 0.0
+    if mode == "TE00":
+        return abs(r["neff_TE"][0] - r["neff_TM"][0])
+    te = [n for n in r["neff_TE"] if n > r.get("n_cut", 0)] or r["neff_TE"][:1]
+    return min(abs(n - r["neff_TM"][0]) for n in te)
+
+
 def compare_candidates(ctx: Context, points: list, dW: float, dH: float, ng: float) -> dict:
     """Candidates side by side before the choice (local, free): each at the check mesh with its
     tolerance box, TE/TM split and second-mode margin, in a bend, its mode profiles and its D
@@ -393,11 +417,13 @@ def compare_candidates(ctx: Context, points: list, dW: float, dH: float, ng: flo
     scat, absl = _losses(cfg)
     ctx.tool("report", "--straight", rel(straight), "--bends", rel(bend), "--finalists", pts,
              "--tol", f"{dW},{dH}", "--alpha-scat", scat, "--alpha-abs", absl,
-             "--n2", cfg.assumptions.n2_m2_w, "--out", CAND_DIR, "--overwrite")
+             "--n2", cfg.assumptions.n2_m2_w, "--out", CAND_DIR, "--overwrite",
+             "--pump", pump_mode(cfg))
     lo, hi = ctx.band
     ctx.tool("broadband", "--points", pts, "--wl-min", lo, "--wl-max", hi, "--pump", wl,
              "--steps", dsteps, "--radius", R, "--data", "results/candidates_broadband.jsonl",
-             "--plots-dir", f"{CAND_DIR}/profiles", "--overwrite", *ctx.stack_args())
+             "--plots-dir", f"{CAND_DIR}/profiles", "--overwrite", "--pump-mode", pump_mode(cfg),
+             "--n2", cfg.assumptions.n2_m2_w, *ctx.stack_args())
     cand_dir = ctx.out / CAND_DIR
     _to_tables(ctx, cand_dir, {"finalists.csv": "candidates_compared.csv",
                                "finalists_bend.csv": "candidates_bend.csv"})
@@ -407,7 +433,9 @@ def compare_candidates(ctx: Context, points: list, dW: float, dH: float, ng: flo
     straight_rows = {r["name"]: r for r in _read_csv(ctx.out / "tables" / "candidates_compared.csv")}
     bend_rows = {r["name"]: r for r in _read_csv(ctx.out / "tables" / "candidates_bend.csv")}
     prof_rows = {r["geometry"].split(" ")[0].replace("×", "x"): r
-                 for r in _read_csv(ctx.out / "tables" / "candidates_profiles.csv")}
+                 for r in _read_csv(ctx.out / "tables" / "candidates_profiles.csv")
+                 if r.get("mode", "TE00") == pump_mode(cfg)}
+    m1 = "TE1" if pump_mode(cfg) == "TE00" else "TM1"           # the pump's second-order mode
     rows = []
     for h, w in points:
         name = f"{h * 1e3:.0f}x{w * 1e3:.0f}"
@@ -418,7 +446,7 @@ def compare_candidates(ctx: Context, points: list, dW: float, dH: float, ng: flo
                          D_min_tol=rnd(_num(s_.get("D_min_tol")), 1),
                          D_max_tol=rnd(_num(s_.get("D_max_tol")), 1), n_g=rnd(_num(s_.get("ng")), 4),
                          TE_TM_split=rnd(_num(s_.get("dn_TE_TM")), 4),
-                         TE1_margin=rnd(_num(s_.get("TE1_margin")), 4),
+                         **{f"{m1}_margin": rnd(_num(s_.get("pump1_margin", s_.get("TE1_margin"))), 4)},
                          tolerance_box_target=str(s_.get("all_neighbours_target")).lower() == "true",
                          bend_R_um=R, bend_loss_db_cm=None if bl is None else float(f"{bl:.2g}"),
                          D_bend=rnd(_num(b_.get("D_bend")), 1), D2_2pi_MHz=_num(p_.get("D2_2pi_MHz")),
@@ -600,7 +628,7 @@ def stage_cross_section(ctx: Context) -> dict:
              "--workers", cfg.run.workers, "--out", grid_file.relative_to(ctx.out),
              *ctx.stack_args())
     ctx.tool("maps", "--data", grid_file.relative_to(ctx.out), "--tm", "--overwrite",
-             "--plots-dir", MAP_DIR)
+             "--plots-dir", MAP_DIR, "--pump", pump_mode(cfg))
     plots = ctx.out / MAP_DIR
     _to_tables(ctx, plots, {"target_geometries.csv": "map_target_geometries.csv"})
     ui.figure(plots / "design_map.png")
@@ -609,17 +637,24 @@ def stage_cross_section(ctx: Context) -> dict:
             if r.get("steps") == steps and abs(r.get("wl0", 1.55) - wl) < 1e-9
             and round(r["H"], 4) in {round(h, 4) for h in heights}
             and round(r["W"], 4) in {round(w, 4) for w in widths}]
-    ranked = _rank_targets(rows, heights, widths, anomalous=not loss_test)
+    ranked = _rank_targets(rows, heights, widths, anomalous=not loss_test, mode=pump_mode(cfg))
+    F = pump_fields(cfg)
+    pol = pump_mode(cfg)[:2]
     if not ranked:
-        ui.say("No cross-section in this map is " + ("single-mode" if loss_test else
-               "anomalous AND single-mode") + ". Widen the map "
+        ui.say(f"No cross-section in this map is {pol}-" + ("single-mode" if loss_test else
+               f"anomalous AND {pol}-single-mode") + " for the pump mode "
+               f"{pump_mode(cfg)}. Widen the map "
                "(cross_section.heights_um / widths_um) or change the stack, and rerun.")
-        raise RuntimeError("no target geometry found")
-    ui.say("\nCandidates (" + ("one guided TE mode" if loss_test else
-                                 "anomalous D, one guided TE mode") + "), most robust first:")
-    ui.table(ranked[:8], ["H_um", "W_um", "D_TE0", "ng_TE0", "guided_TE", "guided_TM",
+        from tarang.design.config import SettingsError
+        raise SettingsError(f"No target geometry for {pump_mode(cfg)} in this map: widen it "
+                            "(cross_section.heights_um / widths_um), change the stack or the "
+                            "pump mode (map 10 shows where TE00 and TM00 are anomalous).")
+    ui.say("\nCandidates for " + pump_mode(cfg) + " (" + (f"one guided {pol} mode" if loss_test
+                                                          else f"anomalous D, one guided {pol} mode")
+           + "), most robust first:")
+    ui.table(ranked[:8], ["H_um", "W_um", F["D"], F["ng"], "guided_TE", "guided_TM",
                           "TE_TM_split", "target_neighbours"],
-             {"D_TE0": ".1f", "ng_TE0": ".4f", "TE_TM_split": ".4f"})
+             {F["D"]: ".1f", F["ng"]: ".4f", "TE_TM_split": ".4f"})
     ui.say("  Ranked by how many of the 8 neighbouring map points are also targets, then by "
            "TE_TM_split = |n_eff(TE00) - n_eff(TM00)|: a larger split keeps the TE and TM "
            + ("modes apart (less TE-TM conversion in the spiral bends)." if loss_test else
@@ -637,8 +672,8 @@ def stage_cross_section(ctx: Context) -> dict:
     comparison = None
     if cfg.cross_section.compare and not given_hw:
         pts = [_hw(t) for t in cfg.cross_section.compare]
-        ngs = [r["ng_TE0"] for r in cands if (round(r["H_um"], 4), round(r["W_um"], 4)) in pts]
-        comparison = compare_candidates(ctx, pts, dW, dH, float(np.mean(ngs)) if ngs else best["ng_TE0"])
+        ngs = [r[F["ng"]] for r in cands if (round(r["H_um"], 4), round(r["W_um"], 4)) in pts]
+        comparison = compare_candidates(ctx, pts, dW, dH, float(np.mean(ngs)) if ngs else best[F["ng"]])
     if cfg.cross_section.stop_after_map and not given_hw:
         ui.say(f"\nMap done. Recommended: {best['H_um']} × {best['W_um']} µm ({why}). Choose one "
                "(cross_section.height_um / width_um) and run this stage again"
@@ -679,10 +714,13 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
     ctx.tool("sweep", "--points", f"{H}x{W}", "--tol", f"{dW},{dH}", "--wl", wl,
              "--steps", dsteps, "--workers", cfg.run.workers,
              "--out", fin_file.relative_to(ctx.out), *ctx.stack_args())
-    centre = next(r for r in _read_jsonl(fin_file)
-                  if abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6 and r["steps"] == dsteps
-                  and r.get("bend_radius") is None)
-    R_b = compare_radius(cfg, centre["ng_TE0"])
+    snap = bool(cfg.cross_section.snap_grid)
+    found = [r for r in _read_jsonl(fin_file)
+             if abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6 and r["steps"] == dsteps
+             and r.get("bend_radius") is None and "error" not in r]
+    centre = ([r for r in found if bool(r.get("snap", False)) == snap] or found)[-1]
+    mode, F = pump_mode(cfg), pump_fields(cfg)
+    R_b = compare_radius(cfg, centre[F["ng"]])
     bend_file = ctx.path("results", f"finalist_{dsteps}steps_R{R_b:g}um.jsonl")
     ctx.tool("sweep", "--points", f"{H}x{W}", "--wl", wl, "--steps", dsteps, "--bend-radius", R_b,
              "--workers", cfg.run.workers, "--out", bend_file.relative_to(ctx.out), *ctx.stack_args())
@@ -690,13 +728,13 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
              bend_file.relative_to(ctx.out), "--finalists", f"{H}x{W}",
              "--tol", f"{dW},{dH}", "--alpha-scat", _losses(cfg)[0],
              "--alpha-abs", _losses(cfg)[1], "--n2", cfg.assumptions.n2_m2_w,
-             "--out", FIN_DIR, "--overwrite")
+             "--out", FIN_DIR, "--overwrite", "--pump", mode)
     _to_tables(ctx, ctx.out / FIN_DIR, {"finalists.csv": "finalists.csv",
                                          "finalists_bend.csv": "finalists_bend.csv"})
     rep = _read_csv(ctx.out / "tables" / "finalists.csv")[0]
     robust = str(rep.get("all_neighbours_target")).lower() == "true"
-    ui.say(f"\nCross-section {H*1e3:.0f} x {W*1e3:.0f} nm at {dsteps} steps/λ: "
-           f"D = {centre['D_TE0']:.1f} ps/(nm km), n_g = {centre['ng_TE0']:.4f}, "
+    ui.say(f"\nCross-section {H*1e3:.0f} x {W*1e3:.0f} nm at {dsteps} steps/λ, pump {mode}: "
+           f"D = {centre[F['D']]:.1f} ps/(nm km), n_g = {centre[F['ng']]:.4f}, "
            f"guided TE/TM = {centre['guided_TE']}/{centre['guided_TM']}; worst-case D within the "
            f"tolerance = {float(rep['D_min_tol']):.1f}; whole tolerance box target: "
            f"{'yes' if robust else 'NO'}")
@@ -708,38 +746,42 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
     meshes = sorted({int(x) for x in (cfg.cross_section.mesh_ladder or [])} | {dsteps})
     snap = bool(cfg.cross_section.snap_grid)
     ctx.tool("convergence", "--points", f"{H}x{W}", "--steps-list", ",".join(map(str, meshes)),
-             "--wl", wl, "--workers", cfg.run.workers,
+             "--wl", wl, "--workers", cfg.run.workers, "--pump", mode,
              "--data", conv_file.relative_to(ctx.out), "--overwrite", "--plots-dir", CONV_DIR,
              *ctx.stack_args())
     _to_tables(ctx, ctx.out / CONV_DIR, {"convergence_table.csv": "mesh_convergence.csv",
                                          "mesh_band.csv": "mesh_band.csv"})
-    conv = sorted((r for r in _read_jsonl(conv_file)
-                   if "error" not in r and abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6
-                   and r.get("bend_radius") is None and bool(r.get("snap", False)) == snap
-                   and r["steps"] in meshes), key=lambda r: r["steps"])
+    every = [r for r in _read_jsonl(conv_file)
+             if "error" not in r and abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6
+             and r.get("bend_radius") is None]
+    this = [r for r in every if bool(r.get("snap", False)) == snap and r["steps"] in meshes]
+    conv = sorted(this if len(this) >= 2 else every, key=lambda r: r["steps"])
     band = ng_band = None
     if len(conv) >= 2:
         from tarang.waveguide.dispersion_mapping.convergence import mesh_band
-        change = abs(conv[-1]["D_TE0"] - conv[-2]["D_TE0"]) / max(abs(conv[-1]["D_TE0"]), 1e-9)
-        band = mesh_band({r["steps"]: r["D_TE0"] for r in conv})
-        ng_band = mesh_band({r["steps"]: r["ng_TE0"] for r in conv})
+        change = abs(conv[-1][F["D"]] - conv[-2][F["D"]]) / max(abs(conv[-1][F["D"]]), 1e-9)
+        band = mesh_band({r["steps"]: r[F["D"]] for r in conv})
+        ng_band = (mesh_band({r["steps"]: r[F["ng"]] for r in conv})
+                   if all(r.get(F["ng"]) is not None for r in conv) else None)
         ui.say(f"Mesh check ({len(conv)} meshes, grid {'snapped to' if snap else 'not snapped to'}"
-               " the core edges): D = " + ", ".join(f"{r['D_TE0']:.1f} ({r['steps']})" for r in conv)
+               " the core edges): D = " + ", ".join(f"{r[F['D']]:.1f} ({r['steps']})" for r in conv)
                + f"\n  -> D = {band['value']:.1f} ± {band['band']:.1f} ps/(nm km) (median ± largest "
-               f"distance), n_g = {ng_band['value']:.4f} ± {ng_band['band']:.4f}")
+               "distance)" + (f", n_g = {ng_band['value']:.4f} ± {ng_band['band']:.4f}"
+                              if ng_band else ""))
     else:
         change = None
     from tarang.design import visuals
     fig_xs = visuals.safe(ctx, "cross-section", visuals.cross_section, ctx, H, W,
                           ctx.path("figures", "2_cross_section.png"))
     fig_mode_profiles(ctx, H, W)
-    return dict(height_um=H, width_um=W, steps=dsteps, D=centre["D_TE0"], n_group=centre["ng_TE0"],
+    return dict(height_um=H, width_um=W, steps=dsteps, D=centre[F["D"]], n_group=centre[F["ng"]],
+                pump_mode=mode,
                 figure=str(fig_xs) if fig_xs else None, convergence=[
-                    dict(steps=r["steps"], D=r["D_TE0"]) for r in conv],
-                te_tm_split=abs(centre["neff_TE"][0] - centre["neff_TM"][0])
-                if centre.get("neff_TM") else None,
-                n_eff=centre["neff_TE"][0], n_cut=centre["n_cut"], guided_TE=centre["guided_TE"],
-                guided_TM=centre["guided_TM"], aeff_um2=centre.get("Aeff_TE0_um2"),
+                    dict(steps=r["steps"], D=r[F["D"]]) for r in conv],
+                te_tm_split=other_split(centre, mode) if centre.get("neff_TM") else None,
+                n_eff=centre[F["neff"]][0], n_cut=centre["n_cut"], guided_TE=centre["guided_TE"],
+                core_fraction=centre.get(F["gamma"]),
+                guided_TM=centre["guided_TM"], aeff_um2=centre.get(F["aeff"]),
                 D_min_tol=float(rep["D_min_tol"]), D_max_tol=float(rep["D_max_tol"]),
                 tolerance_box_target=robust, mesh_change=change,
                 D_mesh=band["value"] if band else None, D_mesh_band=band["band"] if band else None,
@@ -770,15 +812,19 @@ def fig_mode_profiles(ctx: Context, H: float, W: float, path: Optional[Path] = N
 
 
 def fig_bent_mode(ctx: Context, H: float, W: float, R: float) -> dict:
-    """Straight and bent TE00 side by side; returns the outward shift of the bent mode."""
+    """Straight and bent pump mode (TE00 or TM00) side by side; returns the outward shift of
+    the bent mode."""
     from tarang.design import localmodes, visuals
     info: dict = {}
+    pick = localmodes.te00 if pump_mode(ctx.cfg) == "TE00" else localmodes.tm00
+    n_st = 2 if pump_mode(ctx.cfg) == "TE00" else 6
 
     def draw():
-        st = localmodes.te00(localmodes.cross_section_modes(ctx, H, W, num_modes=2))
-        bt = localmodes.te00(localmodes.cross_section_modes(ctx, H, W, bend_radius=R, num_modes=4))
+        st = pick(localmodes.cross_section_modes(ctx, H, W, num_modes=n_st))
+        bt = pick(localmodes.cross_section_modes(ctx, H, W, bend_radius=R, num_modes=n_st + 2))
         info.update(shift_nm=1e3 * (bt["yc"] - st["yc"]), n_eff_bent=bt["neff"])
-        return visuals.bent_mode(st, bt, H, W, R, ctx.path("figures", "3b_bent_mode.png"))
+        return visuals.bent_mode(st, bt, H, W, R, ctx.path("figures", "3b_bent_mode.png"),
+                                 pump_mode(ctx.cfg))
     visuals.safe(ctx, "bent mode", draw)
     return info
 
@@ -847,13 +893,16 @@ def _gap_device(ctx: Context, gap_um: float):
                        **gap_builder_options(cfg))
 
 
-def _rank_targets(rows, heights, widths, anomalous: bool = True) -> list[dict]:
-    """TARGET points (D >= 0 when ``anomalous``, one guided TE) ranked by how many of their 8
-    neighbours are also TARGET (a neighbour outside the map counts as unknown, not as
-    TARGET), then by the TE00/TM00 effective-index split (larger = further from a TE/TM
-    crossing)."""
+def _rank_targets(rows, heights, widths, anomalous: bool = True, mode: str = "TE00") -> list[dict]:
+    """TARGET points of the pump mode (its D >= 0 when ``anomalous``, one guided mode of its
+    polarisation) ranked by how many of their 8 neighbours are also TARGET (a neighbour
+    outside the map counts as unknown, not as TARGET), then by the index split to the
+    nearest mode of the other polarisation (larger = further from a TE/TM crossing)."""
+    from tarang.waveguide.dispersion_mapping.core import PUMP_FIELDS
+    F = PUMP_FIELDS[mode[:2]]
+
     def is_target(r):
-        return (r is not None and (r["D_TE0"] >= 0 or not anomalous) and r["guided_TE"] == 1)
+        return (r is not None and (r[F["D"]] >= 0 or not anomalous) and r[F["guided"]] == 1)
     by = {(round(r["H"], 4), round(r["W"], 4)): r for r in rows}
     hs, ws = sorted({round(h, 4) for h in heights}), sorted({round(w, 4) for w in widths})
     out = []
@@ -863,8 +912,8 @@ def _rank_targets(rows, heights, widths, anomalous: bool = True) -> list[dict]:
         i, j = hs.index(h), ws.index(w)
         nb = [by.get((hs[a], ws[b])) for a in (i - 1, i, i + 1) for b in (j - 1, j, j + 1)
               if (a, b) != (i, j) and 0 <= a < len(hs) and 0 <= b < len(ws)]
-        split = abs(r["neff_TE"][0] - r["neff_TM"][0]) if r.get("neff_TM") else 0.0
-        out.append(dict(H_um=h, W_um=w, D_TE0=r["D_TE0"], ng_TE0=r["ng_TE0"],
+        split = other_split(r, mode)
+        out.append(dict(H_um=h, W_um=w, **{F["D"]: r[F["D"]], F["ng"]: r[F["ng"]]},
                         guided_TE=r["guided_TE"], guided_TM=r["guided_TM"],
                         TE_TM_split=split,
                         target_neighbours=f"{sum(map(is_target, nb))}/8",
@@ -940,19 +989,44 @@ def stage_ring(ctx: Context) -> dict:
     bb_file = ctx.path("results", "broadband.jsonl")
     ctx.tool("broadband", "--points", f"{H}x{W}", "--wl-min", lo, "--wl-max", hi,
              "--pump", wl, "--steps", cfg.cross_section.decision_steps, "--radius", R,
+             "--n2", cfg.assumptions.n2_m2_w, "--pump-mode", pump_mode(cfg),
              "--data", bb_file.relative_to(ctx.out), "--overwrite", "--plots-dir", PROFILE_DIR,
              *ctx.stack_args())
     _to_tables(ctx, ctx.out / PROFILE_DIR, {"profiles_summary.csv": "dispersion_profiles.csv"})
     prof = [r for r in _read_csv(ctx.out / "tables" / "dispersion_profiles.csv")
-            if r["geometry"].startswith(f"{H*1e3:.0f}×{W*1e3:.0f}")]
+            if r["geometry"].startswith(f"{H*1e3:.0f}×{W*1e3:.0f}")
+            and r.get("mode", "TE00") == pump_mode(cfg)]
     prof = prof[-1] if prof else {}
-    fig = ctx.out / PROFILE_DIR / f"profile_H{H*1e3:.0f}_W{W*1e3:.0f}.png"
+    fig = ctx.out / PROFILE_DIR / (f"profile_H{H*1e3:.0f}_W{W*1e3:.0f}"
+                                   + ("" if pump_mode(cfg) == "TE00" else "_TM00") + ".png")
     ui.say(f"\nRing R = {R} um: FSR = {fsr_r:.1f} GHz, total loss {total:.3g} dB/cm "
            f"(scattering {scat}, absorption {absl}, bend {bend_loss:.2g}) -> Q_int = {qi:.3g}; "
            f"D2/2π = {prof.get('D2_2pi_MHz', '?')} MHz, zero-dispersion wavelengths: "
            f"{prof.get('ZDWs_nm', '?')}")
     ui.figure(fig)
+    xs_res = (ctx.state.get("stages", {}).get("cross_section") or {}).get("results") or {}
+    thermal = None
+    gamma_c = xs_res.get("core_fraction")
+    if gamma_c is None:                      # designs made before 15B: from the saved records
+        F = pump_fields(cfg)
+        for f in sorted(ctx.out.glob("results/finalist_*steps.jsonl")) + \
+                sorted(ctx.out.glob("results/map_*steps.jsonl")):
+            for r in _read_jsonl(f):
+                if (abs(r.get("H", -1) - H) < 1e-6 and abs(r.get("W", -1) - W) < 1e-6
+                        and r.get("bend_radius") is None and r.get(F["gamma"]) is not None):
+                    gamma_c = r[F["gamma"]]
+            if gamma_c is not None:
+                break
+    if gamma_c is not None:
+        a_ = cfg.assumptions
+        thermal = physics.thermal_shift_pm_per_K(wl, ng, gamma_c,
+                                                 a_.dn_dT_core_per_K, a_.dn_dT_box_per_K)
+        ui.say(f"Thermal shift of the resonances: {thermal[0]:.1f} to {thermal[1]:.1f} pm/K "
+               f"(core fraction {gamma_c:.2f}; rest in air to rest in the BOX)")
+    if prof.get("DW_nm") and prof.get("DW_nm") != "none in band":
+        ui.say(f"Dispersive waves (D_int = 0) at {prof['DW_nm']} nm")
     return dict(radius_um=R, fsr_ghz=fsr_r, n_group=ng, loss_db_cm=total, bend_loss_db_cm=bend_loss,
+                thermal_shift_pm_K=list(thermal) if thermal else None, dw_nm=prof.get("DW_nm"),
                 scattering_loss_db_cm=scat, absorption_loss_db_cm=absl, q_intrinsic=qi,
                 D2_2pi_MHz=_num(prof.get("D2_2pi_MHz")), D3_2pi_kHz=_num(prof.get("D3_2pi_kHz")),
                 zdw_nm=prof.get("ZDWs_nm"), profile_figure=str(fig),
@@ -1143,6 +1217,8 @@ def gap_builder_options(cfg) -> dict:
     frequency) give the builder's original simulation, bit for bit."""
     g = cfg.gap
     opts = dict(inner_box_recess_um=float(g.ring_inner_box_recess_um))
+    if pump_mode(cfg) == "TM00":
+        opts["mode_pol"] = "tm"                  # launch and record TM00 in the bus and ring
     n = int(g.band_points)
     if n > 1:
         f0 = C_UM / cfg.run.wavelength_um

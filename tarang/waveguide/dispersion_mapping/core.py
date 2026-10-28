@@ -137,6 +137,34 @@ def _pol(tf: float) -> str:
     return "TE" if tf > 0.6 else ("TM" if tf < 0.4 else "hybrid")
 
 
+# ---- the pump mode: TE00 or TM00 -------------------------------------------------------- #
+#: record fields of each pump polarisation (the record holds both)
+PUMP_FIELDS = {
+    "TE": dict(D="D_TE0", beta2="beta2_TE0", ng="ng_TE0", neff="neff_TE", guided="guided_TE",
+               guided_margin="guided_TE_margin", aeff="Aeff_TE0_um2", gamma="Gamma_TE0",
+               loss="loss_TE0_dB_cm", gap="te0_gap_to_next", hybrid="hybrid_TE",
+               other_neff="neff_TM", other_guided="guided_TM", other_D="D_TM0"),
+    "TM": dict(D="D_TM0", beta2="beta2_TM0", ng="ng_TM0", neff="neff_TM", guided="guided_TM",
+               guided_margin="guided_TM_margin", aeff="Aeff_TM0_um2", gamma="Gamma_TM0",
+               loss="loss_TM0_dB_cm", gap="tm0_gap_to_next", hybrid="hybrid_TM",
+               other_neff="neff_TE", other_guided="guided_TE", other_D="D_TE0"),
+}
+
+
+def pol_of(mode) -> str:
+    """'TE' or 'TM' from 'TE00', 'te', 'TM00', ..."""
+    p = str(mode or "TE").strip().upper()
+    if p not in ("TE", "TM", "TE0", "TM0", "TE00", "TM00"):
+        raise ValueError(f"pump mode {mode!r}: use TE00 or TM00")
+    return p[:2]
+
+
+def pump(r: dict, mode="TE00") -> dict:
+    """The pump mode's numbers of a solver record, under neutral names (D, ng, neff[0] = the
+    pump's n_eff, guided = how many modes of the pump's polarisation are guided, ...)."""
+    return {k: r.get(v) for k, v in PUMP_FIELDS[pol_of(mode)].items()}
+
+
 def dispersion_from_neff(wls, neff, wl0):
     """D, beta2, n_g at wl0 from a 4th-order fit of n_eff(lambda)."""
     p = np.polyfit(wls - wl0, neff, 4)
@@ -198,20 +226,30 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     fc = npts // 2
     m_te0 = max((m for m in range(num_modes) if _te_frac(data, m, fc) > 0.5),
                 key=lambda m: float(np.real(data.n_eff.isel(f=fc, mode_index=m))))
-    k_te0 = float(np.real(data.k_eff.isel(f=fc, mode_index=m_te0)))   # Im(n) lives in k_eff
-    loss_db_cm = 10 * np.log10(np.e) * 4 * np.pi * abs(k_te0) / (wl0 * 1e-4)
-    E2 = np.squeeze(sum(np.abs(getattr(data, c).isel(mode_index=m_te0, f=fc).values) ** 2
-                        for c in ("Ex", "Ey", "Ez")))
+    tm_modes = [m for m in range(num_modes) if _te_frac(data, m, fc) <= 0.5]
+    m_tm0 = max(tm_modes, key=lambda m: float(np.real(data.n_eff.isel(f=fc, mode_index=m)))) \
+        if tm_modes else None
     y = data.Ey.coords["y"].values
     z = data.Ey.coords["z"].values
-    if E2.ndim == 2:
+
+    def mode_numbers(m):
+        """loss (dB/cm), A_eff (µm²) and core power fraction of mode m at the pump."""
+        if m is None:
+            return None, None, None
+        k = float(np.real(data.k_eff.isel(f=fc, mode_index=m)))       # Im(n) lives in k_eff
+        loss = 10 * np.log10(np.e) * 4 * np.pi * abs(k) / (wl0 * 1e-4)
+        E2 = np.squeeze(sum(np.abs(getattr(data, c).isel(mode_index=m, f=fc).values) ** 2
+                            for c in ("Ex", "Ey", "Ez")))
+        if E2.ndim != 2:
+            return float(loss), float("nan"), float("nan")
         dA = np.outer(np.gradient(y), np.gradient(z)).reshape(E2.shape)
         Y, Z = np.meshgrid(y, z, indexing="ij")
         in_core = (np.abs(Y) <= width / 2) & (Z >= 0) & (Z <= height)
-        aeff = float(np.sum(E2 * dA) ** 2 / np.sum(E2 ** 2 * dA))
-        gamma_core = float(np.sum(E2 * dA * in_core) / np.sum(E2 * dA))
-    else:
-        aeff, gamma_core = float("nan"), float("nan")
+        return (float(loss), float(np.sum(E2 * dA) ** 2 / np.sum(E2 ** 2 * dA)),
+                float(np.sum(E2 * dA * in_core) / np.sum(E2 * dA)))
+
+    loss_db_cm, aeff, gamma_core = mode_numbers(m_te0)
+    loss_tm, aeff_tm, gamma_tm = mode_numbers(m_tm0)
 
     n_sub = n_of(medium_for(substrate, lo, hi), wl0)
     n_top = 1.0 if is_air(cladding) else n_of(medium_for(cladding, lo, hi), wl0)
@@ -232,6 +270,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
         si_handle=si_handle, pml=pml, bend_radius=bend_radius,
         loss_TE0_dB_cm=float(loss_db_cm), Aeff_TE0_um2=round(aeff, 4),
         Gamma_TE0=round(gamma_core, 4),
+        loss_TM0_dB_cm=loss_tm, Aeff_TM0_um2=None if aeff_tm is None else round(aeff_tm, 4),
+        Gamma_TM0=None if gamma_tm is None else round(gamma_tm, 4),
         D_TE0=round(D_te, 2), beta2_TE0=round(b2_te, 2), ng_TE0=round(ng_te, 4),
         D_TM0=round(D_tm, 2), beta2_TM0=round(b2_tm, 2), ng_TM0=round(ng_tm, 4),
         fit_resid_TE0=res_te, fit_resid_TM0=res_tm,
@@ -245,5 +285,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
         guided_counts_valid=not bent,
         te0_gap_to_next=(round(te_like[0]["neff"] - te_like[1]["neff"], 5)
                          if len(te_like) > 1 else None),
+        tm0_gap_to_next=(round(tm_like[0]["neff"] - tm_like[1]["neff"], 5)
+                         if len(tm_like) > 1 else None),
         modes=modes,
     )

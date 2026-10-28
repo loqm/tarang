@@ -101,7 +101,11 @@ def key(r):
             bool(r.get("snap", False)))
 
 
-def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None):
+def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None, pump="TE00"):
+    """Plots and tables of the mesh check, for the pump mode ``pump`` (TE00 or TM00)."""
+    from tarang.waveguide.dispersion_mapping.core import PUMP_FIELDS, pol_of
+    F = PUMP_FIELDS[pol_of(pump)]
+    pump = "TE00" if pol_of(pump) == "TE" else "TM00"
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -124,10 +128,10 @@ def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None):
             continue
         n_c = _core_index(_mat[0] if _mat else "si3n4", wl)
         dl = np.array([wl * 1e3 / (n_c * s) for s in S])               # nm
-        D = np.array([byS[s]["D_TE0"] for s in S])
-        ne = np.array([byS[s]["neff_TE"][0] for s in S])
-        ng = np.array([byS[s]["ng_TE0"] for s in S])
-        gte = [byS[s]["guided_TE"] for s in S]
+        D = np.array([byS[s][F["D"]] for s in S])
+        ne = np.array([byS[s][F["neff"]][0] for s in S])
+        ng = np.array([byS[s][F["ng"]] for s in S])
+        gte = [byS[s][F["guided"]] for s in S]
         Dref, neref, ngref = D[-1], ne[-1], ng[-1]
         bands = {q: mesh_band(dict(zip(S, y))) for q, y in (("D", D), ("neff", ne), ("ng", ng))}
         name = f"{H*1e3:.0f}×{W*1e3:.0f} nm" + (f", R = {R:g} µm" if R else " (straight)")
@@ -135,9 +139,9 @@ def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None):
         label = name + ("" if snapped else ", not snapped")      # in the summary's legend
         fig, axs = plt.subplots(1, 3, figsize=(15, 4.6), dpi=140)
         for ax, y, q, lab, fmt in (
-                (axs[0], D, "D", "D(TE00) [ps/(nm·km)]", "{:.1f}"),
-                (axs[1], ne, "neff", "n_eff(TE00)", "{:.5f}"),
-                (axs[2], ng, "ng", "n_g(TE00)", "{:.4f}")):
+                (axs[0], D, "D", f"D({pump}) [ps/(nm·km)]", "{:.1f}"),
+                (axs[1], ne, "neff", f"n_eff({pump})", "{:.5f}"),
+                (axs[2], ng, "ng", f"n_g({pump})", "{:.4f}")):
             b = bands[q]
             ax.axhspan(b["value"] - (b["band"] or 0), b["value"] + (b["band"] or 0),
                        color="#b8e6b0", alpha=0.6)
@@ -155,9 +159,9 @@ def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None):
             ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.2), frameon=False)
         fig.suptitle(f"Mesh convergence — {name}, λ = {wl*1e3:.0f} nm, grid "
                      f"{'snapped to the core edges' if snapped else 'not snapped'}   "
-                     f"(guided TE count per mesh: {gte})", fontsize=11)
+                     f"(guided {pump[:2]} count per mesh: {gte})", fontsize=11)
         summary.append(dict(H_nm=H * 1e3, W_nm=W * 1e3, R_um=R or "", wl_nm=wl * 1e3,
-                            snapped=snapped, meshes=" ".join(map(str, S)),
+                            pump=pump, snapped=snapped, meshes=" ".join(map(str, S)),
                             D=round(bands["D"]["value"], 2), D_band=round(bands["D"]["band"], 2),
                             neff=round(bands["neff"]["value"], 5),
                             neff_band=round(bands["neff"]["band"], 5),
@@ -165,7 +169,7 @@ def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None):
         fig.tight_layout()
         tag = f"conv_H{H*1e3:.0f}_W{W*1e3:.0f}" + (f"_R{R:g}um" if R else "") + \
               (f"_wl{wl*1e3:.0f}nm" if abs(wl - 1.55) > 1e-9 else "") + \
-              ("" if snapped else "_unsnapped")
+              ("" if snapped else "_unsnapped") + ("" if pump == "TE00" else "_TM00")
         save_fig(fig, out / f"{tag}.png", layout=False)
         Dmed = bands["D"]["value"]
         err = np.abs(D - Dmed) / abs(Dmed) * 100
@@ -174,7 +178,7 @@ def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None):
             rows.append(dict(H_nm=H * 1e3, W_nm=W * 1e3, R_um=R or "", wl_nm=wl * 1e3,
                              snapped=snapped, steps=s, cell_nm=round(x, 2), D=d, neff=n1, ng=n2,
                              D_from_median_pct=round(e, 2), dneff_from_finest=round(n1 - neref, 5),
-                             guided_TE=g))
+                             pump=pump, guided=g))
     ax_s.axhline(tol_pct, color="g", ls="--", label=f"{tol_pct:g} % target")
     ax_s.invert_xaxis(); ax_s.grid(alpha=0.3, which="both")
     ax_s.set_xlabel("core cell size (nm)  → finer"); ax_s.set_ylabel("|D − D_median| / |D_median| (%)")
@@ -209,6 +213,8 @@ def main():
     ap.add_argument("--overwrite", action="store_true", help="reuse the plots folder")
     ap.add_argument("--plots-dir", default=None,
                     help="write the plots here (default: mesh_convergence_plots next to the data)")
+    ap.add_argument("--pump", default="TE00", choices=["TE00", "TM00"],
+                    help="the mode whose D, n_eff and n_g are checked")
     ap.add_argument("--snap", action="store_true",
                     help="grid lines through the four core edges (steadier D from mesh to mesh)")
     a = ap.parse_args()
@@ -240,7 +246,7 @@ def main():
                 def record(i, r):
                     f.write(json.dumps(r) + "\n"); f.flush()
                     saved.add((r["H"], r["W"], r["steps"]))
-                    msg = r.get("error") or f"D={r['D_TE0']:.1f} n_eff={r['neff_TE'][0]:.5f}"
+                    msg = r.get("error") or f"D_TE0={r['D_TE0']:.1f} n_TE0={r['neff_TE'][0]:.5f}"
                     print(f"[{i}/{len(jobs)}] H={r['H']} W={r['W']} steps={r['steps']} "
                           f"R={r.get('bend_radius')}  {msg}  ({r['secs']}s)", flush=True)
 
@@ -264,7 +270,7 @@ def main():
                         for j in rest:
                             i += 1
                             record(i, _work(j))
-    plot(data, a.overwrite, a.tol_pct, a.plots_dir)
+    plot(data, a.overwrite, a.tol_pct, a.plots_dir, a.pump)
 
 
 if __name__ == "__main__":

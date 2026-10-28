@@ -7,7 +7,7 @@ python -m pytest tests/test_geometries.py -q    # one file
 python -m pytest --run-cloud tests/test_cloud_smoke.py -v   # REAL cloud run, ~0.03 FlexCredits
 ```
 
-Expected on Windows: `491 passed, 2 skipped` (quick check: `470 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
+Expected on Windows: `507 passed, 2 skipped` (quick check: `486 passed, 2 skipped, 21 deselected`). The two skips are the real-cloud
 smoke test (opt-in) and the MultiNest test, which needs the native MultiNest
 library (normally Linux/macOS only). Settings live in `pytest.ini` at the
 repository root.
@@ -621,3 +621,24 @@ cloud for the cloud stages.
 | `test_convergence_plot_shows_the_band_and_writes_its_table` | The mesh-check tool writes `mesh_band.csv` (median, band, snapped) and draws the band, named in the legend |
 | `test_snap_and_ladder_settings` | `snap_grid` on and the 50–90 ladder by default; the ladder leaves the stage key alone, snapping changes it; the tools get `--snap` |
 | `test_paper_style_moves_titles_to_the_caption_and_keeps_legends_readable` | Paper style: the figure and panel titles go to the JSON's caption, dense in-cell annotations are hidden, a 4-column legend under a panel becomes 2 columns, every text is 6–8.5 pt |
+
+## `test_phase15b.py`: the simulation figures of a comb paper and the TM00 pump (16 tests, Phase 15B)
+
+| Test | Checks |
+|---|---|
+| `test_dispersive_waves_are_the_zeros_of_dint_away_from_the_pump` | D_int = 500 μ² − 0.5 μ⁴ (MHz) has its dispersive waves at μ = ±√1000; none for a purely anomalous D_int, none within the pump region (\|μ\| < 3) |
+| `test_thermal_shift_is_the_power_weighted_dn_dT_over_n_g` | dλ/dT = (λ/n_g)(Γ dn/dT_core + rest × dn/dT_BOX): 13.7 to 15.0 pm/K for Γ = 0.8 at 1550 nm |
+| `test_thermo_optic_values_are_in_the_assumptions_with_their_source` | Si₃N₄ 2.45e-5 /K and SiO₂ 0.95e-5 /K in the assumptions table, citing Arbabi and Goddard |
+| `test_gamma_over_the_band` | γ = 2π n₂ / (λ A_eff) at each guided wavelength; unguided points left out; nothing drawn without A_eff |
+| `test_te_tm_anomalous_map` | With the measured 780 nm values: 350 nm film TE-only anomalous at W 0.5–0.6 µm, normal at 0.7; 400 nm film both anomalous |
+| `test_pylle_inputs_come_from_the_design` | The pyLLE script takes R, Q_i, Q_c, γ and the dispersion file from `lle/`; 4× the over-coupled threshold by default, or `--power-mw`; detuning from +2 to −12 half-linewidths; ±200 modes |
+| `test_pylle_script_dry_run_and_missing_inputs` | `--dry-run` prints the inputs and returns 0; a design without `lle/` says to run the layout step first |
+| `test_soliton_step_is_on_the_plateau_after_the_chaotic_maximum` | The step shown by default lies on the single-soliton plateau of a rise / chaos / plateau / loss power trace |
+| `test_pump_fields_name_the_records_fields_of_each_mode` | `core.pump(r, mode)` gives D, n_g, n_eff, guided count of TE00 or TM00 under neutral names; an unknown mode is refused |
+| `test_tm00_targets_are_ranked_by_their_own_rule` | With TM00: anomalous D_TM0 and one guided TM mode make a target (TE-multimode allowed); candidates carry D_TM0 / ng_TM0; the split is to the nearest guided TE mode |
+| `test_map_tool_judges_targets_by_the_pump_mode` | `maps --pump TM00` lists the TM00 targets with D_TM0 columns |
+| `test_ring_gap_fdtd_launches_tm00_only_for_tm_designs` | The partial-ring FDTD launches and records TM00 (4 modes sorted by TM fraction) with `mode_pol="tm"`; TE keeps the one-mode spec (same simulations, same cached results) |
+| `test_pump_mode_setting_checks_and_keeps_old_keys` | TE00 by default; TM00 changes the cross-section key and asks the gap for TM; an unknown mode is flagged |
+| `test_tm00_design_stops_before_the_te_only_steps` | A TM00 design stops before the grating step with exit code 2 and says which steps to run |
+| `test_gui_candidate_columns_follow_the_pump_mode` | The GUI's candidate table shows D_TM0 / ng_TM0 for TM00 designs; the pump mode is a choice in the cross-section step |
+| `test_broadband_records_of_either_mode_are_read_by_their_own_fields` | Broadband records of TE00 (old and new) and TM00 are read by their own fields |
