@@ -8,7 +8,40 @@ breaking changes; they are announced here first).
 ## [Unreleased]
 
 Phase 15A: figures for papers, and how exact D is. Phase 15B: the simulation figures of a
-comb paper.
+comb paper. Phase 15D: the lab's look, the web page, and your measured values.
+
+### Added (15D)
+
+- **Your measured values** (GUI: View → *Your measured values*; `design.toml`: `[measured]`).
+  One place for numbers from your own chips and setup, each replacing the assumed one:
+  - a ring's **intrinsic Q** (`measured.q_intrinsic`) or a **cutback loss**
+    (`measured.propagation_loss_db_cm`) replaces the loss preset in the ring step and in the
+    cutback design. A Q holds every loss of the ring, so α = 2π n_g / (λ Q_i) and the straight
+    part is α minus the bend loss; the absorption value is kept and the rest counts as
+    scattering. Only these two values repeat a step (ring, test waveguides);
+  - a **coupler insertion loss** (`measured.coupler_loss_db`) is shown next to the simulated
+    loss budget (the simulation is not changed);
+  - film and BOX thickness, width and thickness scatter, fibre MFD and angle, n2 and dn/dT
+    can be ticked as measured (`measured.keys`);
+  - `measured.source` (chip, method, date) is given as the source of every measured value in
+    the assumptions table and the report.
+  The two loss values cannot both be set; a Q outside 1e3–1e10 or a loss outside 0–100 dB/cm
+  is flagged.
+- **The lab's look in the GUI** (`tarang/gui/theme.py`): the dark theme of the LOQM software
+  pages (background #080b18, violet #7b61ff, Space Grotesk and IBM Plex Mono from Google
+  Fonts with system fonts as the fallback offline), the product name in the lab gradient,
+  mono section labels and status pills. The launcher passes only the theme options the
+  installed Streamlit knows. `python -m tarang.gui --plain` keeps Streamlit's light look
+  (projector, print). Figures stay white.
+- **The TARANG web page** for the lab site (`docs/web/index.html` with `docs/web/assets/`):
+  one static page, no script, in the same style; the design steps, one design walked
+  through with its figures and GUI screenshots, platforms and getting started. It goes on
+  the site with the public release.
+
+### Fixed (15D)
+
+- The ring stage's summary line printed the bend loss as a number (e.g. 6.6e-05) after the
+  bend-loss line had called it below the solver's resolution; it now says `< 0.001`.
 
 ### Added (15B)
 

@@ -381,6 +381,12 @@ run still going can go on without it or be stopped first. It shows the same desi
 folders the command line writes, so both can be used on one design in turn. The
 [user guide](docs/USER_GUIDE.md) walks through a design step by step, with screenshots.
 
+It opens in the dark look of the LOQM software pages (`--plain` for Streamlit's light
+look). **Your measured values** (under View) takes numbers from your own chips: a ring's
+intrinsic Q or a cutback loss replaces the assumed propagation loss, a measured coupler
+loss is shown next to the simulated one, and measured film, fibre and material values
+replace the assumed ones; the report lists them as measured, with their source.
+
 **Guided design** (the default view): the steps of your design on the left, with their
 status (done, waiting for your choice, settings changed, not run yet); the chosen step on
 the right:

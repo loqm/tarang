@@ -127,7 +127,7 @@ def choose_radius(rows: list, alpha_db_cm: float) -> Optional[float]:
 
 def stage_waveguides(ctx) -> dict:
     from tarang.design import assumptions, visuals
-    from tarang.design.stages import _losses
+    from tarang.design.stages import _losses, measured_loss
     from tarang.design.ui import parse_list
     cfg, ui = ctx.cfg, ctx.ui
     xs = ctx.results("cross_section")
@@ -151,8 +151,14 @@ def stage_waveguides(ctx) -> dict:
     alpha = scat + absl
     wg = cfg.waveguides
     radii = [float(r) for r in (wg.bend_radii_um or default_radii(wl))]
-    ui.say(f"Expected propagation loss {alpha:g} dB/cm (scattering {scat:g} + absorption "
-           f"{absl:g}; {assumptions.loss_source(cfg, 'scattering')}).")
+    measured = measured_loss(cfg, xs.get("n_group", 2.0), wl)
+    if measured:
+        alpha = measured["straight_db_cm"]
+        ui.say(f"Expected propagation loss {alpha:.3g} dB/cm ({measured['what']}, "
+               f"{measured['source']}).")
+    else:
+        ui.say(f"Expected propagation loss {alpha:g} dB/cm (scattering {scat:g} + absorption "
+               f"{absl:g}; {assumptions.loss_source(cfg, 'scattering')}).")
     ui.say(f"Bend loss of the {H * 1e3:.0f} × {W * 1e3:.0f} nm waveguide at {len(radii)} radii "
            "(local bent-mode solve, free):")
     rows = []

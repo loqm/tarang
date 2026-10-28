@@ -105,4 +105,62 @@ def table(cfg, results: Optional[dict] = None) -> list[dict]:
         for r_ in rows:
             if r_["quantity"] == "BOX thickness":
                 r_["note"] = "Si handle below the BOX in the facet mode solve"
+    return with_measured(cfg, rows)
+
+
+#: setting -> the row of the table that shows it
+KEY_ROWS = {"ring.scattering_loss_db_cm": "scattering loss", "ring.absorption_loss_db_cm": "absorption loss",
+            "assumptions.n2_m2_w": "Kerr index n2 of the core",
+            "assumptions.dn_dT_core_per_K": "thermo-optic coefficient of the core",
+            "assumptions.dn_dT_box_per_K": "thermo-optic coefficient of the BOX",
+            "grating.mfd_um": "fibre mode-field diameter", "grating.fiber_angle_deg": "fibre angle from vertical",
+            "cross_section.tolerance_width_um": "width tolerance",
+            "cross_section.tolerance_height_um": "thickness tolerance",
+            "stack.box_height_um": "BOX thickness", "grating.min_feature_um": "smallest lithography feature",
+            "edge.fiber_mfd_um": "lensed-fibre spot (MFD)"}
+#: settings with no row of their own: the row added when they hold a measured value
+EXTRA_ROWS = {"stack.core_height_um": ("film thickness", "um"),
+              "cross_section.height_um": ("film thickness", "um"),
+              "cross_section.width_um": ("core width", "um")}
+
+
+def measured_source(cfg) -> str:
+    s = str(cfg.measured.source).strip()
+    return f"measured: {s}" if s else "measured (your value)"
+
+
+def with_measured(cfg, rows: list[dict]) -> list[dict]:
+    """The table with your measured values in it: their rows say "measured: <source>",
+    a measured Q_i or cutback loss replaces the assumed scattering loss, and a measured
+    coupler loss is added."""
+    m, src = cfg.measured, measured_source(cfg)
+    by = {r_["quantity"]: r_ for r_ in rows}
+    for k in m.keys:
+        sec, _, key = str(k).partition(".")
+        value = getattr(getattr(cfg, sec, None), key, None)
+        if k in KEY_ROWS and KEY_ROWS[k] in by:
+            by[KEY_ROWS[k]]["source"] = src
+        elif value is not None:
+            q, unit = EXTRA_ROWS.get(k, (k, ""))
+            if q not in by:
+                by[q] = dict(quantity=q, value=value, unit=unit, source=src, note="")
+                rows.insert(0, by[q])
+    if m.q_intrinsic is not None or m.propagation_loss_db_cm is not None:
+        rows = [r_ for r_ in rows if r_["quantity"] != "scattering loss"]
+        if m.q_intrinsic is not None:
+            row = dict(quantity="intrinsic Q of the ring", value=m.q_intrinsic, unit="", source=src,
+                       note="Gives the loss: α = 2π n_g / (λ Q_i); the straight part is α minus the "
+                            "bend loss. Replaces the assumed scattering loss.")
+        else:
+            row = dict(quantity="propagation loss (cutback)", value=m.propagation_loss_db_cm,
+                       unit="dB/cm", source=src, note="Replaces the assumed scattering loss.")
+        rows.insert(0, row)
+        for r_ in rows:
+            if r_["quantity"] == "absorption loss":
+                r_["note"] = ("Kept; the rest of the measured loss counts as scattering. "
+                              + r_["note"])
+    if m.coupler_loss_db is not None:
+        rows.append(dict(quantity="coupler insertion loss", value=m.coupler_loss_db, unit="dB",
+                         source=src, note="Per coupler; shown next to the simulated one, the "
+                                          "simulation itself is unchanged."))
     return rows

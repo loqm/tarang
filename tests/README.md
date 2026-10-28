@@ -642,3 +642,22 @@ cloud for the cloud stages.
 | `test_tm00_design_stops_before_the_te_only_steps` | A TM00 design stops before the grating step with exit code 2 and says which steps to run |
 | `test_gui_candidate_columns_follow_the_pump_mode` | The GUI's candidate table shows D_TM0 / ng_TM0 for TM00 designs; the pump mode is a choice in the cross-section step |
 | `test_broadband_records_of_either_mode_are_read_by_their_own_fields` | Broadband records of TE00 (old and new) and TM00 are read by their own fields |
+
+## `test_phase15d.py`: the lab's look, the web page and your measured values (14 tests, Phase 15D)
+
+| Test | Checks |
+|---|---|
+| `test_theme_flags_keep_only_options_streamlit_knows` | Only the `--theme.*` options the installed Streamlit knows are passed; dark base, violet primary, Space Grotesk with a sans-serif fallback |
+| `test_every_theme_option_exists_in_the_installed_streamlit` | Every option of the lab theme is known to the Streamlit in use |
+| `test_css_brand_label_and_pills` | The style block holds the lab's colours and fonts with system fallbacks; the brand, labels and pills are HTML with escaped text; outside a themed app a heading is plain bold Markdown |
+| `test_launcher_passes_the_lab_theme_or_the_plain_look` | `python -m tarang.gui` starts Streamlit with the lab theme; `--plain` with the light look |
+| `test_web_page_is_self_contained_and_its_pictures_exist` | `docs/web/index.html` has no script and no external picture, every picture exists, the four sections are there, the assets stay under 3 MB |
+| `test_measured_section_round_trips_and_is_checked` | `[measured]` is saved and read back; Q_i and a cutback loss together, a Q below 1e3 and an unknown key are flagged |
+| `test_loss_from_q_is_the_inverse_of_q_intrinsic` | α from Q_i and Q_i from α agree; Q_i = 10⁶ at 1550 nm and n_g 2.22 is 0.39 dB/cm |
+| `test_measured_q_holds_the_bend_loss_and_cutback_does_not` | A measured Q_i gives straight loss + bend = α(Q_i); a cutback loss is the straight loss itself; the source defaults to "your measurement" |
+| `test_only_measured_losses_repeat_the_ring_step` | The source, the coupler loss and the measured keys leave the ring's stage key alone; a measured Q changes it; the cross-section key is untouched |
+| `test_assumptions_table_marks_measured_values` | A cutback loss replaces the scattering row; measured film thickness and fibre MFD say "measured: <source>"; the coupler loss is added; unmeasured rows keep their publication |
+| `test_report_shows_the_measured_loss_and_coupler_loss` | The report's ring table names the measured loss and its source; the assumptions table lists the Q; the measured coupler loss follows the loss budget |
+| `test_measured_values_page_saves_them_in_design_toml` | The GUI page saves the source, Q_i, coupler loss and a ticked BOX thickness into `design.toml` |
+| `test_measured_values_page_refuses_a_missing_or_wrong_value` | A chosen cutback without a value, or text that is not a number, is refused and nothing is saved |
+| `test_lab_theme_is_applied_when_streamlit_runs_with_it` | With the lab theme, the GUI writes the style block, the gradient brand and the mono step labels |

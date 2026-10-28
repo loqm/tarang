@@ -118,6 +118,41 @@ were empty then show those values.
 **All results** (under View) is the earlier view: choose stages, **Estimate cost**,
 **Run**, and tabs with every figure, table, file and the log.
 
+**Your measured values** (under View) is where numbers from your own chips go; see
+[Your measured values](#your-measured-values) below.
+
+**The look.** The GUI opens in the lab's dark theme, with the fonts of the lab's software
+pages (loaded from Google Fonts; on a PC without internet the system fonts are used).
+Figures stay white, as in a paper. `python -m tarang.gui --plain` opens it in Streamlit's
+light look instead, e.g. for a projector.
+
+### Your measured values
+
+Until you have a chip, TARANG works with values from publications (the loss presets, n2,
+dn/dT), from your wafer order (film and BOX thickness) and from datasheets (the fibre).
+Once you measure something, enter it under **View → Your measured values**. Each value
+replaces the assumed one, and the report lists it as *measured*, with the source you give
+(chip, method, date). Leave a field empty when you have not measured it.
+
+| Field | What it changes |
+|---|---|
+| **Intrinsic Q** of a ring, *or* **propagation loss** from a cutback | The loss used by the Ring step (and by the cutback design of test waveguides) instead of the preset. A Q holds every loss of the ring, the bend's too: α = 2π n_g / (λ Q_i), and the straight-waveguide part is α minus the computed bend loss. The absorption value is kept; the rest counts as scattering. Use Q_i, not the loaded Q: for an under-coupled resonance with loaded Q_L and dip transmission T₀, Q_i = 2 Q_L / (1 + √T₀). |
+| **Insertion loss per coupler** | Shown next to the simulated loss budget in the report; the simulation is not changed. Measure it on the straight reference waveguide: half its fibre-to-fibre loss. |
+| Film and BOX thickness, width and thickness scatter, fibre spot or MFD and angle, n2, dn/dT | Replace those settings; tick **measured** so the report gives them your source. |
+
+After **Save measured values**, the steps that use a changed value show 🔁: run them
+again. Only the two loss values repeat a step (Ring or Test waveguides, and what follows);
+the source and the coupler loss change only the report. In `design.toml` the same values
+are under `[measured]`:
+
+```toml
+[measured]
+source = "chip A2, swept-laser scan and cutback, Nov 2026"
+q_intrinsic = 1.2e6          # or: propagation_loss_db_cm = 0.35 (not both)
+coupler_loss_db = 5.8
+keys = ["stack.core_height_um"]   # settings that hold measured values
+```
+
 ## 3. Step 1: what to design
 
 <p align="center"><img src="assets/gui/01_start.png" alt="Step 1: the two choices with drawings (ring or test waveguides; grating or edge couplers), the lensed fibre, then wavelength, film, BOX, materials and the loss preset with its paper." width="100%"></p>
@@ -367,7 +402,8 @@ script says how. TARANG itself does not depend on either.
 **Settings:**
 - the FSR;
 - the radius (empty: from the FSR);
-- your measured losses, which replace the preset.
+- the losses: a preset, your own scattering and absorption values, or a measured Q_i or
+  cutback loss from [Your measured values](#your-measured-values), which replaces both.
 
 ### Test waveguides
 

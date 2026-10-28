@@ -3,6 +3,7 @@
     python -m tarang.gui                       # designs under ./design_runs
     python -m tarang.gui --root D:\\my\\designs # another folder
     python -m tarang.gui --port 8502           # another port (default 8501)
+    python -m tarang.gui --plain               # Streamlit's plain light look (projector, print)
 
 Stop it with Exit TARANG (bottom of the left panel) or Ctrl+C in this window. Runs started from the GUI keep going on their own;
 their output is in <design>/gui_log.txt.
@@ -22,11 +23,14 @@ def main(argv=None) -> int:
     ap.add_argument("--root", default="design_runs", help="folder holding your design folders")
     ap.add_argument("--port", type=int, default=8501, help="local port (default 8501)")
     ap.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
+    ap.add_argument("--plain", action="store_true",
+                    help="Streamlit's plain light look instead of the lab's dark theme")
     a = ap.parse_args(argv)
     if importlib.util.find_spec("streamlit") is None:
         print("The GUI needs Streamlit. Install it with:\n    pip install -e .[gui]\n"
               "(in the TARANG folder), or: pip install \"streamlit>=1.50\"")
         return 2
+    from tarang.gui import theme
     app = Path(__file__).with_name("app.py")
     url = f"http://localhost:{a.port}"
     # headless: Streamlit would otherwise ask for an e-mail address on its first start;
@@ -34,7 +38,8 @@ def main(argv=None) -> int:
     cmd = [sys.executable, "-m", "streamlit", "run", str(app), "--server.port", str(a.port),
            "--server.address", "localhost", "--server.headless", "true",
            "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
-           "--theme.primaryColor", "#2563eb",
+           *(["--theme.base", "light", "--theme.primaryColor", "#2563eb"] if a.plain
+             else theme.streamlit_flags()),
            "--", "--root", str(Path(a.root).resolve())]
     print(f"TARANG GUI on {url}  (designs under {Path(a.root).resolve()}); Exit TARANG in its left panel, or Ctrl+C here, stops it.")
     proc = subprocess.Popen(cmd)
