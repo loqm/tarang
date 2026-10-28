@@ -4,6 +4,7 @@ Left: pick a design folder, the view, its credit limits and the Tidy3D balance.
 Guided design (the default view, ``guided.py``): one step at a time: what to design, then
 each stage with a drawing, its settings, Run (cloud steps priced first), and what it
 recommends, its results and figures.
+Your measured values (``measured.py``): numbers from your own chips that replace the assumed ones.
 All results: choose stages, then Estimate cost (runs nothing that costs), Run, or Stop;
 tabs Summary, Whole device, Figures, Tables, Report, Files, Settings, Log.
 
@@ -20,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tarang.gui import data
+from tarang.gui import data, theme
 
 try:
     import streamlit as st
@@ -58,8 +59,13 @@ def _table(rows, **kw):
 
 # ------------------------------------------------------------------ sidebar
 def sidebar(root_default: str):
-    st.sidebar.title("TARANG")
-    st.sidebar.caption("Microrings and test waveguides, with grating or edge couplers")
+    if theme.active():
+        st.sidebar.markdown(theme.brand("TARANG", "SiN microring design"),
+                            unsafe_allow_html=True)
+        st.sidebar.caption("Microrings and test waveguides, with grating or edge couplers")
+    else:
+        st.sidebar.title("TARANG")
+        st.sidebar.caption("Microrings and test waveguides, with grating or edge couplers")
     root = st.sidebar.text_input("Folder with your designs", value=st.session_state.get("root", root_default),
                                  help="The folder that holds your design folders (each has a design.toml).")
     st.session_state["root"] = root
@@ -87,9 +93,11 @@ def sidebar(root_default: str):
             except Exception as err:                                  # noqa: BLE001
                 st.error(str(err))
     if run is not None:
-        st.sidebar.radio("View", ["Guided design", "All results"], key="mode",
+        st.sidebar.radio("View", ["Guided design", "All results", "Your measured values"], key="mode",
                          help="Guided: one step at a time, with what each step recommends. All "
-                              "results: every stage, figure, table and file at once.")
+                              "results: every stage, figure, table and file at once. Your measured "
+                              "values: losses, Q, coupler loss, film and fibre values from your own "
+                              "chips, replacing the assumed ones.")
         credits_panel(run)
         from tarang.gui import guided
         guided.jobs_box(run, where=st.sidebar)
@@ -168,7 +176,7 @@ def run_panel(run: Path):
     job = data.job(run)
     running = bool(job.get("running"))
     with st.container(border=True):
-        st.markdown("**Run stages**")
+        st.markdown(theme.heading("Run stages"), unsafe_allow_html=True)
         c1, c2, c3 = st.columns([3, 2, 1.3])
         only = c1.multiselect("Stages", names, default=[n for n in names if n in todo],
                               help="Done stages with the same settings are not repeated.")
@@ -226,12 +234,12 @@ def live_log(run_s: str):
 def tab_summary(run: Path):
     a, b = st.columns([3, 2])
     with a:
-        st.markdown("**Design**")
+        st.markdown(theme.heading("Design"), unsafe_allow_html=True)
         _table(data.summary_rows(run))
     with b:
-        st.markdown("**Fibre-to-fibre loss at the design wavelength**")
+        st.markdown(theme.heading("Fibre-to-fibre loss at the design wavelength"), unsafe_allow_html=True)
         _table(data.loss_rows(run))
-    st.markdown("**Stages**")
+    st.markdown(theme.heading("Stages"), unsafe_allow_html=True)
     _table(data.stage_rows(run))
 
 
@@ -326,6 +334,8 @@ def tab_log(run: Path):
 
 def main():
     st.set_page_config(page_title="TARANG design", page_icon="〰", layout="wide")
+    if theme.active():
+        st.markdown(theme.css(), unsafe_allow_html=True)
     run = sidebar(_args().root)
     if run is None:
         st.title("TARANG design")
@@ -345,6 +355,10 @@ def main():
     if st.session_state.get("mode", "Guided design") == "Guided design":
         from tarang.gui import guided
         guided.page(run, live_log)
+        return
+    if st.session_state.get("mode") == "Your measured values":
+        from tarang.gui import measured
+        measured.page(run)
         return
     run_panel(run)
     tabs = st.tabs(["Summary", "Whole device", "Figures", "Tables", "Report", "Files", "Settings", "Log"])

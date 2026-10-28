@@ -291,6 +291,23 @@ class Assumptions:
 
 
 @dataclass
+class Measured:
+    source: str = _f("", "Where your measured values come from (chip, method, date); shown as "
+                         "their source in the report")
+    q_intrinsic: Optional[float] = _f(None, "Measured intrinsic Q of the ring at the design "
+                                            "wavelength (from a fit of a resonance); replaces "
+                                            "the assumed propagation loss")
+    propagation_loss_db_cm: Optional[float] = _f(None, "Measured straight-waveguide propagation "
+                                                       "loss (cutback); replaces the assumed "
+                                                       "scattering + absorption loss", "dB/cm")
+    coupler_loss_db: Optional[float] = _f(None, "Measured insertion loss of one coupler (from the "
+                                                "reference waveguide: half its fibre-to-fibre "
+                                                "loss); shown next to the simulated one", "dB")
+    keys: list = _f([], "Other settings that hold measured values (e.g. stack.core_height_um "
+                        "from ellipsometry); the report gives them the source above")
+
+
+@dataclass
 class Layout:
     bus_length_um: float = _f(400.0, "Straight bus length between the tapers", "um")
     tone: str = _f("structure", "Polygon tone ('structure': polygons are the core; 'trench': "
@@ -346,7 +363,8 @@ LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00"},
 SECTIONS = {"run": Run, "materials": Materials, "stack": Stack, "cross_section": CrossSection,
             "ring": Ring, "gap": Gap, "grating": Grating, "checks": Checks, "taper": Taper,
             "apodise": Apodise, "focus": Focus, "edge": Edge, "waveguides": Waveguides,
-            "layout": Layout, "device": Device, "assumptions": Assumptions}
+            "layout": Layout, "device": Device, "assumptions": Assumptions,
+            "measured": Measured}
 
 
 @dataclass
@@ -367,6 +385,7 @@ class DesignConfig:
     layout: Layout = field(default_factory=Layout)
     device: Device = field(default_factory=Device)
     assumptions: Assumptions = field(default_factory=Assumptions)
+    measured: Measured = field(default_factory=Measured)
     given: set = field(default_factory=set, repr=False, compare=False)   # "section.key" read from a file
 
     # ---- file I/O ------------------------------------------------------------------- #
@@ -510,6 +529,24 @@ def implausible(cfg: "DesignConfig") -> dict[str, str]:
         msg = range_problem(dotted, getattr(getattr(cfg, sec), key))
         if msg:
             out[dotted] = msg
+    m = cfg.measured
+    if m.q_intrinsic is not None and m.propagation_loss_db_cm is not None:
+        out["measured.q_intrinsic"] = ("Measured Q_i and measured propagation loss are both set: "
+                                       "keep one (each gives the ring's loss).")
+    if m.q_intrinsic is not None and not 1e3 <= float(m.q_intrinsic) <= 1e10:
+        out["measured.q_intrinsic"] = (f"Measured Q_i = {m.q_intrinsic:g}: an intrinsic Q is "
+                                       "between 1e3 and 1e10 (e.g. 1.2e6).")
+    if m.propagation_loss_db_cm is not None and not 0 < float(m.propagation_loss_db_cm) <= 100:
+        out["measured.propagation_loss_db_cm"] = (
+            f"Measured loss {m.propagation_loss_db_cm:g} dB/cm: give a value above 0 and at most "
+            "100 dB/cm.")
+    if m.coupler_loss_db is not None and not 0 <= float(m.coupler_loss_db) <= 60:
+        out["measured.coupler_loss_db"] = (f"Measured coupler loss {m.coupler_loss_db:g} dB: a "
+                                           "loss per coupler in dB, 0 to 60 (e.g. 5.5).")
+    for k in m.keys:
+        sec, _, key = str(k).partition(".")
+        if sec not in SECTIONS or key not in {f.name for f in fields(SECTIONS[sec])}:
+            out["measured.keys"] = f"measured.keys: {k!r} is not a setting (section.key)."
     pm = str(getattr(cfg.cross_section, "pump_mode", "TE00")).strip().upper()
     if pm not in ("TE00", "TM00"):
         out["cross_section.pump_mode"] = (f"Pump mode {cfg.cross_section.pump_mode!r}: use "

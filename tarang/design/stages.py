@@ -325,6 +325,24 @@ def _losses(cfg) -> tuple[float, float]:
             pre["absorption_db_cm"] if absl is None else float(absl))
 
 
+def measured_loss(cfg, n_group: float, wavelength_um: float, bend_db_cm: float = 0.0):
+    """Your measured loss as a straight-waveguide loss (dB/cm), or None when none is given.
+
+    A measured intrinsic Q holds every loss of the ring, the bend's included:
+    alpha = 2 pi n_g / (lambda Q_i), and the straight part is alpha minus the bend loss.
+    A cutback loss is the straight-waveguide loss itself."""
+    m = cfg.measured
+    src = str(m.source).strip() or "your measurement"
+    if m.q_intrinsic is not None:
+        total = physics.loss_from_q(float(m.q_intrinsic), n_group, wavelength_um)
+        return dict(what=f"measured Q_i = {float(m.q_intrinsic):.3g}", source=src,
+                    straight_db_cm=max(total - bend_db_cm, 0.0), q_intrinsic=float(m.q_intrinsic))
+    if m.propagation_loss_db_cm is not None:
+        return dict(what=f"measured propagation loss {float(m.propagation_loss_db_cm):g} dB/cm",
+                    source=src, straight_db_cm=float(m.propagation_loss_db_cm))
+    return None
+
+
 def _wavelength_ok(v) -> str:
     try:
         return "" if 0.2 < float(v) < 20 else "wavelength must be in um, e.g. 1.55"
@@ -982,6 +1000,15 @@ def stage_ring(ctx: Context) -> dict:
                   else f"{bend_loss:.3g} dB/cm"))
     bent_info = fig_bent_mode(ctx, H, W, R)
     total = scat + absl + bend_loss
+    measured = measured_loss(cfg, ng, wl, bend_loss)
+    if measured:                        # your measurement replaces the assumed losses
+        straight = measured["straight_db_cm"]
+        absl = min(float(absl), straight)
+        scat = round(straight - absl, 4)
+        total = straight + bend_loss
+        ui.say(f"  {measured['what']} ({measured['source']}) replaces the assumed losses: "
+               f"straight-waveguide loss {straight:.3g} dB/cm (absorption {absl} kept, the rest "
+               "counted as scattering)")
     qi = physics.q_intrinsic(total, ng, wl)
     fsr_r = physics.fsr_ghz(R, ng)
 
@@ -999,8 +1026,10 @@ def stage_ring(ctx: Context) -> dict:
     prof = prof[-1] if prof else {}
     fig = ctx.out / PROFILE_DIR / (f"profile_H{H*1e3:.0f}_W{W*1e3:.0f}"
                                    + ("" if pump_mode(cfg) == "TE00" else "_TM00") + ".png")
+    from tarang.design.waveguides import FLOOR_DB_CM as _floor
+    bend_txt = f"< {_floor:g}" if bend_loss < _floor else f"{bend_loss:.2g}"
     ui.say(f"\nRing R = {R} um: FSR = {fsr_r:.1f} GHz, total loss {total:.3g} dB/cm "
-           f"(scattering {scat}, absorption {absl}, bend {bend_loss:.2g}) -> Q_int = {qi:.3g}; "
+           f"(scattering {scat}, absorption {absl}, bend {bend_txt}) -> Q_int = {qi:.3g}; "
            f"D2/2π = {prof.get('D2_2pi_MHz', '?')} MHz, zero-dispersion wavelengths: "
            f"{prof.get('ZDWs_nm', '?')}")
     ui.figure(fig)
@@ -1028,6 +1057,7 @@ def stage_ring(ctx: Context) -> dict:
     return dict(radius_um=R, fsr_ghz=fsr_r, n_group=ng, loss_db_cm=total, bend_loss_db_cm=bend_loss,
                 thermal_shift_pm_K=list(thermal) if thermal else None, dw_nm=prof.get("DW_nm"),
                 scattering_loss_db_cm=scat, absorption_loss_db_cm=absl, q_intrinsic=qi,
+                measured_loss=measured,
                 D2_2pi_MHz=_num(prof.get("D2_2pi_MHz")), D3_2pi_kHz=_num(prof.get("D3_2pi_kHz")),
                 zdw_nm=prof.get("ZDWs_nm"), profile_figure=str(fig),
                 bent_mode_shift_nm=bent_info.get("shift_nm"),
@@ -1640,8 +1670,8 @@ STAGE_NAMES = [s[0] for s in STAGES]
 DEPENDS = {
     "materials": ("run.wavelength_um", "run.band_um", "materials"),
     "cross_section": ("stack", "cross_section"),
-    "ring": ("run.goal", "ring"),
-    "waveguides": ("run.goal", "waveguides"),
+    "ring": ("run.goal", "ring", "measured.q_intrinsic", "measured.propagation_loss_db_cm"),
+    "waveguides": ("run.goal", "waveguides", "measured.q_intrinsic", "measured.propagation_loss_db_cm"),
     "gap": ("gap",),
     "grating": ("grating",),
     "checks": ("checks",),
@@ -1696,7 +1726,8 @@ def settings_key(cfg: DesignConfig, stage: str) -> str:
             sec, _, key = dep.partition(".")
             val = getattr(cfg, sec)
             if (dep == "run.goal" and getattr(val, key) == "comb_ring") or \
-                    (dep == "run.coupling" and getattr(val, key) == "grating"):
+                    (dep == "run.coupling" and getattr(val, key) == "grating") or \
+                    (sec == "measured" and getattr(val, key) is None):
                 continue                              # the default: keys of older runs unchanged
             parts[dep] = getattr(val, key) if key else {
                 k: v for k, v in val.__dict__.items() if k not in KEY_IGNORE.get(sec, ())}

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tarang.gui import data, illustrations as il, wizard as wz
+from tarang.gui import data, illustrations as il, theme, wizard as wz
 
 try:
     import streamlit as st
@@ -68,7 +68,7 @@ def page(run: Path, live_log) -> None:
     st.markdown(NAV_CSS, unsafe_allow_html=True)
     nav, main = st.columns([1.15, 3.3], gap="medium")
     with nav:
-        st.markdown("**Steps**")
+        st.markdown(theme.heading("Steps"), unsafe_allow_html=True)
         for i, s in enumerate(steps, 1):
             label = f"{ICON[statuses[s.key]]} {i}. {s.title}"
             if st.button(label, key=f"nav-{s.key}", width="stretch",
@@ -360,7 +360,7 @@ def results_panel(run: Path, s, status: str) -> None:
     rec = wz.recommendation(run, s)
     if rec:
         with st.container(border=True):
-            st.markdown("**Recommended**")
+            st.markdown(theme.heading("Recommended"), unsafe_allow_html=True)
             _table(rec["rows"])
             st.caption("Why: " + rec["why"])
             differs = any(r["in use"] not in (r["recommended"], "(result)")
@@ -371,7 +371,7 @@ def results_panel(run: Path, s, status: str) -> None:
                     st.error(msg) if msg else st.success("Saved. Run this step again to use them.")
     nums = wz.key_numbers(run, s)
     if nums:
-        st.markdown("**Results**")
+        st.markdown(theme.heading("Results"), unsafe_allow_html=True)
         _table(nums)
     if s.key == "cross_section" and wz.candidates(run):
         with st.expander("Choose another cross-section"):
@@ -392,7 +392,7 @@ def results_panel(run: Path, s, status: str) -> None:
         downloads(run)
         rows = data.summary_rows(run)
         if rows:
-            st.markdown("**The design in numbers**")
+            st.markdown(theme.heading("The design in numbers"), unsafe_allow_html=True)
             _table([dict(quantity=r["quantity"], value=r["value"], unit=r["unit"]) for r in rows])
         if (run / "report.md").exists():
             with st.expander("Read the report here"):
@@ -401,7 +401,7 @@ def results_panel(run: Path, s, status: str) -> None:
 
 
 def downloads(run: Path) -> None:
-    st.markdown("**Downloads**")
+    st.markdown(theme.heading("Downloads"), unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     h = wz.report_html(run)
     if h:
@@ -422,9 +422,20 @@ def stage_step(run: Path, cfg, s, status: str, live_log) -> None:
     with a:
         if s.picture:
             _img(s.picture(cfg), 330)
-        st.markdown(f"Status: **{STATUS_TEXT[status]}**")
+        if theme.active():
+            st.markdown(f"Status {theme.pill(status, STATUS_TEXT[status])}", unsafe_allow_html=True)
+        else:
+            st.markdown(f"Status: **{STATUS_TEXT[status]}**")
     with b:
         settings_form(run, cfg, s)
+        if s.key in ("ring", "waveguides"):
+            m = cfg.measured
+            if m.q_intrinsic is not None or m.propagation_loss_db_cm is not None:
+                st.info("Your measured loss replaces the loss values here (see **Your measured "
+                        "values** in the left panel).")
+            else:
+                st.caption("Measured a ring's Q or a cutback loss on your chips? Enter it under "
+                           "**Your measured values** (left panel, View); it replaces these losses.")
     run_controls(run, s, status, live_log)
     if wz.is_cloud(s):
         jobs_box(run, s)

@@ -281,6 +281,8 @@ def write(ctx) -> dict:
               f"({ring['scattering_loss_db_cm']} + {ring['absorption_loss_db_cm']} + "
               f"{ring['bend_loss_db_cm']:.2g}) |",
               f"| Q_i | {ring['q_intrinsic']:.3g} |",
+              *([f"| loss from your measurement | {ring['measured_loss']['what']} "
+                 f"({ring['measured_loss']['source']}) |"] if ring.get("measured_loss") else []),
               f"| D2/2π, D3/2π | {ring.get('D2_2pi_MHz')} MHz, {ring.get('D3_2pi_kHz')} kHz |",
               f"| zero-dispersion wavelengths | {ring.get('zdw_nm')} |"]
         if ring.get("dw_nm"):
@@ -593,6 +595,11 @@ def _checks_section(ctx, chk: dict) -> list[str]:
     if chk.get("loss_budget"):
         L += [f"**Fibre-to-fibre loss budget** at {wl} µm, off resonance.", ""]
         L += _md_table(chk["loss_budget"], ["item", "loss_db"], {"loss_db": ".2f"})
+        mc = ctx.cfg.measured.coupler_loss_db
+        if mc is not None:
+            from tarang.design.assumptions import measured_source
+            L += ["", f"Measured insertion loss per coupler: {float(mc):.2f} dB "
+                      f"({measured_source(ctx.cfg)}); the budget above is the simulated one.", ""]
         L += _fig(ctx, ctx.out / "figures" / "7c_loss_budget.png", "loss budget")
     b = chk.get("band")
     if b and b.get("curves"):

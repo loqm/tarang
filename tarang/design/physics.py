@@ -27,6 +27,13 @@ def q_intrinsic(loss_db_cm: float, n_group: float, wavelength_um: float) -> floa
     return 2 * math.pi * n_group / (wavelength_um * alpha_per_um)
 
 
+def loss_from_q(q_intrinsic: float, n_group: float, wavelength_um: float) -> float:
+    """Propagation loss (dB/cm) of a ring with intrinsic Q: the inverse of ``q_intrinsic``,
+    alpha = 2 pi n_g / (lambda Q_i)."""
+    alpha_per_um = 2 * math.pi * n_group / (wavelength_um * q_intrinsic)
+    return alpha_per_um * 1e4 * (10 * math.log10(math.e))
+
+
 def slab_te_index(n_core: float, n_below: float, n_above: float, thickness_um: float,
                   wavelength_um: float) -> float:
     """Effective index of the fundamental TE mode of an asymmetric three-layer slab.
