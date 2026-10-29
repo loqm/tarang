@@ -45,9 +45,14 @@ def _panel(ax, fig, panel: dict):
     sc = ax.scatter(x, y, c=z, cmap="viridis", vmin=0, vmax=vmax, s=18 if drawn else 140,
                     edgecolors="w" if drawn else "k", linewidths=0.6, zorder=3,
                     label="simulated points" if not panel.get("model") else "computed points")
+    edge = np.array([bool(p.get("edge", False)) for p in pts])
+    if edge.any():                  # the peak lies at the end of the simulated band
+        ax.scatter(x[edge], y[edge], s=70 if drawn else 260, marker="o", facecolors="none",
+                   edgecolors="#D55E00", linewidths=1.2, zorder=4)
     ok = np.array([bool(p.get("allowed", True)) for p in pts])
     k = int(np.nanargmax(np.where(ok, z, -np.inf))) if ok.any() else int(np.nanargmax(z))
-    ax.annotate(f"{z[k]:.1f} %", (x[k], y[k]), xytext=(6, 6), textcoords="offset points",
+    ax.annotate(f"{'≥' if edge[k] else ''}{z[k]:.1f} %", (x[k], y[k]), xytext=(6, 6),
+                textcoords="offset points",
                 fontsize=8, color="w" if drawn else "k", zorder=4,
                 bbox=dict(boxstyle="round,pad=0.2", fc="k", alpha=0.35, lw=0) if drawn else None)
     if panel.get("chosen") is not None:
@@ -65,6 +70,9 @@ def _panel(ax, fig, panel: dict):
     if panel.get("chosen") is not None:
         keys.append(Line2D([], [], ls="none", marker="x", ms=9, mew=2.6, color="red",
                            label=panel.get("chosen_label", "chosen design")))
+    if edge.any():
+        keys.append(Line2D([], [], ls="none", marker="o", ms=8, mfc="none", mec="#D55E00",
+                           mew=1.2, label="peak at the band edge (true peak higher)"))
     ax.legend(handles=keys, fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.16),
               ncol=2, frameon=False)
     if panel.get("note"):
@@ -87,6 +95,11 @@ def draw(path: Path, panels: list[dict], suptitle: str = "") -> Path:
 
 
 # ------------------------------------------------------------------ per design
+def _true(v) -> bool:
+    """A flag read back from a CSV table ('True'/'False') or kept as a bool."""
+    return v if isinstance(v, bool) else str(v).strip().lower() in ("true", "1", "1.0", "yes")
+
+
 def uniform_points(rows: list[dict]) -> list[dict]:
     """2D grating runs grouped by (period, fill factor): the best fibre position at each."""
     best: dict = {}
@@ -97,7 +110,8 @@ def uniform_points(rows: list[dict]) -> list[dict]:
         e = float(r["efficiency_at_target"])
         if key not in best or e > best[key]["efficiency_at_target"]:
             best[key] = dict(period_um=key[0], fill_factor=key[1], efficiency_at_target=e,
-                             peak_efficiency=float(r.get("peak_efficiency", e)))
+                             peak_efficiency=float(r.get("peak_efficiency", e)),
+                             peak_inside=_true(r.get("peak_inside", True)))
     return list(best.values())
 
 
@@ -115,8 +129,8 @@ def draw_uniform(path: Path, rows: list[dict], final: Optional[dict], wl: float)
                            for p in pts],
                    title=f"Efficiency at {wl} µm", xlabel="Fill factor (tooth / period)",
                    ylabel="Period (µm)", chosen=chosen, chosen_label=lab, note=note),
-              dict(points=[dict(x=p["fill_factor"], y=p["period_um"], z=p["peak_efficiency"])
-                           for p in pts],
+              dict(points=[dict(x=p["fill_factor"], y=p["period_um"], z=p["peak_efficiency"],
+                                edge=not p["peak_inside"]) for p in pts],
                    title="Peak efficiency (at any wavelength in the band)",
                    xlabel="Fill factor (tooth / period)", ylabel="Period (µm)", chosen=chosen,
                    chosen_label=lab)]

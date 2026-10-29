@@ -7,6 +7,73 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-29
+
+Work before the paper runs: figures ready for a journal, the grating checks the paper
+needs, time and version per stage, and the soliton check with pyLLE.
+
+### Added
+- **Grating efficiency against the fibre angle** (checks stage, `[checks] angle_sweep_deg`,
+  one small 2D run per angle, priced first): figure `7d_grating_angle`, table
+  `tables/grating_angle_sweep.csv` and a report section. Each angle's peak wavelength is set
+  beside the first-order grating equation's prediction from the design angle,
+  λ = Λ (n_avg ∓ n_top sin θ). Empty by default, so earlier runs keep their settings; both
+  examples sweep 8, 10, 14 and 16° around their 12°.
+- **Peaks at the end of the simulated band are marked.** A grating whose efficiency peak lies
+  at the end of the simulated band has its true peak outside it: its peak efficiency is a
+  lower bound. Figures 5b and 5g mark such points (≥ / ≤ and an orange ring), and the grating
+  stage prints how many step-A designs peak there and how to widen the band
+  (`[grating] bandwidth_um`). Such designs were already not chosen while another peaks
+  inside the band.
+- **Time and version per stage.** Each stage records its wall time, the TARANG version and
+  when it finished (`state.json`); the report's runs section lists them with the credits
+  of each stage, so every number in a paper is traced to one version.
+- **pyLLE script** (`validation/pylle_soliton/run_pylle.py`):
+  - the normalised pump f² and the soliton existence limit ζ_max = π²f²/8, printed before
+    anything is solved;
+  - the detuning sweep plotted against ζ, the state shown taken from the middle of the
+    soliton step;
+  - a held single soliton: a sech seed at ζ halfway between √3 and ζ_max, held for 2×10⁴
+    round trips, checked to stay a single steady pulse (figure `pylle_single_soliton`);
+  - D_int as pyLLE interpolated it against TARANG's, with the modes pyLLE extrapolates
+    shaded (figure `pylle_dint`);
+  - `pylle_summary.json` with these numbers, and the pulse width against the sech
+    approximation √(2ζ) sech(φ √(ζκ/D2)).
+  - On the v0.1.0 1550 nm design (208 mW, 4× threshold): f² = 3.63, ζ_max = 4.48; the sweep
+    loses its solitons at ζ = 4.52; the single soliton held at ζ = 3.11 stays one pulse
+    (16.7 mW in the cavity, 126 fs FWHM; the sech approximation, exact only for ζ ≫ 1, gives
+    142 fs); the two D_int agree within 1.4 MHz over 163 GHz.
+  - Works with NumPy 2 (pyLLE 4.1 still calls `np.string_`).
+
+- **Literature comparison** (`validation/literature/`): TARANG's D2 against seven
+  published Si3N4 microresonators, from the paper's cross-section, cladding, mode, pump and
+  FSR only (D2 = −(c/n_g) D1² β2). All seven agree: two measured devices within 5 %
+  (Liu et al. 2018 device B, +4.7 %; Liu et al. 2021, +1.1 %), the TE00 and TM00 of a 23 µm
+  ring within 20 % of the authors' simulation once the bend is included (Karpov et al. 2018;
+  the straight waveguide gets TE00's sign wrong), a Damascene device between the all-air and
+  all-SiO2 cross-sections (Liu et al. 2018 device A), and the anomalous TM00 width window of
+  an air-clad 430 nm film at 780 nm (Moille et al. 2024). Free, about an hour (local
+  mode solver, 70 steps per wavelength).
+
+### Changed
+- **Paper-style figures** (`figure_style = "paper"`):
+  - panels get letters (a), (b), … in reading order, and the caption in the JSON uses them;
+  - titles of up to 6 characters stay on the panel (column headings such as |E|², Ex), and
+    `figures.keep_title(ax)` keeps any other;
+  - notes written on the figure or beside a panel go to the caption, and a note that spills
+    over its panel shrinks (down to 5.5 pt) or goes to the caption;
+  - a legend that covers plotted lines, points or bars moves to a free corner, else under
+    its panel, clear of the tick labels and the x label; a legend under a panel set in more
+    columns than its share of the row takes one column;
+  - font sizes by role: ticks 6–7 pt, axis labels 6.5–8 pt, legends 6–7 pt, other text
+    6–8 pt;
+  - the map dashboard (a mosaic of pictures) is made in the screen style only.
+- The bent-mode figure has one legend (straight, bent, their difference) and shorter axis
+  labels; the cross-section's mode panel names its colour bar.
+- The 780 nm example maps film heights of 300–450 nm (around a 350 nm film) and widths of
+  400–900 nm.
+- Figures of earlier runs are redrawn once from their saved results (figure version 4).
+
 ## [0.1.0] - 2026-10-28
 
 First release. Compared with the pre-release code on `main`, TARANG is now
@@ -758,5 +825,6 @@ Cached results from before v0.1.0 are reused automatically when the stored simul
 matches the new one exactly; otherwise TARANG explains what differs and runs again. Old
 result folders are never modified or deleted.
 
-[Unreleased]: https://github.com/loqm/tarang/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/loqm/tarang/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/loqm/tarang/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/loqm/tarang/releases/tag/v0.1.0

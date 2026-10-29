@@ -137,6 +137,8 @@ band = true
 grating_extras = true
 # Fibre angle tolerance of your holders (+/-) [deg]
 angle_tolerance_deg = 1.0
+# Fibre angles for the efficiency-against-angle curve of the final grating (one small 2D run each; empty: none) [deg]
+angle_sweep_deg = [8.0, 10.0, 14.0, 16.0]
 # Lithography width error of teeth and gaps (+/-) [um]
 litho_bias_um = 0.02
 # Grating mesh check (final grating again at 1.5x finer mesh; 1 small 2D run)

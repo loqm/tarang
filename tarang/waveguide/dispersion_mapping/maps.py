@@ -461,6 +461,10 @@ def plot_extra_maps(rows, outdir, a, plt):
               ("map3_second_mode_margin.png", "3"), ("map4_sensitivity_width.png", "4"),
               ("map6_robust_window.png", "6"), ("map7_group_index.png", "7")]
     pngs = [Path(made.get(fn) or md / fn) for fn, _ in panels]
+    from tarang import figures as _figs
+    if _figs.SETTINGS["style"] == "paper":       # a mosaic of pictures is not a paper figure
+        print(f"maps: {len(made)} files -> {md} (no dashboard in the paper style)")
+        return
     if not all(p.suffix == ".png" and p.exists() for p in pngs):
         print(f"maps: {len(made)} files -> {md} (no dashboard: it is made from png files)")
         return

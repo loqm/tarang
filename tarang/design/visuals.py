@@ -147,7 +147,7 @@ def _mode_panel(ctx, ax, H, W) -> None:
     neff = float(np.real(data.n_eff.isel(mode_index=m, f=0)))
     ax.set_title(f"TE00 |E|² at {wl} µm (n_eff = {neff:.4f})")
     ax.set_xlabel("y (µm)")
-    _plt().colorbar(im, ax=ax, shrink=0.8)
+    _plt().colorbar(im, ax=ax, shrink=0.8, label="|E|² (arb. units)")
 
 
 def mode_profiles(rows: list, H: float, W: float, path: Path, title: str,
@@ -228,12 +228,13 @@ def bent_mode(straight: dict, bent: dict, H: float, W: float, R: float, path: Pa
     tw.fill_between(ys, diff, color="#56B4E9", alpha=0.45, lw=0, label="bent − straight")
     tw.axhline(0, color="#56B4E9", lw=0.6)
     lim = max(float(np.abs(diff).max()), 1e-9) * 1.15
-    tw.set(ylim=(-lim, lim), ylabel="bent − straight (right axis)")
-    tw.legend(fontsize=8, loc="lower right")
+    tw.set(ylim=(-lim, lim), ylabel="bent − straight")
     ax.axvspan(-W / 2, W / 2, color="0.9", zorder=0)
     ax.set(xlim=(-W / 2 - 1.2, W / 2 + 1.2), ylim=(0, 1.05), xlabel="y (µm)",
-           ylabel="|E|² through the middle of the core", title=f"outward shift {shift:+.1f} nm")
-    ax.legend(fontsize=8)
+           ylabel="|E|² at mid-height (norm.)", title=f"outward shift {shift:+.1f} nm")
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = tw.get_legend_handles_labels()
+    tw.legend(h1 + h2, l1 + l2, fontsize=8, loc="upper left")    # on top of the fill
     fig.suptitle(f"Bent mode: the bend (R = {R:g} µm) shifts {mode} by {shift:+.1f} nm towards the "
                  "outside of the ring")
     return _save(fig, path)
@@ -488,6 +489,10 @@ def gap_field_map(data, path: Path, wavelength_um: float, gap_um: float, title: 
 
 
 # =============================================================== grating
+def _flag(v) -> bool:
+    return v if isinstance(v, bool) else str(v).strip().lower() in ("true", "1", "1.0", "yes")
+
+
 def grating_landscape(rows: list[dict], best: dict, path: Path, target_um: float,
                       final: Optional[dict] = None) -> Path:
     """Peak efficiency and efficiency at the design wavelength over (fill factor,
@@ -504,7 +509,11 @@ def grating_landscape(rows: list[dict], best: dict, path: Path, target_um: float
         vmax = max(v.max(), 1e-3)
         sc = ax.scatter(ff, P, c=v, s=520, marker="s", cmap="viridis", vmin=0, vmax=vmax)
         for r in rows:                         # dark text on the bright end of the colour map
-            ax.annotate(f"{r[key] * 100:.0f}%\n{r['peak_wavelength_um'] * 1e3:.0f}",
+            # a peak at the end of the simulated band: the true peak lies beyond it (≥ / ≤)
+            edge = "" if _flag(r.get("peak_inside", True)) else (
+                "≥" if r["peak_wavelength_um"] >= target_um else "≤")
+            ax.annotate(f"{'≥' if edge and key == 'peak_efficiency' else ''}{r[key] * 100:.0f}%"
+                        f"\n{edge}{r['peak_wavelength_um'] * 1e3:.0f}",
                         (r["fill_factor"], r["period_um"]), ha="center", va="center",
                         fontsize=6.5, color="k" if r[key] > 0.6 * vmax else "w")
         ax.scatter([best["fill_factor"]], [best["period_um"]], s=760, marker="s",
@@ -519,7 +528,8 @@ def grating_landscape(rows: list[dict], best: dict, path: Path, target_um: float
                   markerscale=0.45, frameon=False)
         ax.set_xlabel("Fill factor (tooth / period)")
         ax.set_ylabel("Period (µm)")
-        ax.set_title(title + "\n(label: efficiency, peak wavelength in nm)", fontsize=10)
+        ax.set_title(title + "\n(label: efficiency, peak wavelength in nm; ≥ / ≤: peak at the "
+                     "band edge)", fontsize=10)
         plt.colorbar(sc, ax=ax, label="efficiency")
     return _save(fig, path)
 

@@ -18,12 +18,22 @@ From Python: ``run(DesignConfig(...), out="my_run", interactive=False)``.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Iterable, Optional
 
 from tarang.design.config import DesignConfig
 from tarang.design.stages import STAGE_NAMES, STAGES, Context, applies, pump_mode, settings_key
 from tarang.design.ui import Prompter, Stop
+
+
+def stage_record(seconds: float) -> dict:
+    """When a stage finished, how long it took (wall time, s) and which TARANG made it: the
+    report's table of time and version per stage (every number traced to one version)."""
+    import datetime
+    from tarang import __version__
+    return dict(seconds=round(float(seconds), 1), tarang=__version__,
+                finished=datetime.datetime.now().isoformat(timespec="seconds"))
 
 #: steps designed for TE00 only so far (a TM00 design stops before them)
 TE_ONLY_STAGES = {"grating", "checks", "taper", "apodise", "focus", "edge", "layout", "device"}
@@ -97,8 +107,10 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
             ui.heading(f"[{i}/{len(STAGES)}] {title}  ({kind}"
                        f"{', priced before it runs' if kind == 'cloud' else ', free'})")
             ctx.stage = name
+            t0 = time.perf_counter()
             results = func(ctx)
-            ctx.state["stages"][name] = {"key": settings_key(cfg, name), "results": results}
+            ctx.state["stages"][name] = {"key": settings_key(cfg, name), "results": results,
+                                         **stage_record(time.perf_counter() - t0)}
             ctx.save_state()
             stale = True                         # later stages must follow this one
             if (results or {}).get("awaiting_choice"):

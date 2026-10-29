@@ -1402,6 +1402,7 @@ def stage_grating(ctx: Context) -> dict:
                  ctx.path("figures", "5b_grating_map.png"), wl)
     edge = _edge_notes(best, ffs, sorted({r["period_um"] for r in stage_a
                                           if r["fill_factor"] == best["fill_factor"]}))
+    edge += _band_edge_note(stage_a, wl, band)
 
     ff_rows, period_rows, align_rows = [], [], []
     final = best
@@ -1616,6 +1617,20 @@ def _best_grating(rows: list[dict]) -> dict:
     return max(inside, key=lambda r: r["peak_efficiency"])
 
 
+def _band_edge_note(rows: list[dict], wl: float, band: float) -> list[str]:
+    """A note when some designs peak at the end of the simulated band: their peak efficiency
+    and peak wavelength are bounds, not values (marked ≥ / ≤ in figures 5b and 5g)."""
+    out = [r for r in rows if str(r.get("peak_inside", True)).strip().lower()
+           in ("false", "0", "0.0", "no")]
+    if not out:
+        return []
+    return [f"{len(out)} of the {len(rows)} step-A designs peak at the end of the simulated band "
+            f"({(wl - band) * 1e3:.0f}-{(wl + band) * 1e3:.0f} nm): their peak efficiency is a "
+            "lower bound and their true peak lies outside the band (marked ≥ / ≤ in figures 5b "
+            "and 5g). They are not chosen as the best design while a design peaks inside the "
+            "band; widen [grating] bandwidth_um to see their true peaks."]
+
+
 def _edge_notes(best: dict, ffs, periods=None, positions=None) -> list[str]:
     """Warnings when the best design sits at the edge of a swept range."""
     notes = []
@@ -1707,7 +1722,7 @@ def applies(stage: str, cfg: DesignConfig) -> bool:
 
 # Version of the figures' drawing: a run made with an older version gets its figures redrawn
 # from saved results when its report is written (checks.redraw_saved_figures).
-FIGURE_VERSION = 3
+FIGURE_VERSION = 4
 
 
 # Settings that only label where a value came from (the values themselves are hashed):

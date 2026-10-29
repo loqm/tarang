@@ -478,7 +478,10 @@ period, fill factor and fibre position for the highest coupling at the design wa
 - the fabrication tolerance of the gaps;
 - the coupling across the band (3D FDTD);
 - the ring's mode families (do higher-order families cross the TE00 family?);
-- the grating's tolerance to angle and lithography bias, and its back-reflection.
+- the grating's tolerance to angle and lithography bias, and its back-reflection;
+- with `checks.angle_sweep_deg` (e.g. `[8, 10, 14, 16]` around a 12° stage), the grating's
+  efficiency against the fibre angle, each peak set beside the grating equation's
+  prediction (figure `7d_grating_angle`).
 
 *Path B:* the fibre-to-fibre loss budget at the design wavelength.
 
@@ -629,8 +632,9 @@ plotting program. `<name>_data.csv` has one row per plotted point: `panel` (0, 1
 right, top to bottom), `series` (the legend name), `kind` (line, points, bars, errorbar,
 hline, vline), `x`, `y`, `z` (the colour value of coloured points), `lo` and `hi` (error-bar
 ends). The axis labels and units are in `<name>_meta.json`. For journal-sized figures (3.4 in
-wide for one column of panels, 7 in otherwise, text 6–8.5 pt, titles moved to the caption in
-the JSON), set
+wide for one column of panels, 7 in otherwise; text 6–8 pt by role; panel letters (a), (b),
+…; long titles and notes moved to the caption in the JSON under those letters; legends kept
+off the data), set
 `run.figure_style = "paper"` and run the steps again with `--redo`. Every cloud simulation
 is read from its saved results, so this costs nothing as long as no other setting changed
 (a design made before Phase 15A keeps `snap_grid = false` by itself, so its cross-section
