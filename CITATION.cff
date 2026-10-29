@@ -8,12 +8,13 @@ abstract: >-
   dispersion engineering, ring resonators, grating and edge couplers, verified caching
   of cloud simulations with cost control, and Bayesian (nested-sampling) design search.
 authors:
-  - given-names: Esraaj
-    family-names: Sarkar Gupta
   - given-names: Divyanshu
     family-names: Tiwari
     affiliation: "Laboratory of Optics of Quantum Materials, Indian Institute of Technology Bombay"
+  - given-names: Esraaj
+    family-names: Sarkar Gupta
 version: 0.1.0
+date-released: 2026-10-28
 license: MIT
 repository-code: "https://github.com/loqm/tarang"
 url: "https://github.com/loqm/tarang"
