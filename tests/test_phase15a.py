@@ -236,9 +236,9 @@ def test_paper_style_moves_titles_to_the_caption_and_keeps_legends_readable(tmp_
         axs[0].text(0.5, 0.5, str(i))                 # dense in-cell annotations of a map
     figs.save(fig, tmp_path / "figures" / "p.png", close=False)
     meta = json.loads((tmp_path / "figures_paper" / "p_meta.json").read_text(encoding="utf-8"))
-    assert meta["caption"] == {"figure": "whole figure", "panel 0": "left panel"}
+    assert meta["caption"] == {"figure": "whole figure", "(a)": "left panel"}   # v0.1.1: letters
     assert axs[0].get_title() == "" and not fig._suptitle.get_visible()
-    assert not any(t.get_visible() for t in axs[0].texts)
+    assert not any(t.get_visible() for t in axs[0].texts if t.get_gid() != "tarang-letter")
     assert axs[1].get_legend()._ncols == 2
     sizes = [t.get_fontsize() for t in fig.findobj(plt.Text) if t.get_visible() and t.get_text()]
     assert min(sizes) >= 6.0 and max(sizes) <= 8.5

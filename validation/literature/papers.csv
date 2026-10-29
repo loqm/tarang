@@ -1,0 +1,8 @@
+id,reference,source,width_um,height_um,cladding,mode,pump_nm,fsr_GHz,d2_2pi_MHz,kind,window_lo_um,window_hi_um,note,bend_radius_um
+liu2018_A_TE,"Liu et al., Optica 5, 1347 (2018), device A",arXiv:1805.00069,1.58,0.75,oxide_sides_air_top,TE00,1558,88.63,1.10,measured,,,"photonic Damascene: SiO2 beside the core, no SiO2 on top; TARANG brackets it between air and SiO2 cladding",
+liu2018_A_TM,"Liu et al., Optica 5, 1347 (2018), device A",arXiv:1805.00069,1.58,0.75,oxide_sides_air_top,TM00,1558,86.35,0.967,measured,,,"photonic Damascene: SiO2 beside the core, no SiO2 on top; TARANG brackets it between air and SiO2 cladding",
+liu2018_B_TE,"Liu et al., Optica 5, 1347 (2018), device B",arXiv:1805.00069,1.58,0.81,sio2,TE00,1596.1,98.9,1.23,measured,,,thick SiO2 top cladding (TEOS and LTO),
+liu2021_TE,"Liu et al., Nat. Commun. 12, 2236 (2021)",arXiv:2005.13949,2.2,0.95,sio2,TE00,1550,40.6,0.224,measured,,,pump wavelength of the dispersion measurement not stated; 1550 nm assumed,
+karpov2018_TE,"Karpov et al., Nat. Commun. 9, 1146 (2018)",arXiv:1706.06445,1.45,0.74,sio2,TE00,1060,1001,-32,simulated,,,"cladding not stated (SiO2 assumed); radius about 23 um (bend included); sidewall angle 80 deg (TARANG: vertical); their simulation of the ring",23
+karpov2018_TM,"Karpov et al., Nat. Commun. 9, 1146 (2018)",arXiv:1706.06445,1.45,0.74,sio2,TM00,1060,992,11,simulated,,,"cladding not stated (SiO2 assumed); radius about 23 um (bend included); sidewall angle 80 deg (TARANG: vertical); their simulation of the ring",23
+moille2024_TM,"Moille et al., arXiv:2404.01577 (2024)",arXiv:2404.01577,,0.43,air,TM00,780,,,window,0.575,0.775,their Fig. 4b: TM00 dispersion stays anomalous for every ring width from 575 to 775 nm at H = 430 nm,

@@ -1,6 +1,6 @@
 # Example: Si3N4 microring at 780 nm with grating couplers (TARANG design).
-# The film thickness is left open, so the cross-section stage maps heights and widths
-# for 780 nm first; 4 um thermal oxide, air top cladding, full-etch gratings, 780HP-type
+# The film thickness is left open, so the cross-section stage maps heights of 300-450 nm
+# (around a 350 nm film) and widths of 400-900 nm for 780 nm first; 4 um thermal oxide, air top cladding, full-etch gratings, 780HP-type
 # fibre (mode-field diameter about 5 um; put your fibre's value) at 12 degrees. Start with
 #     python -m tarang.design --config <folder>/design.toml
 # or pick it under 'New design' in the GUI (python -m tarang.gui).
@@ -45,9 +45,10 @@ cladding_height_um = 2.0
 
 [cross_section]
 # Core heights to map (default: around the fixed film, or 0.32-0.58 x wavelength) [um]
-# heights_um =
+# Here 300-450 nm around a 350 nm film, to see which nearby film suits best.
+heights_um = [0.3, 0.325, 0.35, 0.375, 0.4, 0.425, 0.45]
 # Core widths to map (default: 0.39-1.16 x wavelength) [um]
-# widths_um =
+widths_um = [0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9]
 # Mesh steps per wavelength for the map (>= 50)
 map_steps = 50
 # Mesh steps per wavelength for the chosen geometry (>= 70)
@@ -136,6 +137,8 @@ band = true
 grating_extras = true
 # Fibre angle tolerance of your holders (+/-) [deg]
 angle_tolerance_deg = 1.0
+# Fibre angles for the efficiency-against-angle curve of the final grating (one small 2D run each; empty: none) [deg]
+angle_sweep_deg = [8.0, 10.0, 14.0, 16.0]
 # Lithography width error of teeth and gaps (+/-) [um]
 litho_bias_um = 0.02
 # Grating mesh check (final grating again at 1.5x finer mesh; 1 small 2D run)

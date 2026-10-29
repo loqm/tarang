@@ -16,6 +16,8 @@ Cloud (priced and confirmed one by one):
   * grating: where the light goes when it is launched from the waveguide (up = towards
     the fibre, down into the substrate, reflected back, past the grating), the fibre angle,
     film thickness and tooth width at +/- tolerance, and a finer mesh;
+  * grating efficiency against the fibre angle (``angle_sweep_deg``), with the peak shift
+    the grating equation predicts;
   * optionally the critical gap again at a 1.5x finer mesh.
 """
 from __future__ import annotations
@@ -28,6 +30,7 @@ from typing import Optional
 import numpy as np
 
 from tarang.design import physics
+from tarang.design.ui import parse_list
 from tarang.design.stages import (C_UM, FIGURE_VERSION, Context, _estimate, fig_bent_mode,
                                   fig_mode_profiles,
                                   gap_extras, grating_device, _gap_device)
@@ -41,6 +44,7 @@ def _form(ctx: Context) -> None:
         dict(section="checks", key="band", show=ring_goal),
         dict(section="checks", key="grating_extras", show=grating_coupling),
         dict(section="checks", key="angle_tolerance_deg", show=grating_coupling),
+        dict(section="checks", key="angle_sweep_deg", show=grating_coupling, cast=parse_list),
         dict(section="checks", key="litho_bias_um", show=grating_coupling),
         dict(section="checks", key="mesh_grating", show=grating_coupling),
         dict(section="checks", key="mesh_gap", show=ring_goal),
@@ -580,6 +584,9 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
     if ch.grating_extras:
         rev = _reverse_sim(variants["final"], ctx)
         jobs["reverse"] = (rev, variants["final"]._readable_name() + "_reverse")
+    sweep = angle_sweep_variants(ctx, gc)
+    for ang, d in sweep.items():
+        jobs[f"sweep {ang:g}"] = (d.sim, d._readable_name())
     if len(jobs) == 1 or _run_batch(ctx, jobs, folder, "grating checks") is None:
         return None
     wl0 = cfg.run.wavelength_um
@@ -616,7 +623,103 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
 
     visuals.safe(ctx, "grating checks", draw_grating_checks, ctx, spectra, budget)
     _write_csv(ctx.path("tables", "grating_checks.csv"), rows)
-    return dict(variants=rows, power_budget=budget)
+    angle_rows = angle_sweep_rows(ctx, gc, sweep, spectra.get("final"))
+    if angle_rows:
+        _write_csv(ctx.path("tables", "grating_angle_sweep.csv"), angle_rows)
+        visuals.safe(ctx, "grating angle sweep", draw_angle_sweep, ctx, gc, angle_rows)
+    return dict(variants=rows, power_budget=budget, angle_sweep=angle_rows)
+
+
+def angle_sweep_variants(ctx: Context, gc: dict) -> dict:
+    """{angle: device} of the final grating at each fibre angle of ``angle_sweep_deg`` other
+    than the design's own (its run is the final design)."""
+    H = ctx.results("cross_section")["height_um"]
+    angle = float(gc["fiber_angle_deg"])
+    return {float(a): grating_device(ctx, gc["period_um"], gc["fill_factor"], gc["source_x_um"],
+                                     H=H, depth=gc["etch_depth_um"], angle=float(a))
+            for a in sorted({float(a) for a in (ctx.cfg.checks.angle_sweep_deg or [])})
+            if abs(float(a) - angle) > 1e-9}
+
+
+def _top_index(ctx: Context) -> float:
+    m = ctx.cfg.materials
+    return 1.0 if str(m.cladding).lower() == "air" else float(np.real(ctx.n(m.cladding)))
+
+
+def expected_peak_nm(peak0_nm: float, period_um: float, theta0_deg: float, theta_deg: float,
+                     tilt: str, n_top: float = 1.0) -> float:
+    """Peak wavelength at another fibre angle from the first-order grating equation
+    λ = Λ (n_avg ∓ n_top sin θ) (− for a beam travelling towards the waveguide): the peak
+    moves by ∓ Λ n_top (sin θ − sin θ0); n_avg is taken as unchanged."""
+    s = 1.0 if tilt == "towards" else -1.0
+    return peak0_nm - s * period_um * 1e3 * n_top * (math.sin(math.radians(theta_deg))
+                                                    - math.sin(math.radians(theta0_deg)))
+
+
+def angle_sweep_rows(ctx: Context, gc: dict, sweep: dict, final_spectrum) -> list[dict]:
+    """One row per fibre angle (the design's own angle included): efficiency at the design
+    wavelength, peak efficiency and wavelength, 1 dB bandwidth, and the peak wavelength the
+    grating equation predicts from the design's own run."""
+    from tarang.grating_coupler.grating_coupler import spectrum_summary
+    if not sweep or final_spectrum is None:
+        return []
+    folder = ctx.out / "cloud" / "grating"
+    wl0 = ctx.cfg.run.wavelength_um
+    angle0 = float(gc["fiber_angle_deg"])
+    spectra = {angle0: final_spectrum}
+    for ang, d in sweep.items():
+        try:
+            spectra[ang] = d.get_spectrum(folder)
+        except Exception:                                         # noqa: BLE001
+            continue
+    s0 = spectrum_summary(*final_spectrum, wl0)
+    n_top = _top_index(ctx)
+    rows = []
+    for ang in sorted(spectra):
+        s = spectrum_summary(*spectra[ang], wl0)
+        rows.append(dict(angle_deg=ang, efficiency_at_target=s["efficiency_at_target"],
+                         loss_db_at_target=round(s["loss_db_at_target"], 3),
+                         peak_efficiency=s["peak_efficiency"],
+                         peak_wavelength_nm=round(s["peak_wavelength_um"] * 1e3, 2),
+                         peak_inside=bool(s["peak_inside"]),
+                         expected_peak_nm=round(expected_peak_nm(
+                             s0["peak_wavelength_um"] * 1e3, gc["period_um"], angle0, ang,
+                             gc.get("fiber_tilt", "towards"), n_top), 2),
+                         bandwidth_1db_nm=round(s["bandwidth_1db_nm"], 1),
+                         design_angle=abs(ang - angle0) < 1e-9))
+    return rows
+
+
+def draw_angle_sweep(ctx: Context, gc: dict, rows: list[dict]):
+    """Figure 7d: efficiency at the design wavelength and peak efficiency against the fibre
+    angle, and the peak wavelength against the grating equation's prediction."""
+    from tarang.design import visuals
+    plt = visuals._plt()
+    a = np.array([r["angle_deg"] for r in rows])
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    ax = axes[0]
+    ax.plot(a, [r["efficiency_at_target"] * 100 for r in rows], "o-",
+            label=f"at {ctx.cfg.run.wavelength_um * 1e3:.0f} nm")
+    ax.plot(a, [r["peak_efficiency"] * 100 for r in rows], "s--", label="peak")
+    ax.axvline(float(gc["fiber_angle_deg"]), color="0.5", ls=":", label="design angle")
+    ax.set(xlabel="Fibre angle from vertical (°)", ylabel="Coupling efficiency (%)",
+           title="Efficiency against the fibre angle (2D FDTD)")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    ax = axes[1]
+    ok = np.array([r["peak_inside"] for r in rows])
+    pk = np.array([r["peak_wavelength_nm"] for r in rows])
+    ax.plot(a[ok], pk[ok], "o", label="simulated peak")
+    if (~ok).any():
+        ax.plot(a[~ok], pk[~ok], "o", mfc="none", label="peak at the band edge")
+    ax.plot(a, [r["expected_peak_nm"] for r in rows], "-", color="0.4",
+            label="grating equation from the design angle")
+    ax.axhline(ctx.cfg.run.wavelength_um * 1e3, color="0.6", ls=":")
+    ax.set(xlabel="Fibre angle from vertical (°)", ylabel="Peak wavelength (nm)",
+           title="Peak wavelength against the fibre angle")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    return visuals._save(fig, ctx.path("figures", "7d_grating_angle.png"))
 
 
 def _power_budget(data, rev, spectra: dict, wl0: float) -> dict:
@@ -750,13 +853,18 @@ def stage_checks(ctx: Context) -> dict:
                 wl = np.array(c["wavelength_um"])
                 ui.say(f"  {k}: K = {K.min():.2f}-{K.max():.2f} over {wl.min() * 1e3:.0f}-"
                        f"{wl.max() * 1e3:.0f} nm")
-    if gc and (cfg.checks.grating_extras or cfg.checks.mesh_grating):
+    if gc and (cfg.checks.grating_extras or cfg.checks.mesh_grating or cfg.checks.angle_sweep_deg):
         r = grating_checks(ctx, gc)
         if r and r["variants"]:
             out["grating"] = r
             ui.table(r["variants"], ["case", "efficiency_at_target", "peak_wavelength_nm",
                                      "peak_shift_nm", "change_db_at_target"],
                      {"efficiency_at_target": ".3f"})
+            for row in r.get("angle_sweep") or []:
+                ui.say(f"  fibre at {row['angle_deg']:g}°: {row['efficiency_at_target'] * 100:.1f} % "
+                       f"at {cfg.run.wavelength_um} µm, peak {row['peak_efficiency'] * 100:.1f} % "
+                       f"at {row['peak_wavelength_nm']:.0f} nm (grating equation: "
+                       f"{row['expected_peak_nm']:.0f} nm)")
             b = (r.get("power_budget") or {}).get("at_target")
             if b:
                 ui.say(f"  At {cfg.run.wavelength_um} µm, light launched from the waveguide: "
@@ -865,6 +973,9 @@ def redraw_saved_figures(ctx: Context, force: bool = False) -> list[str]:
         if spectra and visuals.safe(ctx, "grating checks", draw_grating_checks, ctx, spectra,
                                     g.get("power_budget")):
             done.append("7b_grating_checks")
+    if g.get("angle_sweep") and gc:
+        if visuals.safe(ctx, "grating angle sweep", draw_angle_sweep, ctx, gc, g["angle_sweep"]):
+            done.append("7d_grating_angle")
     gap = res.get("gap") or {}
     if gap and not gap.get("skipped") and gap.get("folder"):
         fmap = ctx.path("figures", "4d_gap_field.png")

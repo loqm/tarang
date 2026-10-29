@@ -101,6 +101,26 @@ def known_limits(cfg) -> list[str]:
 from tarang.design.edge import EDGE_LIMITS  # noqa: E402
 
 
+def stage_times(state: dict, credit_rows=()) -> list[dict]:
+    """One row per stage that recorded its wall time: time, credits, TARANG version, date.
+    Stages run before v0.1.1 recorded no time and are left out."""
+    fc: dict = {}
+    for r in credit_rows or ():
+        try:
+            fc[r.get("stage")] = fc.get(r.get("stage"), 0.0) + float(r.get("estimate_FC") or 0)
+        except (TypeError, ValueError):
+            pass
+    out = []
+    for name, st in (state.get("stages") or {}).items():
+        if not isinstance(st, dict) or st.get("seconds") is None:
+            continue
+        sec = float(st["seconds"])
+        out.append(dict(stage=name, wall_time=(f"{sec:.0f} s" if sec < 120 else f"{sec / 60:.1f} min"),
+                        credits_FC=f"{fc.get(name, 0.0):.3f}", tarang=st.get("tarang", ""),
+                        finished=str(st.get("finished", "")).replace("T", " ")))
+    return out
+
+
 def _summary_extra(ctx, st: dict, wl: float) -> list[str]:
     """Summary rows of the coupler actually used on the mask, the whole device and (test
     waveguides) the cutback set."""
@@ -634,6 +654,16 @@ def _checks_section(ctx, chk: dict) -> list[str]:
                   + (f"; overlap of the upward beam with the fibre mode {t['overlap'] * 100:.0f} %."
                      if t.get("overlap") else "."), ""]
         L += _fig(ctx, ctx.out / "figures" / "7b_grating_checks.png", "grating checks")
+    if g and g.get("angle_sweep"):
+        L += ["**Fibre angle** (2D FDTD, final grating): efficiency against the angle of the "
+              "fibre from vertical. The peak moves as the first-order grating equation "
+              "λ = Λ (n_avg ∓ n_top sin θ) predicts (column expected_peak_nm, from the design "
+              "angle's run).", ""]
+        L += _md_table(g["angle_sweep"], ["angle_deg", "efficiency_at_target", "peak_efficiency",
+                                          "peak_wavelength_nm", "expected_peak_nm",
+                                          "bandwidth_1db_nm"],
+                       {"efficiency_at_target": ".3f", "peak_efficiency": ".3f"})
+        L += _fig(ctx, ctx.out / "figures" / "7d_grating_angle.png", "grating angle sweep")
     m = chk.get("gap_mesh")
     if m:
         L += [f"**Gap mesh check.** At the critical gap with a 1.5× finer mesh the coupled "
@@ -1057,6 +1087,11 @@ def _runs_section(ctx) -> list[str]:
     L += [f"Credits (estimates): spent {s['spent']:.3f} of the {s['limit']:g} FC limit.", ""]
     if s["rows"]:
         L += _md_table(s["rows"], ["date", "stage", "what", "estimate_FC"])
+    tv = stage_times(ctx.state, s["rows"])
+    if tv:
+        L += ["**Time and version per stage** (wall time on this computer, including waiting "
+              "for cloud runs; FlexCredits as estimated before each run):", ""]
+        L += _md_table(tv, ["stage", "wall_time", "credits_FC", "tarang", "finished"])
     v = ctx.state.get("versions")
     if v:
         L += ["Software: " + ", ".join(f"{k} {v[k]}" for k in ("python", "tarang", "tidy3d", "numpy")

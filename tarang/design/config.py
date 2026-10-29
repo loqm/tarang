@@ -171,6 +171,8 @@ class Checks:
                                     "+/- tolerance, film thickness and tooth width +/- tolerance, "
                                     "and where the light goes; about 8 small 2D runs)")
     angle_tolerance_deg: float = _f(1.0, "Fibre angle tolerance of your holders (+/-)", "deg")
+    angle_sweep_deg: list = _f([], "Fibre angles for the efficiency-against-angle curve of the "
+                                   "final grating (one small 2D run each; empty: none)", "deg")
     litho_bias_um: float = _f(0.02, "Lithography width error of teeth and gaps (+/-)", "um")
     mesh_grating: bool = _f(True, "Grating mesh check (final grating again at 1.5x finer mesh; "
                                   "1 small 2D run)")
@@ -356,6 +358,7 @@ class Device:
 # the legacy value is used (so saved simulations stay valid), and the stage's settings key
 # leaves it out (so the stage is not repeated).
 LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00"},
+          "checks": {"angle_sweep_deg": []},
           "gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
           "apodise": {"prefer": "efficiency", "ramp_check": False},
           "focus": {"mesh_steps": 12}}
