@@ -108,9 +108,19 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
                        f"{', priced before it runs' if kind == 'cloud' else ', free'})")
             ctx.stage = name
             t0 = time.perf_counter()
+            n_not_run = len(getattr(ui, "not_run", []))
             results = func(ctx)
-            ctx.state["stages"][name] = {"key": settings_key(cfg, name), "results": results,
-                                         **stage_record(time.perf_counter() - t0)}
+            missing = getattr(ui, "not_run", [])[n_not_run:]
+            ctx.state["stages"][name] = {
+                # a stage that left priced runs undone (price only, a cap, a skip) is kept but
+                # not marked done: the next run does it again and runs what is missing (its
+                # finished cloud runs come back from the cache, free)
+                "key": None if missing else settings_key(cfg, name), "results": results,
+                **stage_record(time.perf_counter() - t0),
+                **({"not_run": [w for w, _ in missing]} if missing else {})}
+            if missing:
+                ui.say(f"  ({len(missing)} priced step(s) of this stage not run; the stage runs "
+                       "again next time to finish them)")
             ctx.save_state()
             stale = True                         # later stages must follow this one
             if (results or {}).get("awaiting_choice"):

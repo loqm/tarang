@@ -7,6 +7,25 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-30
+
+A fix found in the first paper run.
+
+### Fixed
+- **`--price-only` no longer marks a stage done when it left priced runs out.** A stage with
+  both free and priced parts (the checks stage: free tolerance and mode-family checks plus
+  priced grating runs; likewise the taper's 3D EME and the FDTD checks of the apodised and
+  focusing gratings, when only some of their runs were cached) was recorded as done after a price-only
+  run, so the real run that followed said "done earlier with the same settings" and never
+  ran the priced part. Such a stage is now kept for the later stages but not marked done:
+  the next run does it again and runs what is missing (cloud runs already finished come
+  back from the cache, free). The same holds for runs left out by `--spend-cap`, the budget
+  or a skip. The console says so after the stage, `state.json` lists them under `not_run`,
+  and the GUI shows "priced only: runs again to finish".
+- **To repair a design priced with v0.1.0 or v0.1.1:** run it once with `--redo` and the
+  first stage whose price-only output said "Price only: not run" (e.g. `--redo checks`);
+  the stages after it follow.
+
 ## [0.1.1] - 2026-10-29
 
 Work before the paper runs: figures ready for a journal, the grating checks the paper
@@ -825,6 +844,7 @@ Cached results from before v0.1.0 are reused automatically when the stored simul
 matches the new one exactly; otherwise TARANG explains what differs and runs again. Old
 result folders are never modified or deleted.
 
-[Unreleased]: https://github.com/loqm/tarang/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/loqm/tarang/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/loqm/tarang/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/loqm/tarang/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/loqm/tarang/releases/tag/v0.1.0
