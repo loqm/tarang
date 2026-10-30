@@ -87,6 +87,8 @@ def stage_rows(run: Path) -> list[dict]:
             res = st.get("results") or {}
             if res.get("skipped") or res.get("disabled"):
                 status = "skipped / off"
+            elif st.get("not_run"):
+                status = "priced only: runs again to finish"
             elif cfg is not None and st.get("key") != settings_key(cfg, name):
                 status = "settings changed: will rerun"
             else:

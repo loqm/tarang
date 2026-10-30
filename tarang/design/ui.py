@@ -32,6 +32,7 @@ class Prompter:
         self.price_only = price_only            # show every estimate, run nothing priced
         self.spend_cap = spend_cap              # this session spends at most this much
         self.priced: list = []                  # (what, estimate) of every priced step
+        self.not_run: list = []                 # priced steps that were not run (why)
 
     # ---- output -------------------------------------------------------------------- #
     def say(self, text: str = "") -> None:
@@ -207,16 +208,19 @@ class Prompter:
             self.priced.append((what, float(cost)))
         if self.price_only and cost is not None and cost > 0:
             self.say("  Price only: not run.")
+            self.not_run.append((what, "price only"))
             return False
         if cost is not None and self.spend_cap is not None:
             if cost > self.spend_cap + 1e-9:
                 self.say(f"  Skipped: above what this session may still spend ({self.spend_cap:.3f} "
                          "FC, --spend-cap).")
+                self.not_run.append((what, "spend cap"))
                 return False
         if not self.interactive:
             if cost is not None and budget_left is not None and cost > budget_left:
                 self.say("  Skipped: the estimate is above the remaining budget "
                          "(raise run.max_total_cost to run it).")
+                self.not_run.append((what, "budget"))
                 return False
             self._spend(cost)
             return True
@@ -226,10 +230,12 @@ class Prompter:
                 if cost is not None and budget_left is not None and cost > budget_left:
                     self.say("  The estimate is above the remaining budget; raise "
                              "run.max_total_cost in the config to run it.")
+                    self.not_run.append((what, "budget"))
                     return False
                 self._spend(cost)
                 return True
             if ans in {"s", "skip", "n", "no"}:
+                self.not_run.append((what, "skipped"))
                 return False
             self.say("  Please answer y, s or q.")
 

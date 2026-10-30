@@ -677,6 +677,11 @@ python -m tarang.design --config design_runs\my_design\design.toml --only edge -
 python -m tarang.design --config design_runs\my_design\design.toml --credits           # spent, per stage
 ```
 
+`--price-only` runs every free step for real and prices the cloud ones. A stage whose priced
+runs it left out is not marked done, so the next run without `--price-only` does that stage
+again and runs what is missing (its finished cloud runs come back from the cache, free). The
+same holds for runs left out by `--spend-cap`, the budget or a skip.
+
 In a terminal, each stage shows one table of its settings: Enter accepts them, a number
 changes one, `?` explains, and `q` stops. [README, Every
 command](../Readme.md#every-command) has the full list.
