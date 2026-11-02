@@ -161,6 +161,10 @@ class Grating:
                                  "design with the highest efficiency at the wavelength)")
     check_3d: bool = _f(False, "Also simulate the best design in 3D (several times the 2D cost)")
     taper_length_um: float = _f(300.0, "Linear taper from the grating width to the waveguide", "um")
+    mesh_scale: float = _f(1.0, "Mesh of every grating FDTD run (1 = 15 cells per wavelength in "
+                                "the core, 10 elsewhere; 2 = twice as fine, about 8x the cost of "
+                                "a 2D run). Raise it when checks.grating_mesh_ladder shows the "
+                                "efficiency still changing (thin films, short wavelengths)")
 
 
 @dataclass
@@ -176,6 +180,20 @@ class Checks:
     litho_bias_um: float = _f(0.02, "Lithography width error of teeth and gaps (+/-)", "um")
     mesh_grating: bool = _f(True, "Grating mesh check (final grating again at 1.5x finer mesh; "
                                   "1 small 2D run)")
+    grating_mesh_ladder: list = _f([], "Mesh scales for a convergence ladder of the final grating "
+                                       "(e.g. 2, 2.5, 3; scale 1 = grating.mesh_scale 1; one 2D "
+                                       "run each, costing about scale^3 times a run at scale 1; "
+                                       "empty: none)")
+    sidewall_sweep_deg: list = _f([], "Sidewall angles for the sweep of the cross-section, ring "
+                                      "and ring-bus coupling (90 = vertical, < 90 wider at the "
+                                      "bottom; e.g. 85-93; local mode solves, free; empty: none)",
+                                  "deg")
+    sidewall_grating_deg: list = _f([], "Sidewall angles of the grating teeth for the efficiency "
+                                        "check of the final grating (one 2D run each, priced "
+                                        "first; empty: none)", "deg")
+    sidewall_reference: str = _f("top", "Where the designed widths, gaps and tooth lengths hold "
+                                        "when the walls slope: 'top' (the mask edge, what a "
+                                        "top-down SEM measures), 'bottom' or 'middle'")
     mesh_gap: bool = _f(False, "Gap mesh check (critical gap again at 1.5x finer mesh; 1 3D "
                                "run, about 5x the cost of a gap run)")
     mode_families: bool = _f(True, "Ring mode families (other guided modes of the bent waveguide "
@@ -326,6 +344,14 @@ class Layout:
                                "measuring it gives the coupler loss to divide out")
     gap_offsets_um: list = _f([], "Extra ring variants with the gap changed by these amounts "
                                   "(e.g. -0.05, 0.05: fabrication may shift the gap)", "um")
+    grating_tooth_bias_um: list = _f([], "Extra grating test structures (grating, waveguide, "
+                                         "grating) with every tooth longer by these amounts and "
+                                         "the trenches shorter by the same, the period unchanged "
+                                         "(e.g. -0.02, -0.01, 0.01, 0.02: lithography bias)", "um")
+    grating_period_offsets_um: list = _f([], "Extra grating test structures with the period "
+                                             "changed by these amounts at the same fill factor "
+                                             "(e.g. -0.01, 0.01: moves the peak wavelength)",
+                                         "um")
 
 
 @dataclass
@@ -358,7 +384,10 @@ class Device:
 # the legacy value is used (so saved simulations stay valid), and the stage's settings key
 # leaves it out (so the stage is not repeated).
 LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00"},
-          "checks": {"angle_sweep_deg": []},
+          "checks": {"angle_sweep_deg": [], "grating_mesh_ladder": [], "sidewall_sweep_deg": [],
+                     "sidewall_grating_deg": [], "sidewall_reference": "top"},
+          "grating": {"mesh_scale": 1.0},
+          "layout": {"grating_tooth_bias_um": [], "grating_period_offsets_um": []},
           "gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
           "apodise": {"prefer": "efficiency", "ramp_check": False},
           "focus": {"mesh_steps": 12}}

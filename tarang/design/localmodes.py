@@ -20,7 +20,7 @@ C_UM = 2.99792458e14
 
 
 def _solver(ctx, H, W, wl, *, margin_y=2.0, bend_radius=None, num_modes=4, pml=0,
-            extra=None, wls=None):
+            extra=None, wls=None, sidewall_deg=90.0, sidewall_ref="top"):
     import tidy3d as td
     from tidy3d.plugins.mode import ModeSolver
     from tarang.waveguide.dispersion_mapping import core as dm
@@ -29,7 +29,7 @@ def _solver(ctx, H, W, wl, *, margin_y=2.0, bend_radius=None, num_modes=4, pml=0
                        box=cfg.stack.box_height_um, core=cfg.materials.core,
                        substrate=cfg.materials.box, cladding=cfg.materials.cladding,
                        cladding_height=cfg.stack.cladding_height_um, band=ctx.band,
-                       margin_y=margin_y)
+                       margin_y=margin_y, sidewall_deg=sidewall_deg, sidewall_ref=sidewall_ref)
     if extra is not None:
         sim = extra(sim)
     spec = dict(num_modes=num_modes, target_neff=ctx.n(cfg.materials.core))
@@ -100,7 +100,9 @@ def tm00(modes: list[dict]) -> Optional[dict]:
     return max(tm, key=lambda m: m["neff"]) if tm else None
 
 
-def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None) -> dict:
+def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
+                       sidewall_deg: float = 90.0, sidewall_ref: str = "top",
+                       snap: bool = False) -> dict:
     """Even and odd TE supermodes of two identical cores (bus and ring at the closest
     point, the ring treated as straight there) separated by ``gap``.
 
@@ -113,31 +115,53 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None) -> dict:
       numerical noise, not coupling), which happens at large gaps and depends on the
       platform's linear algebra. The mirror plane y = 0 is therefore imposed: a PEC-type
       symmetry (Ey even) gives the even TE supermode, a PMC-type (Ey odd) the odd one.
+
+    With sloped walls (``sidewall_deg`` != 90) both cores are trapezoids; ``gap`` is the gap
+    at the ``sidewall_ref`` plane (the mask gap for 'top'), the centre-to-centre spacing
+    W + gap being fixed by the mask. ``snap`` puts grid lines through every core edge
+    (both faces of both cores), so the gap is resolved exactly at any mesh: comparisons
+    between geometries whose edges sit in different places (the sidewall sweep) then
+    measure the geometry, not where the edges fall in the cells.
     """
+    from tarang.geometries import sidewall as sw
     import tidy3d as td
     core_medium = ctx.medium(ctx.cfg.materials.core)
     shift = W + gap
 
     def two_cores(symmetry):
         def make(sim):
-            kept = [st for st in sim.structures if not (
+            kept = [st for st in sim.structures if st.name != "core_sloped" and not (
                 isinstance(st.geometry, td.Box) and abs(st.geometry.size[1] - W) < 1e-9
                 and abs(st.geometry.center[2] - H / 2) < 1e-9)]
             if len(kept) == len(sim.structures):
                 raise RuntimeError("core structure not found in the cross-section simulation")
-            cores = [td.Structure(geometry=td.Box(center=(0, sgn * shift / 2, H / 2),
-                                                  size=(td.inf, W, H)), medium=core_medium,
-                                  name=f"core_{i}") for i, sgn in enumerate((-1, 1))]
+            if sw.is_vertical(sidewall_deg):
+                cores = [td.Structure(geometry=td.Box(center=(0, sgn * shift / 2, H / 2),
+                                                      size=(td.inf, W, H)), medium=core_medium,
+                                      name=f"core_{i}") for i, sgn in enumerate((-1, 1))]
+            else:
+                if sw.bottom_gap(gap, H, sidewall_deg, sidewall_ref) <= 0:
+                    raise ValueError(f"at {sidewall_deg}° the two cores touch at the bottom "
+                                     f"(gap {gap} um)")
+                cores = [td.Structure(geometry=sw.core_geometry(
+                    W, H, sidewall_deg, sidewall_ref, y0=sgn * shift / 2), medium=core_medium,
+                    name=f"core_{i}") for i, sgn in enumerate((-1, 1))]
             gs = sim.grid_spec
             overrides = []
             for o in gs.override_structures or []:           # widen the fine region
                 c, s = o.geometry.center, o.geometry.size
                 overrides.append(o.updated_copy(geometry=td.Box(
                     center=(c[0], 0.0, c[2]), size=(s[0], s[1] + shift, s[2]))))
+            gs = gs.updated_copy(override_structures=overrides)
+            if snap:
+                wb, wt = sw.core_widths(W, H, sidewall_deg, sidewall_ref)
+                pts = [(None, sgn * shift / 2 + side * w / 2, z) for sgn in (-1, 1)
+                       for side in (-1, 1) for w, z in ((wb, 0.0), (wt, H))]
+                gs = gs.updated_copy(snapping_points=pts)
             return sim.updated_copy(center=(sim.center[0], 0.0, sim.center[2]),
                                     size=(sim.size[0], sim.size[1] + shift, sim.size[2]),
                                     structures=kept + cores, symmetry=(0, symmetry, 0),
-                                    grid_spec=gs.updated_copy(override_structures=overrides))
+                                    grid_spec=gs)
         return make
     wl = ctx.cfg.run.wavelength_um
     cfg = ctx.cfg
@@ -147,7 +171,8 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None) -> dict:
     found = {}
     try:
         for name, sym in (("even", -1), ("odd", 1)):
-            data = _solver(ctx, H, W, wl, margin_y=2.5, num_modes=2, extra=two_cores(sym))
+            data = _solver(ctx, H, W, wl, margin_y=2.5, num_modes=2, extra=two_cores(sym),
+                           sidewall_deg=sidewall_deg, sidewall_ref=sidewall_ref)
             te = [m for m in _modes_from(data) if m["te"] > 0.5]
             if not te:
                 raise RuntimeError(f"no {name} TE supermode found at gap {gap} um")
@@ -163,13 +188,15 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None) -> dict:
                 cores=[(-shift / 2 - W / 2, 0.0, W, H), (shift / 2 - W / 2, 0.0, W, H)])
 
 
-def coupling_from_supermodes(ctx, H, W, radius_um, gaps, steps=None) -> dict:
+def coupling_from_supermodes(ctx, H, W, radius_um, gaps, steps=None, sidewall_deg=90.0,
+                             sidewall_ref="top", snap=False) -> dict:
     """Coupled-mode estimate of the coupling per pass at ``gaps``: dn from the supermodes,
     its decay rate gamma from a fit over the gaps, then theta(g) = kappa(g) sqrt(2 pi R /
     gamma). Returns the per-gap values and the fit."""
     rows = []
     for g in gaps:
-        sm = coupler_supermodes(ctx, H, W, g, steps=steps)
+        sm = coupler_supermodes(ctx, H, W, g, steps=steps, sidewall_deg=sidewall_deg,
+                                sidewall_ref=sidewall_ref, snap=snap)
         rows.append(dict(gap_um=g, dn=sm["dn"], kappa_per_um=sm["kappa_per_um"]))
     gs = np.array([r["gap_um"] for r in rows])
     ks = np.array([r["kappa_per_um"] for r in rows])

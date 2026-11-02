@@ -149,15 +149,27 @@ def get_active_simulation(
     teeth = getattr(config, "teeth", None)
     spans = ([(float(a), float(b)) for a, b in teeth] if teeth else
              [(i * config.period, config.period * config.ff) for i in range(config.n_teeth)])
+    # Sloped etched walls (v0.1.3): each tooth becomes a trapezoid in the (x, z) plane;
+    # vertical walls (the default) keep the Box teeth of earlier versions exactly.
+    from tarang.geometries import sidewall as sw
+    wall = float(getattr(config, "sidewall_deg", 90.0))
+    wall_ref = getattr(config, "sidewall_ref", "top")
     gratings: list = []
     for i, (x0_tooth, length) in enumerate(spans):
         tooth_center_x = x0_tooth + length / 2
         tooth_center_z = config.core_height - (config.etch_depth / 2)
-        tooth = td.Structure(
-            geometry=td.Box(
+        if sw.is_vertical(wall):
+            geo = td.Box(
                 center=(tooth_center_x, 0, tooth_center_z),
                 size=(length, y_size, config.etch_depth),
-            ),
+            )
+        else:   # the first tooth continues the waveguide: its left side is not etched
+            geo = sw.tooth_geometry(x0_tooth, length, config.core_height - config.etch_depth,
+                                    config.etch_depth, wall, wall_ref,
+                                    y_size=None if not is_3d else y_size,
+                                    vertical_left=abs(x0_tooth) < 1e-9)
+        tooth = td.Structure(
+            geometry=geo,
             medium=core_medium,
             name=f"Tooth_{i}",
         )

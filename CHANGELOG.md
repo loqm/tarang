@@ -7,6 +7,51 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-02
+
+From the 780 nm paper run: a grating mesh that converges for thin films, the sidewall
+angle, grating variants on the mask, and a fix for the 3D focusing grating.
+
+### Added
+- **Sloped sidewalls** (`tarang.geometries.sidewall`). The mode solver's cross-section
+  (`build_sim`, `solve_point`, the `sweep` tool's `--sidewalls` and `--sidewall-ref`), the
+  coupler supermodes and the grating teeth (`GratingConfig.sidewall_deg`) can now have
+  walls at any angle (90° = vertical). Each wall moves sideways by H / tan α; the widths,
+  gaps and tooth lengths hold at the top (the mask edge), the bottom or mid-height. Vertical
+  walls build exactly the simulations of earlier versions, so nothing cached is run again.
+- **Sidewall sweep** (checks stage). `[checks] sidewall_sweep_deg` (free, local mode solves):
+  n_g, D and the guided modes of the chosen core, the ring's FSR and D₂, and the ring–bus
+  coupling (the gap stage's FDTD fit scaled by the coupled-mode ratio to 90°: K at the
+  designed gaps and the gap that would be critical) at each angle.
+  `[checks] sidewall_grating_deg` (one 2D run each, priced first): the final grating with
+  trapezoidal teeth. `sidewall_reference` = top (default), bottom or middle. Figure
+  `7e_sidewall`, tables `sidewall_*.csv`, a report section. Both examples sweep 85-93°.
+- **Grating mesh setting and convergence ladder.** `[grating] mesh_scale` (default 1: 15
+  cells per wavelength in the core, as before) sets the mesh of every grating run;
+  `[checks] grating_mesh_ladder` runs the final grating at finer meshes (figure
+  `7f_grating_mesh`, table `grating_mesh_ladder.csv`) to choose it. The 780 nm example has
+  the ladder [2, 2.5, 3]: at its default mesh its 350 nm film and 170 nm trenches span only
+  13 and 7 cells, and a 1.5x finer mesh moved the efficiency by +1.2 dB.
+- **Grating variants on the mask.** `[layout] grating_tooth_bias_um` (teeth longer by these
+  amounts, period unchanged) and `grating_period_offsets_um` (period changed, same fill
+  factor) draw extra grating-waveguide-grating structures (`grating_variants_gc.gds`),
+  listed with their tooth, trench, period and expected peak shift
+  (`layout/grating_variants.csv`).
+
+### Fixed
+- **The 3D focusing-grating simulation of a thin film could not be built** ("Fiber_Source is
+  outside of the simulation domain"): the fibre source sits at the 2D grating's height (4 µm
+  above the core's base with the defaults) but the 3D domain stopped at H + 3.5 µm, below it
+  for H < 0.5 µm (e.g. 350 nm at 780 nm). The domain now grows only where the source needs
+  it; domains that already held it (e.g. 700 nm at 1550 nm) are unchanged, so their 3D runs
+  stay cached.
+
+### Changed
+- The model limits in the assumptions table, the report and the benchmark pack say that the
+  design stages use vertical walls and point to the sidewall sweep.
+- All new settings default to the earlier behaviour and are listed in `config.LEGACY`, so a
+  design run with v0.1.2 continues without repeating any stage.
+
 ## [0.1.2] - 2026-10-30
 
 A fix found in the first paper run.

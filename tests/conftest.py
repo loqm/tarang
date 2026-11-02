@@ -206,7 +206,7 @@ def fast_local_modes(request, monkeypatch):
     def modes(ctx, H, W, bend_radius=None, num_modes=4, group_index=False):
         return [_fake_mode(1.7066, True, ng=2.2227), _fake_mode(1.6812, False, ng=2.2252)]
 
-    def supermodes(ctx, H, W, gap, steps=None):
+    def supermodes(ctx, H, W, gap, steps=None, **_walls):
         dn = 3.5e-3 * math.exp(-5.4 * (gap - 0.47))
         s = W + gap
         return dict(even=_fake_mode(1.7064, True), odd=_fake_mode(1.7064 - dn, True), dn=dn,
@@ -214,7 +214,7 @@ def fast_local_modes(request, monkeypatch):
                     shift_um=s, gap_um=gap,
                     cores=[(-s / 2 - W / 2, 0.0, W, H), (s / 2 - W / 2, 0.0, W, H)])
 
-    def coupling(ctx, H, W, radius_um, gaps, steps=None):
+    def coupling(ctx, H, W, radius_um, gaps, steps=None, **_walls):
         rows = []
         for g in gaps:
             k = math.pi * supermodes(ctx, H, W, g)["dn"] / 1.55

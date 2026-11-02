@@ -470,7 +470,11 @@ period, fill factor and fibre position for the highest coupling at the design wa
 - the fibre angle and tilt direction;
 - the fibre MFD;
 - the number of teeth;
-- the smallest feature your lithography makes.
+- the smallest feature your lithography makes;
+- the mesh (`grating.mesh_scale`, 1 = 15 cells per wavelength in the core). A thin film at
+  a short wavelength (e.g. 350 nm at 780 nm) may need 2 or more: run the checks stage's mesh
+  ladder first (below) and raise it only if the efficiency is still changing. Every grating
+  run of the design then uses it, so the grating stages run again at about scale³ the cost.
 
 ### Checks
 
@@ -481,7 +485,30 @@ period, fill factor and fibre position for the highest coupling at the design wa
 - the grating's tolerance to angle and lithography bias, and its back-reflection;
 - with `checks.angle_sweep_deg` (e.g. `[8, 10, 14, 16]` around a 12° stage), the grating's
   efficiency against the fibre angle, each peak set beside the grating equation's
-  prediction (figure `7d_grating_angle`).
+  prediction (figure `7d_grating_angle`);
+- with `checks.grating_mesh_ladder` (e.g. `[2, 2.5, 3]`), the final grating at finer meshes:
+  its efficiency against the cells per wavelength (figure `7f_grating_mesh`, table
+  `grating_mesh_ladder.csv`). One 2D run per scale, each about scale³ times a run at scale 1.
+  If the design mesh is more than about 0.2 dB from the finest, set `grating.mesh_scale` to
+  the first converged scale and run the grating stages again (`--redo grating`).
+
+**Sidewall angle** (`checks.sidewall_sweep_deg`, e.g. 85 to 93 in 1° steps; free). Every
+design stage assumes vertical walls; a dry etch leaves them at an angle α, each wall moving
+sideways by H / tan α over the film thickness H (31 nm at 85° for 350 nm, 61 nm for
+700 nm). With `checks.sidewall_reference = "top"` the designed widths and gaps hold at the
+top (the mask edge, what a top-down SEM measures) and the foot spreads (α < 90°) or is
+undercut (α > 90°). The step solves, at every angle:
+- the chosen cross-section: n_g, D, guided modes (same mesh as the cross-section stage, so
+  the 90° row repeats its numbers);
+- the ring: FSR from n_g and D₂ scaled from the ring stage's value;
+- the ring–bus coupling: the gap stage's 3D FDTD fit scaled by the coupled-mode ratio
+  θ(α, g)/θ(90°, g) at the designed gaps, giving K at both gaps and the gap that would be
+  critical at that angle.
+
+`checks.sidewall_grating_deg` (e.g. `[85, 87, 89, 91, 93]`; one 2D run each, priced) adds
+the final grating with trapezoidal teeth. Figure `7e_sidewall`; tables
+`sidewall_cross_section.csv`, `sidewall_coupling.csv`, `sidewall_grating.csv`. Once you
+have measured your walls (SEM cross-section), the row at that angle is the design you made.
 
 *Path B:* the fibre-to-fibre loss budget at the design wavelength.
 
@@ -542,6 +569,13 @@ period, fill factor and fibre position for the highest coupling at the design wa
 
 **What it draws.** `layout/design.gds` holds every device with its couplers:
 - **Path A:** the ring with its bus, a reference waveguide and gap variants.
+- **Grating variants** (`layout.grating_tooth_bias_um`, `layout.grating_period_offsets_um`):
+  extra grating–waveguide–grating structures (`grating_variants_gc.gds`) with every tooth
+  longer by the bias (the trench shorter by the same, the period unchanged) or with the
+  period changed at the same fill factor. They bracket the lithography bias and the
+  unknowns of the simulation: measure them all and keep the best. The step lists each
+  variant's tooth, trench and period with its expected peak shift (`grating_variants.csv`;
+  period: λ ΔΛ/Λ; tooth bias: from the checks stage's tooth-width runs).
 - **Path B:** the cutback spirals of the exact lengths and the straight reference. For edge
   coupling, the waveguides run facet to facet across the chip, with the chip outline and
   dicing lanes on their own (unetched) layers.

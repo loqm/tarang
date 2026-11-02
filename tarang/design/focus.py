@@ -243,6 +243,8 @@ def focusing_sim(ctx, design: dict):
     z_min = -cfg.stack.box_height_um - (3.0 if handle is not None else 1.0)
     z_max = H + 2.0 + 1.5
     src = src2d.updated_copy(size=(2 * cfg.grating.mfd_um, 2 * cfg.grating.mfd_um, 0))
+    z_max, x_min, x_max, y_half = fit_source(src.center, cfg.grating.mfd_um, z_max, x_min,
+                                             x_max, y_half)
     allf = np.asarray(next(m for m in base.sim.monitors if m.name == "mode monitor").freqs)
     freqs = list(allf[::5])                             # 21 wavelengths over the band
     f0 = C_UM / cfg.run.wavelength_um
@@ -276,6 +278,29 @@ def focusing_sim(ctx, design: dict):
                     f"{cfg.run.wavelength_um:.3f}um")
     return FocusingCoupler(sim=sim, config=base.config, core_medium=core, box_medium=box,
                            handle_medium=handle, top_cladding_medium=clad, is_3d=True)
+
+
+def fit_source(center, mfd: float, z_max: float, x_min: float, x_max: float, y_half: float,
+               margin: float = 0.2) -> tuple[float, float, float, float]:
+    """Simulation bounds (z_max, x_min, x_max, y_half) grown, only where needed, so the
+    fibre beam's source plane lies inside the domain with ``margin`` to spare.
+
+    The source plane sits at the 2D grating's height, top_cladding_height + source_gap
+    above the core's base (4 um with the defaults), while the 3D domain was cut at
+    H + 3.5 um: for a thin core (H < 0.7 um, e.g. 0.35 um at 780 nm) the source fell
+    outside ("Fiber_Source is outside of the simulation domain"). Bounds that already hold
+    the source are returned unchanged, so earlier 3D runs keep their exact simulation (and
+    their cache)."""
+    cx, cy, cz = (float(v) for v in center)
+    if z_max - cz < margin - 1e-9:
+        z_max = cz + 0.5
+    if cx - x_min < margin - 1e-9:
+        x_min = cx - mfd
+    if x_max - cx < margin - 1e-9:
+        x_max = cx + mfd
+    if y_half - abs(cy) < margin - 1e-9:
+        y_half = abs(cy) + mfd
+    return z_max, x_min, x_max, y_half
 
 
 # ------------------------------------------------------------------ the design stage

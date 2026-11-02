@@ -87,6 +87,11 @@ class GratingConfig(RenamedAttributes):
     # Apodised grating: explicit teeth as ((x_start, length), ...) in um, first tooth at
     # x = 0; then period, ff and n_teeth only describe the design (n_teeth = len(teeth)).
     teeth: tuple | None = None
+    # Etched walls of the teeth (v0.1.3): angle from the substrate plane inside the core
+    # (90 = vertical, the only case before; < 90 the tooth widens downwards) and the plane
+    # where the tooth lengths hold ('top' = the mask edge; see tarang.geometries.sidewall).
+    sidewall_deg: float = 90.0
+    sidewall_ref: str = "top"
 
     _renamed_attrs = {"cladding_height": "top_cladding_height",
                       "substrate_height": "handle_height"}
@@ -245,15 +250,19 @@ class GratingCoupler(CloudCachedDevice, RenamedAttributes):
         simulation.json beside the results and in the fingerprint."""
         cfg = self.config
         dim = "3D" if self.is_3d else "2D"
+        wall = getattr(cfg, "sidewall_deg", 90.0)
+        tag = "" if abs(float(wall) - 90.0) < 1e-9 else (
+            f"_wall{float(wall):g}" + ("" if getattr(cfg, "sidewall_ref", "top") == "top"
+                                       else cfg.sidewall_ref[0]))
         if cfg.teeth:
             import hashlib
             sig = ",".join(f"{a:.4f}:{b:.4f}" for a, b in cfg.teeth)
             h = hashlib.sha256(sig.encode()).hexdigest()[:6]
             return (f"gc{dim}_apod{len(cfg.teeth)}_{h}_e{cfg.etch_depth:.4f}_"
-                    f"sx{cfg.source_x:.4f}_{cfg.wavelength_um:.3f}um")
+                    f"sx{cfg.source_x:.4f}_{cfg.wavelength_um:.3f}um{tag}")
         return (
             f"gc{dim}_p{cfg.period:.4f}_ff{cfg.ff:.4f}_e{cfg.etch_depth:.4f}_"
-            f"n{cfg.n_teeth}_sx{cfg.source_x:.4f}_{cfg.wavelength_um:.3f}um"
+            f"n{cfg.n_teeth}_sx{cfg.source_x:.4f}_{cfg.wavelength_um:.3f}um{tag}"
         )
 
     def _legacy_dir_name(self) -> str:

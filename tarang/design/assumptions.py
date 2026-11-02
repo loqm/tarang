@@ -85,7 +85,9 @@ def table(cfg, results: Optional[dict] = None) -> list[dict]:
         dict(quantity="thickness tolerance", value=x.tolerance_height_um, unit="um",
              source="your process", note="± around the chosen film thickness"),
         dict(quantity="sidewalls", value="vertical", unit="",
-             source="model limit", note="every simulation uses 90° sidewalls"),
+             source="model limit", note="every design simulation uses 90° sidewalls; "
+                                         "checks.sidewall_sweep_deg shows the effect of "
+                                         "sloped walls"),
         dict(quantity="BOX thickness", value=s.box_height_um, unit="um", source="your wafer",
              note="Si handle below the BOX in the grating simulation"),
         dict(quantity="smallest lithography feature", value=g.min_feature_um, unit="um",

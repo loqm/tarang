@@ -74,7 +74,9 @@ def threshold_mw(xs: dict, ring: dict, n2: float, K: float = 1.0) -> float | Non
 def known_limits(cfg) -> list[str]:
     """The model limits that apply to this design's goal and coupler."""
     from tarang.design.stages import applies
-    out = ["Vertical sidewalls everywhere; the n, k data are tabulated bulk values, not your film."]
+    out = ["Vertical sidewalls in every design stage (the checks stage's sidewall sweep, when "
+           "run, shows how sloped walls move the design); the n, k data are tabulated bulk "
+           "values, not your film."]
     if applies("ring", cfg):
         out += ["Ring: the bent mode is solved for loss and dispersion; how often other mode "
                 "families cross TE00 is estimated (checks), but the strength of an avoided crossing "
@@ -664,6 +666,19 @@ def _checks_section(ctx, chk: dict) -> list[str]:
                                           "bandwidth_1db_nm"],
                        {"efficiency_at_target": ".3f", "peak_efficiency": ".3f"})
         L += _fig(ctx, ctx.out / "figures" / "7d_grating_angle.png", "grating angle sweep")
+    if g and g.get("mesh_ladder"):
+        L += ["**Grating mesh convergence** (2D FDTD, final grating): the efficiency against "
+              "the mesh (cells per wavelength in the grating region; a cell is λ / (2 × cells)). "
+              "change_db_vs_finest is against the finest mesh; when it is still large at the "
+              "design mesh, raise grating.mesh_scale and run the grating stages again.", ""]
+        L += _md_table(g["mesh_ladder"], ["mesh_scale", "cells_per_wavelength", "cell_nm",
+                                          "efficiency_at_target", "peak_efficiency",
+                                          "peak_wavelength_nm", "change_db_vs_finest"],
+                       {"efficiency_at_target": ".3f", "peak_efficiency": ".3f"})
+        L += _fig(ctx, ctx.out / "figures" / "7f_grating_mesh.png", "grating mesh convergence")
+    if chk.get("sidewall"):
+        from tarang.design import walls
+        L += walls.report_lines(ctx, chk["sidewall"])
     m = chk.get("gap_mesh")
     if m:
         L += [f"**Gap mesh check.** At the critical gap with a 1.5× finer mesh the coupled "

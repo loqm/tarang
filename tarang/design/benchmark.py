@@ -288,7 +288,8 @@ def _readme(ctx, st, rows, checks, sim_sections, pth) -> list[str]:
          + (f", sampled over {mat['band'][0]}-{mat['band'][1]} µm" if mat.get("band") else "")
          + ". Import these tables rather than a solver's built-in materials, so both solvers "
          "see the same indices.",
-         "- Sidewalls: vertical (90°) everywhere.", ""]
+         "- Sidewalls: vertical (90°) in every design simulation (the checks stage's "
+         "sidewall sweep, `tables/sidewall_*.csv`, slopes them on purpose).", ""]
     v = ctx.state.get("versions") or {}
     if v:
         L += ["Made with TARANG " + str(v.get("tarang", "?")) + ", Tidy3D " + str(v.get("tidy3d", "?"))
