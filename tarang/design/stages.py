@@ -1532,10 +1532,13 @@ def stage_grating(ctx: Context) -> dict:
 
 def grating_device(ctx: Context, period: float, ff: float, sx: float, *, H: float,
                    depth: float, angle: Optional[float] = None, is_3d: bool = False,
-                   mesh: float = 1.0, teeth: Optional[list] = None):
+                   mesh: float = 1.0, teeth: Optional[list] = None,
+                   sidewall_deg: Optional[float] = None):
     """The grating-coupler device of this design (2D unless ``is_3d``). ``angle``
-    overrides the fibre angle and ``mesh`` scales the mesh steps (tolerance and mesh
-    checks); the defaults give exactly the grating stage's simulations."""
+    overrides the fibre angle, ``mesh`` scales the mesh steps on top of grating.mesh_scale
+    (tolerance and mesh checks) and ``sidewall_deg`` slopes the teeth's walls (sidewall
+    check; widths at checks.sidewall_reference); the defaults give exactly the grating
+    stage's simulations."""
     from tarang.grating_coupler.grating_coupler import GratingConfig, GratingCoupler
     cfg = ctx.cfg
     m, g = cfg.materials, cfg.grating
@@ -1550,9 +1553,12 @@ def grating_device(ctx: Context, period: float, ff: float, sx: float, *, H: floa
                          n_teeth=len(teeth) if teeth else g.n_teeth, w_grating=g.width_um,
                          pol_angle=math.pi / 2, buffer=3.0, fiber_tilt=g.fiber_tilt,
                          bandwidth_um=g.bandwidth_um,
-                         teeth=tuple((float(a), float(b)) for a, b in teeth) if teeth else None)
-    kw = {} if mesh == 1.0 else dict(fine_steps_per_wvl=int(round(15 * mesh)),
-                                     coarse_steps_per_wvl=int(round(10 * mesh)))
+                         teeth=tuple((float(a), float(b)) for a, b in teeth) if teeth else None,
+                         sidewall_deg=90.0 if sidewall_deg is None else float(sidewall_deg),
+                         sidewall_ref=str(getattr(cfg.checks, "sidewall_reference", "top")))
+    m_all = float(mesh) * float(getattr(g, "mesh_scale", 1.0) or 1.0)
+    kw = {} if abs(m_all - 1.0) < 1e-12 else dict(fine_steps_per_wvl=int(round(15 * m_all)),
+                                                  coarse_steps_per_wvl=int(round(10 * m_all)))
     return GratingCoupler.from_config(gcfg, core_medium=ctx.medium(m.core),
                                       box_medium=ctx.medium(m.box), handle_medium=handle,
                                       top_cladding_medium=clad, is_3d=is_3d, **kw)

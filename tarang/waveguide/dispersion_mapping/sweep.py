@@ -46,7 +46,8 @@ def _work(args):
     try:
         r = sweep_core.solve_point(H, W, **kw)
     except Exception as e:                  # record failure, keep the sweep alive
-        r = dict(H=H, W=W, steps=kw["steps"], error=f"{type(e).__name__}: {e}")
+        r = dict(H=H, W=W, steps=kw["steps"], sidewall_deg=float(kw.get("sidewall_deg", 90.0)),
+                 error=f"{type(e).__name__}: {e}")
     r["secs"] = round(time.time() - t0, 1)
     return r
 
@@ -85,7 +86,15 @@ def main():
     ap.add_argument("--out", default=None, help="output .jsonl path")
     ap.add_argument("--snap", action="store_true",
                     help="grid lines through the four core edges (steadier D from mesh to mesh)")
+    ap.add_argument("--sidewalls", default=None,
+                    help='etched-wall angles in degrees, e.g. "85,87,90,93" (90 = vertical): '
+                         'every point is solved at each angle (default: vertical only)')
+    ap.add_argument("--sidewall-ref", default="top", choices=["top", "bottom", "middle"],
+                    help="plane where the width holds when the walls slope (default top: the "
+                         "mask edge)")
     a = ap.parse_args()
+    angles = ([round(float(v), 4) for v in a.sidewalls.split(",") if v.strip()]
+              if a.sidewalls else [90.0])
 
     if a.points:
         pts = []
@@ -116,6 +125,8 @@ def main():
         tag += f"_R{a.bend_radius:g}um"
     if a.points:
         tag += "_finalists"
+    if a.sidewalls:
+        tag += "_sidewalls"
     out = Path(a.out) if a.out else Path("results") / f"{tag}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -131,15 +142,20 @@ def main():
                         and r.get("core", "si3n4") == a.core
                         and r.get("substrate", "sio2") == a.substrate
                         and (r.get("cladding") or None) == clad
-                        and float(r.get("n_shift", 0.0)) == a.n_shift)
+                        and float(r.get("n_shift", 0.0)) == a.n_shift
+                        and (float(r.get("sidewall_deg", 90.0)) == 90.0
+                             or r.get("sidewall_ref", "top") == a.sidewall_ref))
                 if "error" not in r and same:
-                    done.add((round(r["H"], 4), round(r["W"], 4)))
+                    done.add((round(r["H"], 4), round(r["W"], 4),
+                              round(float(r.get("sidewall_deg", 90.0)), 4)))
 
     kw = dict(wl0=a.wl, steps=a.steps, box=a.box, margin=a.margin,
               si_handle=a.si_handle, pml=a.pml, bend_radius=a.bend_radius, snap=a.snap,
               core=a.core, substrate=a.substrate, cladding=clad,
               cladding_height=a.cladding_height, n_shift=a.n_shift)
-    todo = [(H, W, kw) for (H, W) in pts if (H, W) not in done]
+    todo = [(H, W, kw if ang == 90.0 else dict(kw, sidewall_deg=ang, sidewall_ref=a.sidewall_ref))
+            for (H, W) in pts for ang in angles if (H, W, ang) not in done]
+    pts = [(H, W, ang) for (H, W) in pts for ang in angles]
     print(f"{len(pts)} points requested; "
           f"{len(done)} already done, {len(todo)} to run with {a.workers} worker(s).")
     print(f"Output: {out.resolve()}")
@@ -159,14 +175,16 @@ def main():
             i += 1
             f.write(json.dumps(r) + "\n")
             f.flush()
-            saved.add((r["H"], r["W"]))
+            saved.add((r["H"], r["W"], round(float(r.get("sidewall_deg", 90.0)), 4)))
             if "error" in r:
                 msg = f"ERROR {r['error']}"
             else:
                 msg = (f"D_TE0={r['D_TE0']:8.1f}  guided TE/TM={r['guided_TE']}/{r['guided_TM']}"
                        f"  n_TE0={r['neff_TE'][0]:.4f}  n_TM0={r['neff_TM'][0]:.4f}")
             eta = (time.time() - t_start) / i * (len(todo) - i)
-            print(f"[{i:3d}/{len(todo)}] H={r['H']:.3f} W={r['W']:.3f}  {msg}  "
+            wall = ("" if float(r.get("sidewall_deg", 90.0)) == 90.0
+                    else f" wall={r['sidewall_deg']:g}°")
+            print(f"[{i:3d}/{len(todo)}] H={r['H']:.3f} W={r['W']:.3f}{wall}  {msg}  "
                   f"({r['secs']:.0f}s, ETA {eta/60:.0f} min)", flush=True)
 
         pool = None
@@ -184,7 +202,8 @@ def main():
                     # the finished points are saved, so go on with the rest one at a time
                     pool.shutdown(wait=False, cancel_futures=True)
                     pool = None
-                    rest = [t for t in todo if (t[0], t[1]) not in saved]
+                    rest = [t for t in todo if (t[0], t[1], round(float(t[2].get(
+                        "sidewall_deg", 90.0)), 4)) not in saved]
                     print(f"A worker process was killed (usually out of memory: each needs "
                           f"about 1.5 GB). {i} point(s) saved; going on with the other "
                           f"{len(rest)} with one worker. Next time use fewer workers "

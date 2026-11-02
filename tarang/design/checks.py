@@ -18,6 +18,9 @@ Cloud (priced and confirmed one by one):
     film thickness and tooth width at +/- tolerance, and a finer mesh;
   * grating efficiency against the fibre angle (``angle_sweep_deg``), with the peak shift
     the grating equation predicts;
+  * a mesh convergence ladder of the final grating (``grating_mesh_ladder``);
+  * the final grating with sloped teeth (``sidewall_grating_deg``; the free part of the
+    sidewall sweep, ``sidewall_sweep_deg``, is local: see tarang.design.walls);
   * optionally the critical gap again at a 1.5x finer mesh.
 """
 from __future__ import annotations
@@ -47,6 +50,12 @@ def _form(ctx: Context) -> None:
         dict(section="checks", key="angle_sweep_deg", show=grating_coupling, cast=parse_list),
         dict(section="checks", key="litho_bias_um", show=grating_coupling),
         dict(section="checks", key="mesh_grating", show=grating_coupling),
+        dict(section="checks", key="grating_mesh_ladder", show=grating_coupling, cast=parse_list),
+        dict(section="checks", key="sidewall_sweep_deg", cast=parse_list),
+        dict(section="checks", key="sidewall_grating_deg", show=grating_coupling, cast=parse_list),
+        dict(section="checks", key="sidewall_reference",
+             check=lambda v: "" if str(v).lower() in ("top", "bottom", "middle") else
+             "choose top, bottom or middle"),
         dict(section="checks", key="mesh_gap", show=ring_goal),
         dict(section="checks", key="mode_families", show=ring_goal)])
 
@@ -587,6 +596,14 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
     sweep = angle_sweep_variants(ctx, gc)
     for ang, d in sweep.items():
         jobs[f"sweep {ang:g}"] = (d.sim, d._readable_name())
+    from tarang.design import walls
+    ladder = mesh_ladder_variants(ctx, gc, variants)
+    for sc, d in ladder.items():
+        if d is not None:
+            jobs[f"mesh scale {sc:g}"] = (d.sim, d._readable_name())
+    wall_devs = walls.grating_devices(ctx, gc)
+    for a, d in wall_devs.items():
+        jobs[f"sidewall {a:g}°"] = (d.sim, d._readable_name())
     if len(jobs) == 1 or _run_batch(ctx, jobs, folder, "grating checks") is None:
         return None
     wl0 = cfg.run.wavelength_um
@@ -627,7 +644,106 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
     if angle_rows:
         _write_csv(ctx.path("tables", "grating_angle_sweep.csv"), angle_rows)
         visuals.safe(ctx, "grating angle sweep", draw_angle_sweep, ctx, gc, angle_rows)
-    return dict(variants=rows, power_budget=budget, angle_sweep=angle_rows)
+    ladder_rows = mesh_ladder_rows(ctx, gc, ladder, spectra)
+    if ladder_rows:
+        _write_csv(ctx.path("tables", "grating_mesh_ladder.csv"), ladder_rows)
+        visuals.safe(ctx, "grating mesh ladder", draw_mesh_ladder, ctx, ladder_rows)
+    wall_rows = walls.grating_rows(ctx, wall_devs, spectra.get("final"))
+    if wall_rows:
+        _write_csv(ctx.path("tables", "sidewall_grating.csv"), wall_rows)
+    return dict(variants=rows, power_budget=budget, angle_sweep=angle_rows,
+                mesh_ladder=ladder_rows, sidewall=wall_rows)
+
+
+def _fine_steps(scale: float) -> int:
+    """Mesh cells per wavelength in the grating's core region at mesh scale ``scale``
+    (as stages.grating_device sets them)."""
+    return 15 if abs(scale - 1.0) < 1e-12 else int(round(15 * scale))
+
+
+def mesh_ladder_variants(ctx: Context, gc: dict, variants: dict) -> dict:
+    """{scale: device or None} of the final grating at each mesh scale of
+    ``grating_mesh_ladder`` (absolute: 1 = 15 cells per wavelength in the core). None where
+    the final design or the x1.5 mesh check already is that mesh."""
+    g = ctx.cfg.grating
+    base = float(getattr(g, "mesh_scale", 1.0) or 1.0)
+    have = {_fine_steps(base): "final"}
+    if "mesh x1.5" in variants:
+        have[_fine_steps(base * 1.5)] = "mesh x1.5"
+    H = ctx.results("cross_section")["height_um"]
+    out: dict = {}
+    for sc in sorted({round(float(v), 4) for v in (ctx.cfg.checks.grating_mesh_ladder or [])}):
+        if sc <= 0:
+            raise ValueError(f"checks.grating_mesh_ladder: mesh scale {sc} must be > 0")
+        out[sc] = None if _fine_steps(sc) in have else grating_device(
+            ctx, gc["period_um"], gc["fill_factor"], gc["source_x_um"], H=H,
+            depth=gc["etch_depth_um"], mesh=sc / base)
+    return out
+
+
+def mesh_ladder_rows(ctx: Context, gc: dict, ladder: dict, spectra: dict) -> list[dict]:
+    """The final grating's efficiency against the mesh: the design's own mesh, the x1.5
+    check and the ladder's scales, finest last, each against the finest."""
+    from tarang.grating_coupler.grating_coupler import spectrum_summary
+    if not ladder:
+        return []
+    folder = ctx.out / "cloud" / "grating"
+    wl0 = ctx.cfg.run.wavelength_um
+    base = float(getattr(ctx.cfg.grating, "mesh_scale", 1.0) or 1.0)
+    found = {}
+    if "final" in spectra:
+        found[base] = spectra["final"]
+    if "mesh x1.5" in spectra:
+        found[round(base * 1.5, 4)] = spectra["mesh x1.5"]
+    for sc, d in ladder.items():
+        if d is None:
+            continue
+        try:
+            found[sc] = d.get_spectrum(folder)
+        except Exception:                                          # noqa: BLE001
+            continue
+    if len(found) < 2:
+        return []
+    rows = []
+    for sc in sorted(found):
+        s = spectrum_summary(*found[sc], wl0)
+        steps = _fine_steps(sc)
+        rows.append(dict(mesh_scale=sc, cells_per_wavelength=steps,
+                         cell_nm=round(wl0 / (2.0 * steps) * 1e3, 1),
+                         efficiency_at_target=s["efficiency_at_target"],
+                         peak_efficiency=s["peak_efficiency"],
+                         peak_wavelength_nm=round(s["peak_wavelength_um"] * 1e3, 1),
+                         design_mesh=abs(sc - base) < 1e-9))
+    fin = rows[-1]["efficiency_at_target"]
+    for r in rows:
+        r["change_db_vs_finest"] = round(10 * math.log10(max(r["efficiency_at_target"], 1e-9)
+                                                         / max(fin, 1e-9)), 2)
+    return rows
+
+
+def draw_mesh_ladder(ctx: Context, rows: list[dict]):
+    """Figure 7f: the final grating's efficiency and peak wavelength against the mesh."""
+    from tarang.design import visuals
+    plt = visuals._plt()
+    fig, ax = plt.subplots(figsize=(6.2, 4.2))
+    x = [r["cells_per_wavelength"] for r in rows]
+    ax.plot(x, [r["efficiency_at_target"] * 100 for r in rows], "o-",
+            label=f"at {ctx.cfg.run.wavelength_um * 1e3:.0f} nm")
+    ax.plot(x, [r["peak_efficiency"] * 100 for r in rows], "s--", label="peak")
+    d = [r for r in rows if r.get("design_mesh")]
+    if d:
+        ax.plot([d[0]["cells_per_wavelength"]], [d[0]["efficiency_at_target"] * 100], "o",
+                ms=12, mfc="none", color="0.3", label="design mesh")
+    ax.set(xlabel="Cells per wavelength in the grating region (λ / 2 per cell size)",
+           ylabel="Coupling efficiency (%)", title="Grating mesh convergence (2D FDTD)")
+    tw = ax.twinx()
+    tw.plot(x, [r["peak_wavelength_nm"] for r in rows], "^:", color="C2", label="peak λ")
+    tw.set_ylabel("Peak wavelength (nm)")
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = tw.get_legend_handles_labels()
+    tw.legend(h1 + h2, l1 + l2, fontsize=8, loc="best")
+    ax.grid(alpha=0.3)
+    return visuals._save(fig, ctx.path("figures", "7f_grating_mesh.png"))
 
 
 def angle_sweep_variants(ctx: Context, gc: dict) -> dict:
@@ -838,6 +954,20 @@ def stage_checks(ctx: Context) -> dict:
                    "crossings with that family (their resonances drift by FSR_00 - FSR_i per "
                    "mode). Where the crossings fall depends on the exact fabricated geometry.")
             _write_csv(ctx.path("tables", "mode_families.csv"), fam)
+    walls_res: dict = {}
+    if cfg.checks.sidewall_sweep_deg:
+        from tarang.design import walls
+        ui.say(f"\nSidewall sweep at {', '.join(f'{a:g}' for a in walls.angles(cfg.checks.sidewall_sweep_deg))}° "
+               f"(local mode solves, free; widths at the {cfg.checks.sidewall_reference}):")
+        try:
+            walls_res["cross_section"] = walls.cross_section_sweep(ctx, cfg.checks.sidewall_sweep_deg)
+        except Exception as err:                                  # noqa: BLE001
+            ui.say(f"  (sidewall sweep of the cross-section not computed: {type(err).__name__}: {err})")
+        if ring and gap:
+            try:
+                walls_res["coupling"] = walls.coupling_sweep(ctx, cfg.checks.sidewall_sweep_deg)
+            except Exception as err:                              # noqa: BLE001
+                ui.say(f"  (sidewall sweep of the coupling not computed: {type(err).__name__}: {err})")
     out["loss_budget"] = loss_budget(ctx, gc)
     ui.say("\nFibre-to-fibre loss at the design wavelength, off resonance:")
     ui.table(out["loss_budget"], formats={"loss_db": ".2f"})
@@ -853,7 +983,8 @@ def stage_checks(ctx: Context) -> dict:
                 wl = np.array(c["wavelength_um"])
                 ui.say(f"  {k}: K = {K.min():.2f}-{K.max():.2f} over {wl.min() * 1e3:.0f}-"
                        f"{wl.max() * 1e3:.0f} nm")
-    if gc and (cfg.checks.grating_extras or cfg.checks.mesh_grating or cfg.checks.angle_sweep_deg):
+    if gc and (cfg.checks.grating_extras or cfg.checks.mesh_grating or cfg.checks.angle_sweep_deg
+               or cfg.checks.grating_mesh_ladder or cfg.checks.sidewall_grating_deg):
         r = grating_checks(ctx, gc)
         if r and r["variants"]:
             out["grating"] = r
@@ -865,6 +996,15 @@ def stage_checks(ctx: Context) -> dict:
                        f"at {cfg.run.wavelength_um} µm, peak {row['peak_efficiency'] * 100:.1f} % "
                        f"at {row['peak_wavelength_nm']:.0f} nm (grating equation: "
                        f"{row['expected_peak_nm']:.0f} nm)")
+            if r.get("mesh_ladder"):
+                ui.say("  Grating mesh convergence (efficiency against the mesh; change against "
+                       "the finest):")
+                ui.table(r["mesh_ladder"], ["mesh_scale", "cells_per_wavelength", "cell_nm",
+                                            "efficiency_at_target", "peak_wavelength_nm",
+                                            "change_db_vs_finest"],
+                         {"efficiency_at_target": ".3f"})
+            if r.get("sidewall"):
+                walls_res["grating"] = r["sidewall"]
             b = (r.get("power_budget") or {}).get("at_target")
             if b:
                 ui.say(f"  At {cfg.run.wavelength_um} µm, light launched from the waveguide: "
@@ -881,6 +1021,15 @@ def stage_checks(ctx: Context) -> dict:
             out["gap_mesh"] = r
             ui.say(f"  critical gap at 1.5x finer mesh: coupled power {r['coupled_fine']:.4e} "
                    f"vs {r['coupled_fit']:.4e} ({r['change_percent']:+.1f} %)")
+    if walls_res:
+        from tarang.design import walls
+        out["sidewall"] = walls_res
+        walls.say(ctx, walls_res)
+        if walls_res.get("cross_section"):
+            _write_csv(ctx.path("tables", "sidewall_cross_section.csv"), walls_res["cross_section"])
+        if (walls_res.get("coupling") or {}).get("rows"):
+            _write_csv(ctx.path("tables", "sidewall_coupling.csv"), walls_res["coupling"]["rows"])
+        visuals.safe(ctx, "sidewall sweep", walls.draw, ctx, walls_res)
     visuals.safe(ctx, "loss budget", draw_loss_budget, ctx, out["loss_budget"])
     return out
 
@@ -976,6 +1125,13 @@ def redraw_saved_figures(ctx: Context, force: bool = False) -> list[str]:
     if g.get("angle_sweep") and gc:
         if visuals.safe(ctx, "grating angle sweep", draw_angle_sweep, ctx, gc, g["angle_sweep"]):
             done.append("7d_grating_angle")
+    if g.get("mesh_ladder"):
+        if visuals.safe(ctx, "grating mesh ladder", draw_mesh_ladder, ctx, g["mesh_ladder"]):
+            done.append("7f_grating_mesh")
+    if chk.get("sidewall"):
+        from tarang.design import walls
+        if visuals.safe(ctx, "sidewall sweep", walls.draw, ctx, chk["sidewall"]):
+            done.append("7e_sidewall")
     gap = res.get("gap") or {}
     if gap and not gap.get("skipped") and gap.get("folder"):
         fmap = ctx.path("figures", "4d_gap_field.png")

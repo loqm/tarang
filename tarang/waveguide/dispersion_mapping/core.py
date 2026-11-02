@@ -98,11 +98,14 @@ def stack_label(core=DEFAULT_CORE, substrate=DEFAULT_SUBSTRATE, cladding=None, b
 def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
               substrate=DEFAULT_SUBSTRATE, cladding=None, cladding_height=2.0,
               n_shift=0.0, si_handle=False, si_thick=2.0, margin_y=2.0, band=None,
-              snap=False):
+              snap=False, sidewall_deg=90.0, sidewall_ref="top"):
     """Tidy3D simulation of the cross-section (lengths in um). Materials are fitted over
     a range covering ``band`` (default wl0 +/- 0.1 um). ``snap``: grid lines through the
     four core edges, so the edges sit on cell faces at every mesh (without it, where an
-    edge falls inside a cell changes from mesh to mesh)."""
+    edge falls inside a cell changes from mesh to mesh). ``sidewall_deg``: angle of the
+    etched walls (90 = vertical, the default and the only case before v0.1.3; < 90 the
+    core widens downwards), ``width`` being the width at the ``sidewall_ref`` plane
+    ('top', 'bottom' or 'middle'; see tarang.geometries.sidewall)."""
     lo, hi = band or (wl0 - 0.1, wl0 + 0.1)
     core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
     sub_m = medium_for(substrate, lo, hi)
@@ -113,8 +116,17 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
         top_cladding_height=(cladding_height if top_m is not None else 0.0),
         fine_steps_per_wvl=steps, margin_y=margin_y)
     sim = wg.sim
+    from tarang.geometries import sidewall as sw
+    vertical = sw.is_vertical(sidewall_deg)
+    if not vertical:
+        sim = sloped_core(sim, height, width, core_m, sidewall_deg, sidewall_ref)
     if snap:
-        pts = ((None, -width / 2, 0.0), (None, width / 2, height))
+        if vertical:
+            pts = ((None, -width / 2, 0.0), (None, width / 2, height))
+        else:
+            wb, wt = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
+            pts = ((None, -wb / 2, 0.0), (None, wb / 2, 0.0), (None, -wt / 2, height),
+                   (None, wt / 2, height))
         sim = sim.updated_copy(grid_spec=sim.grid_spec.updated_copy(snapping_points=pts))
     if si_handle:
         (x0, y0, z0), (x1, y1, z1) = sim.bounds
@@ -125,6 +137,36 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
                                size=(sim.size[0], sim.size[1], z1 - z0_new),
                                structures=list(sim.structures) + [si])
     return sim
+
+
+def find_core(sim, height, width) -> int:
+    """Index of the (vertical-walled) core Box in a cross-section simulation."""
+    for i, st in enumerate(sim.structures):
+        g = st.geometry
+        if (isinstance(g, td.Box) and abs(g.size[1] - width) < 1e-9
+                and abs(g.center[2] - height / 2) < 1e-9 and abs(g.size[2] - height) < 1e-9):
+            return i
+    raise RuntimeError("core structure not found in the cross-section simulation")
+
+
+def sloped_core(sim, height, width, core_medium, sidewall_deg, sidewall_ref="top"):
+    """The cross-section with its core replaced by a trapezoid (sloped walls), the fine
+    mesh region widened to cover the wider of its two faces."""
+    from tarang.geometries import sidewall as sw
+    i = find_core(sim, height, width)
+    wb, wt = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
+    core = td.Structure(geometry=sw.core_geometry(width, height, sidewall_deg, sidewall_ref),
+                        medium=core_medium, name="core_sloped")
+    structs = list(sim.structures)
+    structs[i] = core
+    gs = sim.grid_spec
+    extra = max(wb, wt) - width
+    overrides = []
+    for o in gs.override_structures or []:
+        c, sz = o.geometry.center, o.geometry.size
+        overrides.append(o.updated_copy(geometry=td.Box(center=c, size=(sz[0], sz[1] + extra, sz[2]))))
+    return sim.updated_copy(structures=structs,
+                            grid_spec=gs.updated_copy(override_structures=overrides))
 
 
 def _te_frac(data, m: int, f: int) -> float:
@@ -182,7 +224,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                 substrate: str = DEFAULT_SUBSTRATE, cladding=None,
                 cladding_height: float = 2.0, n_shift: float = 0.0,
                 si_handle: bool = False, pml: int = 0,
-                bend_radius: float | None = None, snap: bool = False) -> dict:
+                bend_radius: float | None = None, snap: bool = False,
+                sidewall_deg: float = 90.0, sidewall_ref: str = "top") -> dict:
     """Analyse one cross-section.
 
     core / substrate / cladding : media.json keys (cladding None or "air" = air top)
@@ -192,6 +235,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     bend_radius : bend radius in um to the waveguide centre (None = straight).  Guided
                   counts are NOT meaningful in bends (cladding modes appear); use D,
                   n_g, loss and TE/TM splitting only.
+    sidewall_deg, sidewall_ref : etched-wall angle (90 = vertical) and the plane where
+                  ``width`` holds (see build_sim)
     """
     bent = bend_radius is not None
     if bent or si_handle:
@@ -200,7 +245,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     sim = build_sim(height, width, wl0=wl0, steps=steps, box=box, core=core,
                     substrate=substrate, cladding=cladding, cladding_height=cladding_height,
                     n_shift=n_shift, si_handle=si_handle, margin_y=(3.0 if bent else 2.0),
-                    band=(lo, hi), snap=snap)
+                    band=(lo, hi), snap=snap, sidewall_deg=sidewall_deg,
+                    sidewall_ref=sidewall_ref)
     wls = np.linspace(lo, hi, npts)
     plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
     core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
@@ -244,7 +290,10 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
             return float(loss), float("nan"), float("nan")
         dA = np.outer(np.gradient(y), np.gradient(z)).reshape(E2.shape)
         Y, Z = np.meshgrid(y, z, indexing="ij")
-        in_core = (np.abs(Y) <= width / 2) & (Z >= 0) & (Z <= height)
+        from tarang.geometries import sidewall as sw
+        wb, wt = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
+        half = (wb + (wt - wb) * np.clip(Z / height, 0.0, 1.0)) / 2   # a trapezoid's half-width
+        in_core = (np.abs(Y) <= half) & (Z >= 0) & (Z <= height)
         return (float(loss), float(np.sum(E2 * dA) ** 2 / np.sum(E2 ** 2 * dA)),
                 float(np.sum(E2 * dA * in_core) / np.sum(E2 * dA)))
 
@@ -268,6 +317,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
         core=core, substrate=substrate, cladding=(None if is_air(cladding) else cladding),
         box=box, n_shift=n_shift, n_cut=round(n_cut, 5), margin=margin,
         si_handle=si_handle, pml=pml, bend_radius=bend_radius,
+        sidewall_deg=float(sidewall_deg), sidewall_ref=str(sidewall_ref),
+        ng_TE0_fine=float(ng_te), ng_TM0_fine=float(ng_tm),
         loss_TE0_dB_cm=float(loss_db_cm), Aeff_TE0_um2=round(aeff, 4),
         Gamma_TE0=round(gamma_core, 4),
         loss_TM0_dB_cm=loss_tm, Aeff_TM0_um2=None if aeff_tm is None else round(aeff_tm, 4),

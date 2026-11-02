@@ -129,6 +129,8 @@ centre_peak = true
 check_3d = false
 # Linear taper from the grating width to the waveguide [um]
 taper_length_um = 300.0
+# Mesh of every grating FDTD run (1 = 15 cells per wavelength in the core, 10 elsewhere; 2 = twice as fine, about 8x the cost of a 2D run). Raise it when checks.grating_mesh_ladder shows the efficiency still changing (thin films, short wavelengths)
+mesh_scale = 1.0
 
 [checks]
 # Coupling against wavelength (critical and over-coupled gaps; 2 cloud runs, none if the gap runs recorded the band)
@@ -143,6 +145,14 @@ angle_sweep_deg = [8.0, 10.0, 14.0, 16.0]
 litho_bias_um = 0.02
 # Grating mesh check (final grating again at 1.5x finer mesh; 1 small 2D run)
 mesh_grating = true
+# Mesh scales for a convergence ladder of the final grating (e.g. 2, 2.5, 3; scale 1 = grating.mesh_scale 1; one 2D run each, costing about scale^3 times a run at scale 1; empty: none)
+grating_mesh_ladder = []
+# Sidewall angles for the sweep of the cross-section, ring and ring-bus coupling (90 = vertical, < 90 wider at the bottom; e.g. 85-93; local mode solves, free; empty: none) [deg]
+sidewall_sweep_deg = [85.0, 86.0, 87.0, 88.0, 89.0, 90.0, 91.0, 92.0, 93.0]
+# Sidewall angles of the grating teeth for the efficiency check of the final grating (one 2D run each, priced first; empty: none) [deg]
+sidewall_grating_deg = [85.0, 87.0, 89.0, 91.0, 93.0]
+# Where the designed widths, gaps and tooth lengths hold when the walls slope: 'top' (the mask edge, what a top-down SEM measures), 'bottom' or 'middle'
+sidewall_reference = "top"
 # Gap mesh check (critical gap again at 1.5x finer mesh; 1 3D run, about 5x the cost of a gap run)
 mesh_gap = false
 # Ring mode families (other guided modes of the bent waveguide and how often they cross TE00; local, free)
@@ -215,6 +225,10 @@ ring_layer = [1, 0]
 taper_layer = [1, 0]
 # GDS [layer, datatype] of the grating teeth
 grating_layer = [1, 0]
+# Extra grating test structures (grating, waveguide, grating) with every tooth longer by these amounts and the trenches shorter by the same, the period unchanged (e.g. -0.02, -0.01, 0.01, 0.02: lithography bias) [um]
+grating_tooth_bias_um = [-0.02, -0.01, 0.01, 0.02]
+# Extra grating test structures with the period changed by these amounts at the same fill factor (e.g. -0.01, 0.01: moves the peak wavelength) [um]
+grating_period_offsets_um = [-0.02, 0.02]
 
 [device]
 # Model the whole device (free, local): fibre-to-fibre transmission of grating + taper + bus + ring + taper + grating from the stages' results

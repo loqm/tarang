@@ -176,6 +176,10 @@ def device_parameters(ctx) -> dict:
         "focus_y_max_um": fc.get("y_max_um") if have_fc else None,
         "focus_s": _r(fc.get("s"), 6) if have_fc else None,
         "focus_teeth_list": fc.get("teeth") if have_fc else None,
+        "grating_tooth_bias_um": ([round(float(b), 4) for b in lay.grating_tooth_bias_um]
+                                  if gc.get("period_um") else []),
+        "grating_period_offsets_um": ([round(float(d), 4) for d in lay.grating_period_offsets_um]
+                                      if gc.get("period_um") else []),
         "tone": lay.tone,
         "trench_width_um": lay.trench_width_um,
         "layers": {"waveguide": list(lay.waveguide_layer), "ring": list(lay.ring_layer),
@@ -229,7 +233,9 @@ def export(ctx) -> dict:
         dict(section="layout", key="reference",
              show=lambda c: str(getattr(c.run, "goal", "comb_ring")) == "comb_ring"),
         dict(section="layout", key="gap_offsets_um", cast=parse_list,
-             show=lambda c: str(getattr(c.run, "goal", "comb_ring")) == "comb_ring")])
+             show=lambda c: str(getattr(c.run, "goal", "comb_ring")) == "comb_ring"),
+        dict(section="layout", key="grating_tooth_bias_um", cast=parse_list, show=grating),
+        dict(section="layout", key="grating_period_offsets_um", cast=parse_list, show=grating)])
     for key in ("bus_length_um", "tone", "trench_width_um", "waveguide_layer", "ring_layer",
                 "taper_layer", "grating_layer"):
         if key == "trench_width_um" and cfg.layout.tone != "trench":
@@ -270,6 +276,21 @@ def export(ctx) -> dict:
     out = ctx.out / "layout"
     out.mkdir(parents=True, exist_ok=True)
     files = _write_parameters(p, out)
+    try:
+        gv = grating_variant_list(p)
+    except ValueError as err:
+        ui.say(f"  Layout not written: {err}")
+        return dict(parameters=p, files=[str(f) for f in files], gds=None, error=str(err))
+    if gv:
+        _teeth_shift(ctx, gv)
+        ui.say("  Grating variants (grating_variants_*.gds; tooth and trench at the top of "
+               "the core, the period):")
+        ui.table(gv, ["tag", "tooth_um", "trench_um", "period_um", "expected_peak_shift_nm"])
+        with open(out / "grating_variants.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(gv[0]), lineterminator="\n")
+            w.writeheader()
+            w.writerows(gv)
+        files.append(out / "grating_variants.csv")
     lle = _lle(ctx)
     import importlib.util
     if importlib.util.find_spec("gdstk") is None:
@@ -323,6 +344,21 @@ def export(ctx) -> dict:
                + f" in {ctx.out / 'lle'}")
     return dict(parameters=p, files=[str(f) for f in files], figure=str(fig) if fig else None,
                 lle=lle)
+
+
+def _teeth_shift(ctx, gv: list[dict]) -> None:
+    """Expected peak shift of the tooth-bias variants, interpolated (linearly, per nm of
+    bias) from the checks stage's 'teeth -/+ b' runs when they exist."""
+    chk = (ctx.state["stages"].get("checks") or {}).get("results") or {}
+    rows = {r["case"]: r for r in ((chk.get("grating") or {}).get("variants") or [])}
+    b = float(ctx.cfg.checks.litho_bias_um)
+    lo, hi = rows.get(f"teeth −{b * 1e3:.0f} nm"), rows.get(f"teeth +{b * 1e3:.0f} nm")
+    if not (lo and hi and b > 0):
+        return
+    per_um = (hi["peak_wavelength_nm"] - lo["peak_wavelength_nm"]) / (2 * b)
+    for v in gv:
+        if v["bias_um"]:
+            v["expected_peak_shift_nm"] = round(per_um * v["bias_um"], 1)
 
 
 def _lle(ctx):
@@ -428,10 +464,12 @@ def build_gds(p: dict, out: Path) -> list[Path]:
         x1 = x0 + Lt + float(p["edge_facet_straight_um"]) + float(p["edge_facet_overhang_um"])
         cell.add(gdstk.rectangle((x0 + Lt, -Wf / 2), (x1, Wf / 2), **lay["taper"]))
 
-    def coupler(cell, side, kind="uniform", end=None):
+    def coupler(cell, side, kind="uniform", end=None, bias=0.0, dP=0.0):
         """Taper and grating at the right (side = +1) or left (-1) end of the bus (or at the
         waveguide end ``end`` = (x, y), the waveguide arriving along +x for side +1 and -x
-        for side -1). kind: 'uniform', 'apodised', 'focusing' or 'edge'."""
+        for side -1). kind: 'uniform', 'apodised', 'focusing' or 'edge'. ``bias`` lengthens
+        every tooth (both edges by bias / 2) and ``dP`` changes the period (straight
+        gratings only: the mask's grating variants)."""
         if kind == "edge":
             if not p.get("edge_facet_width_um"):
                 return
@@ -443,7 +481,7 @@ def build_gds(p: dict, out: Path) -> list[Path]:
         elif kind == "focusing":
             focusing(sub, +1)
         else:
-            straight(sub, kind)
+            straight(sub, kind, bias, dP)
         for poly in sub.polygons:
             if side < 0:
                 poly.mirror((0, 0), (0, 1))
@@ -451,15 +489,30 @@ def build_gds(p: dict, out: Path) -> list[Path]:
                 poly.translate(end[0] - side * L / 2, end[1])
             cell.add(poly)
 
-    def straight(cell, kind):
+    def straight(cell, kind, bias=0.0, dP=0.0):
         Lt, Wg = p["taper_length_um"], p["grating_width_um"]
-        P, ff = p["grating_period_um"], p["grating_fill_factor"]
+        P0, ff0 = p["grating_period_um"], p["grating_fill_factor"]
+        P = P0 + dP                                    # variants: same fill factor, new period
+        ff = (ff0 * P + bias) / P                      # and/or teeth longer by bias
         n = int(p.get("uniform_teeth") or p["grating_teeth"])
         x0 = L / 2
         taper = gdstk.Polygon([(x0, -W / 2), (x0 + Lt, -Wg / 2), (x0 + Lt, Wg / 2), (x0, W / 2)],
                               **lay["taper"])
         g0 = x0 + Lt
         tl = p.get("grating_teeth_list") if kind == "apodised" else None
+        if tl and (bias or dP):                        # scale positions, widen each tooth
+            k = P / P0
+            tl = [(a * k - (bias / 2 if i else 0.0), b * k + (bias / 2 if not i else bias))
+                  for i, (a, b) in enumerate(tl)]
+        elif bias and p.get("grating_etch") == "full":
+            # uniform full etch: tooth i spans [i P - bias / 2, i P + ff0 P + bias / 2]; the first
+            # tooth joins the taper, so only its right edge moves
+            shapes = [gdstk.rectangle((g0 + i * P - (bias / 2 if i else 0.0), -Wg / 2),
+                                      (g0 + i * P + ff0 * P + bias / 2, Wg / 2), **lay["grating"])
+                      for i in range(n)]
+            for poly in [taper, *shapes]:
+                cell.add(poly)
+            return
         if tl:                             # apodised: explicit teeth from x = 0 at the grating start
             ends = [a + b for a, b in tl]
             L_g = tl[-1][0] + (tl[-1][0] - tl[-2][0] if len(tl) > 1 else tl[-1][1])
@@ -513,6 +566,13 @@ def build_gds(p: dict, out: Path) -> list[Path]:
     if kinds and (p.get("reference_waveguide") or not (gaps and R)):
         for suf, kind in kinds:
             variants[f"waveguide_{suf}"] = [dict(label=f"waveguide_{suf}", kind=kind)]
+    gv = grating_variant_list(p)
+    if gv:
+        for suf, kind in kinds:
+            if kind in ("uniform", "apodised"):
+                variants[f"grating_variants_{suf}"] = [
+                    dict(label=f"waveguide_{suf}_{v['tag']}", kind=kind, bias=v["bias_um"],
+                         dP=v["period_offset_um"]) for v in gv]
     lengths = [x for x in (p.get("cutback_lengths_cm") or []) if x > 0]
     if lengths and kinds and p.get("spiral_bend_radius_um"):
         for suf, kind in kinds:
@@ -546,8 +606,8 @@ def build_gds(p: dict, out: Path) -> list[Path]:
                 if it.get("gap"):
                     ring(cell, it["gap"])
                 if kind:
-                    coupler(cell, +1, kind)
-                    coupler(cell, -1, kind)
+                    coupler(cell, +1, kind, bias=it.get("bias", 0.0), dP=it.get("dP", 0.0))
+                    coupler(cell, -1, kind, bias=it.get("bias", 0.0), dP=it.get("dP", 0.0))
             cell = finish(cell)
             lib.add(cell)
             if not (is_edge and kind != "edge"):     # the chip holds only cells with facets
@@ -580,6 +640,40 @@ def build_gds(p: dict, out: Path) -> list[Path]:
             w.writerows(spiral_info)
         files.append(out / "spirals.csv")
     return files
+
+
+def grating_variant_list(p: dict) -> list[dict]:
+    """The mask's grating variants (layout.grating_tooth_bias_um, grating_period_offsets_um):
+    one grating-waveguide-grating structure each, with its tooth, trench and period, and the
+    peak shift expected for a period change (first-order grating equation: the peak scales
+    with the period, d lambda = lambda dP / P). Raises ValueError when a tooth or trench
+    would vanish."""
+    P, ff = p.get("grating_period_um"), p.get("grating_fill_factor")
+    if not P:
+        return []
+    wl_nm = float(p["wavelength_um"]) * 1e3
+    out = []
+    for b in p.get("grating_tooth_bias_um") or []:
+        if abs(b) < 1e-9:
+            continue
+        tooth, trench = ff * P + b, (1 - ff) * P - b
+        out.append(dict(tag=f"tooth{'p' if b > 0 else 'm'}{abs(b) * 1e3:.0f}nm", bias_um=b,
+                        period_offset_um=0.0, period_um=round(P, 4), tooth_um=round(tooth, 4),
+                        trench_um=round(trench, 4), expected_peak_shift_nm=None))
+    for d in p.get("grating_period_offsets_um") or []:
+        if abs(d) < 1e-9:
+            continue
+        Pn = P + d
+        out.append(dict(tag=f"period{'p' if d > 0 else 'm'}{abs(d) * 1e3:.0f}nm", bias_um=0.0,
+                        period_offset_um=d, period_um=round(Pn, 4), tooth_um=round(ff * Pn, 4),
+                        trench_um=round((1 - ff) * Pn, 4),
+                        expected_peak_shift_nm=round(wl_nm * d / P, 1)))
+    for v in out:
+        if v["tooth_um"] <= 0 or v["trench_um"] <= 0:
+            raise ValueError(f"grating variant {v['tag']}: tooth {v['tooth_um']} um, trench "
+                             f"{v['trench_um']} um (layout.grating_tooth_bias_um / "
+                             "grating_period_offsets_um too large)")
+    return out
 
 
 def _arc(cx, cy, r, a0, a1, n=None):

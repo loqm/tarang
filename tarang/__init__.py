@@ -19,4 +19,4 @@ __all__ = [
     "set_tidy3d_output",
 ]
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
