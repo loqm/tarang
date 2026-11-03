@@ -683,17 +683,25 @@ def mesh_ladder_variants(ctx: Context, gc: dict, variants: dict) -> dict:
     the final design or the x1.5 mesh check already is that mesh."""
     g = ctx.cfg.grating
     base = float(getattr(g, "mesh_scale", 1.0) or 1.0)
-    have = {_fine_steps(base): "final"}
+    lb = ladder_boundary(ctx)
+    own = lb == str(getattr(g, "boundary", "pml") or "pml")
+    # The final design is a rung of the ladder only when it has the ladder's boundary;
+    # otherwise the ladder gets its own run at the design mesh, so every rung differs
+    # from the others in the mesh alone.
+    have = {_fine_steps(base): "final"} if own else {}
     if "mesh x1.5" in variants:
         have[_fine_steps(base * 1.5)] = "mesh x1.5"
     H = ctx.results("cross_section")["height_um"]
+    scales = {round(float(v), 4) for v in (ctx.cfg.checks.grating_mesh_ladder or [])}
+    if scales and not own:
+        scales.add(round(base, 4))
     out: dict = {}
-    for sc in sorted({round(float(v), 4) for v in (ctx.cfg.checks.grating_mesh_ladder or [])}):
+    for sc in sorted(scales):
         if sc <= 0:
             raise ValueError(f"checks.grating_mesh_ladder: mesh scale {sc} must be > 0")
         out[sc] = None if _fine_steps(sc) in have else grating_device(
             ctx, gc["period_um"], gc["fill_factor"], gc["source_x_um"], H=H,
-            depth=gc["etch_depth_um"], mesh=sc / base)
+            depth=gc["etch_depth_um"], mesh=sc / base, boundary=lb)
     return out
 
 
@@ -710,7 +718,8 @@ def mesh_ladder_rows(ctx: Context, gc: dict, ladder: dict, spectra: dict,
     wl0 = ctx.cfg.run.wavelength_um
     base = float(getattr(ctx.cfg.grating, "mesh_scale", 1.0) or 1.0)
     found = {}
-    if "final" in spectra:
+    own = ladder_boundary(ctx) == str(getattr(ctx.cfg.grating, "boundary", "pml") or "pml")
+    if "final" in spectra and own:
         found[base] = spectra["final"]
     if "mesh x1.5" in spectra:
         found[round(base * 1.5, 4)] = spectra["mesh x1.5"]
@@ -733,7 +742,7 @@ def mesh_ladder_rows(ctx: Context, gc: dict, ladder: dict, spectra: dict,
     for sc in sorted(found):
         s = spectrum_summary(*found[sc], wl0)
         steps = _fine_steps(sc)
-        rows.append(dict(mesh_scale=sc, cells_per_wavelength=steps,
+        rows.append(dict(mesh_scale=sc, cells_per_wavelength=steps, boundary=ladder_boundary(ctx),
                          cell_nm=round(wl0 / (2.0 * steps) * 1e3, 1),
                          efficiency_at_target=s["efficiency_at_target"],
                          peak_efficiency=s["peak_efficiency"],
@@ -1032,8 +1041,9 @@ def stage_checks(ctx: Context) -> dict:
                 ui.say(f"  NOT IN THE TABLE: mesh scale {f_['mesh_scale']:g} "
                        f"({f_['cells_per_wavelength']} cells per wavelength): {f_['reason']}"
                        + (f" ({f_['url']})" if f_.get("url") else "")
-                       + (". Set grating.boundary = 'stable_pml' and run the grating stages "
-                          "again." if f_["reason"] == "diverged" else "."))
+                       + (". Set checks.ladder_boundary = 'absorber' (the dispersive "
+                          "media reach the PML) and run the checks again." if
+                          f_["reason"] == "diverged" else "."))
             if r.get("sidewall"):
                 walls_res["grating"] = r["sidewall"]
             b = (r.get("power_budget") or {}).get("at_target")
@@ -1199,8 +1209,16 @@ def grating_variants(ctx: Context, gc: dict, every: bool = False) -> dict:
             f"teeth −{b * 1e3:.0f} nm": grating_device(ctx, P, ff - b / P, sx, H=H, depth=depth),
             f"teeth +{b * 1e3:.0f} nm": grating_device(ctx, P, ff + b / P, sx, H=H, depth=depth)})
     if ch.mesh_grating or every:
-        variants["mesh x1.5"] = grating_device(ctx, P, ff, sx, H=H, depth=depth, mesh=1.5)
+        variants["mesh x1.5"] = grating_device(ctx, P, ff, sx, H=H, depth=depth, mesh=1.5,
+                                               boundary=ladder_boundary(ctx))
     return variants
+
+
+def ladder_boundary(ctx: Context) -> str:
+    """Absorbing boundary of the mesh checks (x1.5 and the ladder): checks.ladder_boundary,
+    or the grating's own boundary when that is empty."""
+    lb = str(getattr(getattr(ctx.cfg, "checks", None), "ladder_boundary", "") or "").strip().lower()
+    return lb or str(getattr(getattr(ctx.cfg, "grating", None), "boundary", "pml") or "pml")
 
 
 def _grating_check_spectra(ctx: Context, gc: dict, cases: list[str]) -> dict:

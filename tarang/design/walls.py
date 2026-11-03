@@ -144,7 +144,13 @@ def coupling_sweep(ctx, values) -> dict:
     ref = sw.check_reference(cfg.checks.sidewall_reference)
     g_c = float(gap["critical_gap_um"])
     g_o = gap.get("over_coupled_gap_um")
-    gaps = sorted({round(float(g_o), 4), round(g_c, 4)} if g_o else {round(g_c - 0.03, 4), round(g_c, 4)})
+    # Three gaps spread over +/-0.1 um (at most +/-40 % of the critical gap): the decay rate
+    # comes from a fit over a 0.2 um span. Before v0.1.5 the two design gaps (38 nm apart on
+    # the 1550 nm design) were used, so a 2 % error in one supermode split moved gamma by
+    # 0.6 /um and put 90 deg off the trend (6.17 against 5.57 and 5.52 /um); over the wide
+    # span the same error moves it by about 0.1 /um (5.57, 5.54, 5.50 /um at 89-91 deg).
+    spread = round(min(0.1, 0.4 * g_c), 4)
+    gaps = [round(g_c - spread, 4), round(g_c, 4), round(g_c + spread, 4)]
     rho = float(gap["target_cross_power"])
     angs = angles(values)
     import json

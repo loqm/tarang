@@ -1,0 +1,24 @@
+python 3.12.15 on Linux x86_64; tidy3d 2.12.2, numpy 2.4.6, scipy 1.18.1
+  (threadpoolctl not installed: BLAS not listed)
+materials as fitted here (the fit is cached on disk; a different cached fit changes D):
+  0.6800 um  n_core = 2.034094718  n_box = 1.455763571
+  0.7050 um  n_core = 2.031651737  n_box = 1.455179468
+  0.7300 um  n_core = 2.029433096  n_box = 1.454640249
+  0.7550 um  n_core = 2.027407103  n_box = 1.454139343
+  0.7800 um  n_core = 2.025547321  n_box = 1.453671248
+  0.8050 um  n_core = 2.023831557  n_box = 1.453231327
+  0.8300 um  n_core = 2.022241056  n_box = 1.452815646
+  0.8550 um  n_core = 2.020759883  n_box = 1.452420855
+  0.8800 um  n_core = 2.019374425  n_box = 1.452044079
+grid: 309 x 334 cells; target n_eff 2.025547
+
+num_modes 10: D = 198.80 ps/(nm km), n_g = 2.269257, fit residual 2.67e-07 (119 s)
+  0.6800 um  n_eff = 1.804399638
+  0.7050 um  n_eff = 1.787467131
+  0.7300 um  n_eff = 1.770504394
+  0.7550 um  n_eff = 1.753499067
+  0.7800 um  n_eff = 1.736445738
+  0.8050 um  n_eff = 1.719345209
+  0.8300 um  n_eff = 1.702204015
+  0.8550 um  n_eff = 1.685034148
+  0.8800 um  n_eff = 1.667852947

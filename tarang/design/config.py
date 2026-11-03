@@ -188,6 +188,10 @@ class Checks:
                                        "(e.g. 2, 2.5, 3; scale 1 = grating.mesh_scale 1; one 2D "
                                        "run each, costing about scale^3 times a run at scale 1; "
                                        "empty: none)")
+    ladder_boundary: str = _f("", "Absorbing boundary of the grating mesh checks (x1.5 and the "
+                                  "ladder): empty = the grating's own; 'absorber' when fine "
+                                  "meshes diverge with dispersive media in the PML (then the "
+                                  "ladder adds its own run at the design mesh)")
     sidewall_sweep_deg: list = _f([], "Sidewall angles for the sweep of the cross-section, ring "
                                       "and ring-bus coupling (90 = vertical, < 90 wider at the "
                                       "bottom; e.g. 85-93; local mode solves, free; empty: none)",
@@ -389,7 +393,8 @@ class Device:
 # leaves it out (so the stage is not repeated).
 LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00"},
           "checks": {"angle_sweep_deg": [], "grating_mesh_ladder": [], "sidewall_sweep_deg": [],
-                     "sidewall_grating_deg": [], "sidewall_reference": "top"},
+                     "sidewall_grating_deg": [], "sidewall_reference": "top",
+                     "ladder_boundary": ""},
           "grating": {"mesh_scale": 1.0, "boundary": "pml"},
           "layout": {"grating_tooth_bias_um": [], "grating_period_offsets_um": []},
           "gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},

@@ -7,34 +7,60 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
-Fixes found in the 780 nm paper run (v0.1.4, to be tagged after the 780 nm re-run).
+Fixes found in the 1550 and 780 nm paper runs (v0.1.4 merged; v0.1.5 adds the second round;
+tagged after the 780 nm re-run).
 
 ### Added
-- **`[grating] boundary`** (`GratingConfig.boundary`): the absorbing boundary of every
-  grating FDTD run, `pml` (default, as before), `stable_pml` or `absorber`. At fine meshes
-  the standard PML can diverge where the dispersive core and oxide run into it (the 780 nm
-  mesh ladder diverged at 2.5x and 3x); `stable_pml` avoids that. The default builds exactly
-  the simulations of earlier versions, so nothing saved is run again; another choice is a
-  new simulation (cache names end in `_spml` / `_abs`) and is priced first. The 3D focusing
-  grating uses the same boundary.
-- `validation/mesh_study/`: a free study of why D of the thin 780 nm core moves between
-  meshes (band of the dispersion fit against the mesh itself).
+- **`[grating] boundary`** (`GratingConfig.boundary`, v0.1.4): the absorbing boundary of
+  every grating FDTD run, `pml` (default, as before), `stable_pml` or `absorber`. The default
+  builds exactly the simulations of earlier versions, so nothing saved is run again; another
+  choice is a new simulation (cache names end in `_spml` / `_abs`) and is priced first. The
+  3D focusing grating uses the same boundary.
+- **`[checks] ladder_boundary`** (v0.1.5): the boundary of the grating mesh checks (x1.5 and
+  the ladder); empty = the grating's own. The 780 nm runs at 38 and 45 cells per wavelength
+  diverged with `pml` and again with `stable_pml`: Tidy3D reports the dispersive media (SiN,
+  oxide, Si handle) inside the PML, which a stable PML does not cure. Tidy3D advises the
+  adiabatic absorber there. With a boundary other than the grating's, the ladder also runs
+  the design mesh, so every rung differs from the others in the mesh alone; the table has a
+  `boundary` column.
+- `validation/mesh_study/` (v0.1.4, extended in v0.1.5): `mesh_study.py` (D against the mesh
+  for the paper's 0.2 um dispersion band and for a band scaled to the wavelength) and
+  `platform_check.py` (n_eff at the nine fit wavelengths and the fitted materials, to 9
+  decimals, to compare two computers number by number).
 
 ### Fixed
-- **Diverged runs are reported and never used.** A result whose solver reported divergence
-  raises `SimulationDivergedError` (with the task link) instead of being read; the checks
-  stage leaves it out with a message. Before, a diverged grating run lost its mode-monitor
-  data and the mesh ladder dropped it without a word (the 780 nm table showed 3 meshes of
-  5). Failed ladder meshes are listed under the table and in
+- **Diverged runs are reported and never used** (v0.1.4). A result whose solver reported
+  divergence raises `SimulationDivergedError` (with the task link) instead of being read;
+  the checks stage leaves it out with a message. Before, a diverged grating run lost its
+  mode-monitor data and the mesh ladder dropped it without a word (the 780 nm table showed 3
+  meshes of 5). Failed ladder meshes are listed under the table and in
   `tables/grating_mesh_ladder_failed.csv`.
-- **Sloped walls snap continuously into vertical ones.** The sidewall sweep snapped both
-  corners of each sloped wall; near 90° the two grid lines of a wall were a few nanometres
-  apart, a sliver cell the vertical core never has, so 90° was solved on a different mesh
-  from its neighbours (1550 nm design: coupled-mode decay 6.17 /µm at 90° against 5.57 and
-  5.52 at 89° and 91°). Now one grid line per wall at mid-height plus the core's faces; the
-  lines meet the vertical walls' lines as the angle goes to 90°. Sloped-wall results are
-  recorded with `snap_walls = "mid"`, so older ones are solved again (free, local):
-  `--redo checks`. Vertical cross-sections are unchanged.
+- **Centring the grating's peak may not cost efficiency** (v0.1.5). Step D moves the period
+  until the efficiency peak sits on the design wavelength. On the 780 nm grating the peak
+  hardly follows the period (about 2 nm per 10 nm of period instead of about 14: a rippled,
+  strongly reflecting grating, -6.6 dB back into the waveguide), so the step ended at 22.8 %
+  at 780 nm while step B had 33.8 %. If centring costs more than 0.5 dB at the design
+  wavelength, the design with the higher efficiency there is now kept, with a message.
+  `--redo grating` applies it to a finished design (its cloud runs come from the cache).
+- **Sidewall coupling decay from gaps spread over 0.2 um** (v0.1.5). The coupled-mode decay
+  rate of the sidewall sweep was taken from the two design gaps, 38 nm apart on the 1550 nm
+  design, so a 2 % error in one supermode split moved it by 0.6 /um: 90° read 6.17 /um
+  against 5.57 and 5.49 at 89° and 91°, and K at 91° came out above 1. It now comes from a
+  fit over the critical gap +/-0.1 um (at most +/-40 %): 5.57, 5.54 and 5.50 /um at 89°, 90°
+  and 91°, K below 1 at 91°. The supermode splits themselves still scatter by about 2 % with
+  the mesh; that scatter, not the fix of v0.1.4, was the cause. Results are solved again
+  (free, local) by `--redo checks`.
+- **A price-only run no longer overwrites a finished design** (v0.1.5). When a stage leaves
+  priced runs undone, its earlier results are kept (marked to run again) and the stages after
+  it are not run (they are priced once those runs exist). Before, the 780 nm price-only run
+  replaced the grating's results by an empty design and rewrote the layout, the
+  `parameters.json` the MATLAB builders read, the loss budget and the report without a
+  grating.
+
+### Changed
+- **Sloped walls snapped at mid-height** (v0.1.4): one grid line per wall at mid-height plus
+  the core's faces, instead of both corners. It did not move the 90° point (see the coupling
+  fix above); sloped-wall results carry `snap_walls = "mid"`.
 
 ## [0.1.3] - 2026-11-02
 

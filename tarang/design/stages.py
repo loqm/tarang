@@ -1533,7 +1533,7 @@ def stage_grating(ctx: Context) -> dict:
 def grating_device(ctx: Context, period: float, ff: float, sx: float, *, H: float,
                    depth: float, angle: Optional[float] = None, is_3d: bool = False,
                    mesh: float = 1.0, teeth: Optional[list] = None,
-                   sidewall_deg: Optional[float] = None):
+                   sidewall_deg: Optional[float] = None, boundary: Optional[str] = None):
     """The grating-coupler device of this design (2D unless ``is_3d``). ``angle``
     overrides the fibre angle, ``mesh`` scales the mesh steps on top of grating.mesh_scale
     (tolerance and mesh checks) and ``sidewall_deg`` slopes the teeth's walls (sidewall
@@ -1556,13 +1556,17 @@ def grating_device(ctx: Context, period: float, ff: float, sx: float, *, H: floa
                          teeth=tuple((float(a), float(b)) for a, b in teeth) if teeth else None,
                          sidewall_deg=90.0 if sidewall_deg is None else float(sidewall_deg),
                          sidewall_ref=str(getattr(cfg.checks, "sidewall_reference", "top")),
-                         boundary=str(getattr(g, "boundary", "pml") or "pml"))
+                         boundary=str(boundary or getattr(g, "boundary", "pml") or "pml"))
     m_all = float(mesh) * float(getattr(g, "mesh_scale", 1.0) or 1.0)
     kw = {} if abs(m_all - 1.0) < 1e-12 else dict(fine_steps_per_wvl=int(round(15 * m_all)),
                                                   coarse_steps_per_wvl=int(round(10 * m_all)))
     return GratingCoupler.from_config(gcfg, core_medium=ctx.medium(m.core),
                                       box_medium=ctx.medium(m.box), handle_medium=handle,
                                       top_cladding_medium=clad, is_3d=is_3d, **kw)
+
+
+# Largest loss at the design wavelength that centring the efficiency peak may cost (v0.1.5).
+CENTRE_PEAK_MAX_LOSS_DB = 0.5
 
 
 def _centre_peak(design: dict, results: list[dict], run_set, wl: float, ui,
@@ -1615,6 +1619,19 @@ def _centre_peak(design: dict, results: list[dict], run_set, wl: float, ui,
     best = closest()
     ui.say(f"  Peak at {best['peak_wavelength_um'] * 1e3:.1f} nm with period "
            f"{best['period_um']:.4f} µm (fill factor {best['fill_factor']:g}).")
+    lost = 10 * math.log10(max(design["efficiency_at_target"], 1e-9)
+                           / max(best["efficiency_at_target"], 1e-9))
+    if lost > CENTRE_PEAK_MAX_LOSS_DB:
+        # The peak did not follow the period as phase matching says it should (a rippled
+        # or strongly reflecting grating): centring it would cost efficiency at the design
+        # wavelength, which is what the device needs. Keep the better design.
+        ui.say(f"  Centring the peak would cost {lost:.1f} dB at {wl * 1e3:.0f} nm "
+               f"({best['efficiency_at_target'] * 100:.1f} % against "
+               f"{design['efficiency_at_target'] * 100:.1f} %), more than "
+               f"{CENTRE_PEAK_MAX_LOSS_DB:g} dB: the design with the higher efficiency at "
+               f"{wl * 1e3:.0f} nm is kept (period {design['period_um']:.4f} µm, peak at "
+               f"{design['peak_wavelength_um'] * 1e3:.1f} nm).")
+        return design
     return best
 
 
