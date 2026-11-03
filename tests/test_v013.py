@@ -199,7 +199,7 @@ def test_coupling_sweep_anchors_on_the_fdtd_fit(tmp_path, monkeypatch):
         return dict(theta0=0.5 * boost, gamma_per_um=9.0, rows=[dict(dn=1e-3)] * len(gaps))
     monkeypatch.setattr(localmodes, "coupling_from_supermodes", fake)
     res = walls.coupling_sweep(ctx, [86])
-    assert {c[0] for c in calls} == {86.0, 90.0} and calls[0][1] == (0.43, 0.45)
+    assert {c[0] for c in calls} == {86.0, 90.0} and calls[0][1] == (0.35, 0.45, 0.55)  # v0.1.5
     r90 = next(r for r in res["rows"] if r["sidewall_deg"] == 90.0)
     r86 = next(r for r in res["rows"] if r["sidewall_deg"] == 86.0)
     assert r90["K_critical_gap"] == pytest.approx(1.0, abs=1e-3)

@@ -82,6 +82,8 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
     _show_assumptions(cfg, ui)                     # after the choice: they depend on the coupling
     try:
         credit_limits(ctx)
+        price_only = bool(getattr(ui, "price_only", False))
+        pending: list[str] = []      # price only: stages whose priced runs were not run
         for i, (name, title, kind, func) in enumerate(STAGES, 1):
             if name not in only:
                 continue
@@ -92,6 +94,13 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
                 continue
             saved = ctx.state["stages"].get(name)
             key = settings_key(cfg, name)
+            if pending:
+                # price only, and an earlier stage left priced runs undone: this stage would
+                # work from that stage's missing results and overwrite good outputs (layout,
+                # figures, report) with incomplete ones; it is priced once those runs exist
+                ui.say(f"\n[{i}/{len(STAGES)}] {title}: priced once {', '.join(pending)} has "
+                       "run (price only: nothing here is computed or changed)")
+                continue
             if (saved and saved.get("key") == key and not stale and name not in redo
                     and not saved["results"].get("skipped")):
                 ui.say(f"\n[{i}/{len(STAGES)}] {title}: done earlier with the same settings "
@@ -111,6 +120,20 @@ def run(cfg: DesignConfig, out: Path | str, interactive: bool = True,
             n_not_run = len(getattr(ui, "not_run", []))
             results = func(ctx)
             missing = getattr(ui, "not_run", [])[n_not_run:]
+            if missing and price_only and saved and saved.get("results") \
+                    and not saved["results"].get("skipped") and not saved.get("not_run"):
+                # price only: keep the stage's earlier, complete results (and their outputs'
+                # inputs) and only mark it as not done for the current settings
+                ctx.state["stages"][name] = {**saved, "key": None,
+                                             "not_run": [w for w, _ in missing]}
+                pending.append(name)
+                ui.say(f"  ({len(missing)} priced step(s) of this stage not run; its earlier "
+                       "results are kept, and the stage runs again next time)")
+                ctx.save_state()
+                stale = True
+                continue
+            if missing and price_only:
+                pending.append(name)
             ctx.state["stages"][name] = {
                 # a stage that left priced runs undone (price only, a cap, a skip) is kept but
                 # not marked done: the next run does it again and runs what is missing (its
