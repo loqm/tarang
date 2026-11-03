@@ -1555,7 +1555,8 @@ def grating_device(ctx: Context, period: float, ff: float, sx: float, *, H: floa
                          bandwidth_um=g.bandwidth_um,
                          teeth=tuple((float(a), float(b)) for a, b in teeth) if teeth else None,
                          sidewall_deg=90.0 if sidewall_deg is None else float(sidewall_deg),
-                         sidewall_ref=str(getattr(cfg.checks, "sidewall_reference", "top")))
+                         sidewall_ref=str(getattr(cfg.checks, "sidewall_reference", "top")),
+                         boundary=str(getattr(g, "boundary", "pml") or "pml"))
     m_all = float(mesh) * float(getattr(g, "mesh_scale", 1.0) or 1.0)
     kw = {} if abs(m_all - 1.0) < 1e-12 else dict(fine_steps_per_wvl=int(round(15 * m_all)),
                                                   coarse_steps_per_wvl=int(round(10 * m_all)))

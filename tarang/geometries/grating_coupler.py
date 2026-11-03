@@ -30,6 +30,23 @@ logger = get_logger(__name__)
 _NEGATIVE_THETA_NOTED = False
 
 
+BOUNDARIES = ("pml", "stable_pml", "absorber")
+
+
+def open_boundary(kind: str = "pml") -> td.Boundary:
+    """The absorbing boundary of the open sides: 'pml' (Tidy3D's standard PML, 12 layers),
+    'stable_pml' (40 layers, stable with dispersive media and fine meshes) or 'absorber'
+    (adiabatic absorber, 40 layers)."""
+    k = str(kind or "pml").strip().lower()
+    if k == "pml":
+        return td.Boundary.pml()
+    if k == "stable_pml":
+        return td.Boundary.stable_pml()
+    if k == "absorber":
+        return td.Boundary.absorber()
+    raise ValueError(f"grating boundary {kind!r}: use one of {', '.join(BOUNDARIES)}")
+
+
 def _note_negative_theta() -> None:
     """theta_deg was signed before v0.1.0 (always made negative); say once that the sign
     is now ignored and fiber_tilt sets the direction."""
@@ -91,7 +108,7 @@ def get_active_simulation(
         y_min = -config.w_grating / 2
         y_max = config.w_grating / 2
 
-        y_boundary = td.Boundary.pml()
+        y_boundary = open_boundary(getattr(config, "boundary", "pml"))
 
         sim_y_size = config.w_grating + 2 * config.buffer
         source_y_size = 2 * config.mfd
@@ -307,9 +324,9 @@ def get_active_simulation(
         monitors=[mode_monitor, x_mon, y_mon, z_mon],
         run_time=run_time,
         boundary_spec=td.BoundarySpec(
-            x=td.Boundary.pml(),
+            x=open_boundary(getattr(config, "boundary", "pml")),
             y=y_boundary,
-            z=td.Boundary.pml(),
+            z=open_boundary(getattr(config, "boundary", "pml")),
         ),
         medium=top_cladding_medium,
     )

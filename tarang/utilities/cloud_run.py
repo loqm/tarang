@@ -37,7 +37,8 @@ Exposes: sim_fingerprint(), cache_paths(), find_cached(), run_cached(),
 run_batch_cached(), store_result(), estimate_batch_cost(), resolve_max_cost(),
 monitor_data(), api_key_source(), ensure_api_key(), progress_listener(),
 account_status(), task_url(), read_task_record(), collect_runs(), backfill_task_records(),
-CloudCachedDevice, CostLimitExceededError, MonitorDataError, CachedRun.
+CloudCachedDevice, CostLimitExceededError, MonitorDataError, CachedRun,
+SimulationDivergedError, check_diverged.
 """
 
 from __future__ import annotations
@@ -148,6 +149,30 @@ def resolve_max_cost(max_cost: Optional[float]) -> Optional[float]:
         return float(env)
     except ValueError:
         raise ValueError(f"TARANG_MAX_COST must be a number of FlexCredits, got {env!r}")
+
+
+class SimulationDivergedError(RuntimeError):
+    """The solver reported that the fields diverged: the result is not physical and is
+    never used (v0.1.4; before, a diverged grating run lost its mode-monitor data and was
+    skipped without a word)."""
+
+    def __init__(self, name: str, url: Optional[str] = None):
+        self.name, self.url = name, url
+        msg = f"simulation '{name}' diverged (its results are not used)"
+        if url:
+            msg += f"; see {url}"
+        super().__init__(msg)
+
+
+def check_diverged(data, name: str, directory: Optional[PathLike] = None) -> None:
+    """Raise SimulationDivergedError when ``data`` says the run diverged."""
+    if not bool(getattr(data, "diverged", False)):
+        return
+    url = None
+    if directory is not None:
+        rec = read_task_record(directory) or {}
+        url = rec.get("url") or (task_url(rec["task_id"]) if rec.get("task_id") else None)
+    raise SimulationDivergedError(name, url)
 
 
 class MonitorDataError(KeyError, ValueError):
@@ -771,6 +796,8 @@ class CloudCachedDevice:
             folder_name=self._folder_name,
         )
         self.last_run = run
+        check_diverged(run.data, self._readable_name(),
+                       cache_paths(output_dir, self._readable_name(), self.sim)[0])
         return run.data
 
 

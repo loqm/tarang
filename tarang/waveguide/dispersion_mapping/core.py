@@ -124,9 +124,7 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
         if vertical:
             pts = ((None, -width / 2, 0.0), (None, width / 2, height))
         else:
-            wb, wt = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
-            pts = ((None, -wb / 2, 0.0), (None, wb / 2, 0.0), (None, -wt / 2, height),
-                   (None, wt / 2, height))
+            pts = sloped_snap_points(width, height, sidewall_deg, sidewall_ref)
         sim = sim.updated_copy(grid_spec=sim.grid_spec.updated_copy(snapping_points=pts))
     if si_handle:
         (x0, y0, z0), (x1, y1, z1) = sim.bounds
@@ -137,6 +135,26 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
                                size=(sim.size[0], sim.size[1], z1 - z0_new),
                                structures=list(sim.structures) + [si])
     return sim
+
+
+from tarang.geometries.sidewall import SNAP_WALLS  # noqa: E402  (recorded with sloped-wall results)
+
+
+def sloped_snap_points(width, height, sidewall_deg, sidewall_ref="top", y0=0.0):
+    """Grid lines for a sloped core centred on ``y0``: one per wall, where the wall crosses
+    mid-height, plus the core's bottom and top faces (z = 0, ``height``).
+
+    Before v0.1.4 both corners of each wall were snapped. Near 90° the two lines of a wall
+    are only nanometres apart (12 nm at 89° on a 700 nm film), which leaves a sliver cell
+    that a vertical core never has, so 90° was solved on a different mesh from its
+    neighbours and jumped off the sweep's trend (1550 nm design: coupling decay 6.17 /µm
+    at 90° against 5.57 and 5.52 at 89° and 91°). The mid-height lines move continuously
+    into the vertical walls' lines as the angle goes to 90°; the wall itself crosses the
+    cells in between and is handled by sub-pixel averaging."""
+    from tarang.geometries import sidewall as sw
+    wb, wt = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
+    wm = (wb + wt) / 2
+    return ((None, y0 - wm / 2, 0.0), (None, y0 + wm / 2, height))
 
 
 def find_core(sim, height, width) -> int:
@@ -318,6 +336,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
         box=box, n_shift=n_shift, n_cut=round(n_cut, 5), margin=margin,
         si_handle=si_handle, pml=pml, bend_radius=bend_radius,
         sidewall_deg=float(sidewall_deg), sidewall_ref=str(sidewall_ref),
+        snap_walls=(SNAP_WALLS if snap and abs(float(sidewall_deg) - 90.0) > 1e-9 else None),
         ng_TE0_fine=float(ng_te), ng_TM0_fine=float(ng_tm),
         loss_TE0_dB_cm=float(loss_db_cm), Aeff_TE0_um2=round(aeff, 4),
         Gamma_TE0=round(gamma_core, 4),

@@ -29,6 +29,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
+from tarang.geometries.sidewall import SNAP_WALLS
+
 
 
 def parse_range(s: str) -> list[float]:
@@ -144,7 +146,8 @@ def main():
                         and (r.get("cladding") or None) == clad
                         and float(r.get("n_shift", 0.0)) == a.n_shift
                         and (float(r.get("sidewall_deg", 90.0)) == 90.0
-                             or r.get("sidewall_ref", "top") == a.sidewall_ref))
+                             or (r.get("sidewall_ref", "top") == a.sidewall_ref
+                                 and (not a.snap or r.get("snap_walls") == SNAP_WALLS))))
                 if "error" not in r and same:
                     done.add((round(r["H"], 4), round(r["W"], 4),
                               round(float(r.get("sidewall_deg", 90.0)), 4)))

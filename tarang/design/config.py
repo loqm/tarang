@@ -165,6 +165,10 @@ class Grating:
                                 "the core, 10 elsewhere; 2 = twice as fine, about 8x the cost of "
                                 "a 2D run). Raise it when checks.grating_mesh_ladder shows the "
                                 "efficiency still changing (thin films, short wavelengths)")
+    boundary: str = _f("pml", "Absorbing boundary of every grating FDTD run: 'pml' (standard), "
+                              "'stable_pml' (use when a fine mesh diverges: dispersive media "
+                              "reach the boundary) or 'absorber'. A new choice is a new "
+                              "simulation, priced first")
 
 
 @dataclass
@@ -386,7 +390,7 @@ class Device:
 LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00"},
           "checks": {"angle_sweep_deg": [], "grating_mesh_ladder": [], "sidewall_sweep_deg": [],
                      "sidewall_grating_deg": [], "sidewall_reference": "top"},
-          "grating": {"mesh_scale": 1.0},
+          "grating": {"mesh_scale": 1.0, "boundary": "pml"},
           "layout": {"grating_tooth_bias_um": [], "grating_period_offsets_um": []},
           "gap": {"ring_inner_box_recess_um": 0.1, "band_points": 1},
           "apodise": {"prefer": "efficiency", "ramp_check": False},
