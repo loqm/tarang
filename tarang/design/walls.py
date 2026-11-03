@@ -47,6 +47,8 @@ from typing import Optional
 
 import numpy as np
 
+from tarang.geometries.sidewall import SNAP_WALLS
+
 C_M_S = 299792458.0
 
 
@@ -92,7 +94,8 @@ def cross_section_sweep(ctx, values) -> list[dict]:
         if (abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6 and r["steps"] == steps
                 and r.get("bend_radius") is None and bool(r.get("snap", False)) == snap):
             a = round(float(r.get("sidewall_deg", 90.0)), 4)
-            if a == 90.0 or r.get("sidewall_ref", "top") == ref:
+            if a == 90.0 or (r.get("sidewall_ref", "top") == ref
+                             and (not snap or r.get("snap_walls") == SNAP_WALLS)):
                 got[a] = r
     ring = (ctx.state["stages"].get("ring") or {}).get("results") or {}
     R = ring.get("radius_um")
@@ -155,7 +158,8 @@ def coupling_sweep(ctx, values) -> dict:
             r = json.loads(line)
             if (abs(r["H"] - H) < 1e-9 and abs(r["W"] - W) < 1e-9 and abs(r["R"] - R) < 1e-9
                     and r["gaps"] == gaps and r["ref"] == ref and r["steps"] == steps
-                    and r.get("snap")):
+                    and r.get("snap") and (abs(float(r["angle"]) - 90.0) < 1e-9
+                                           or r.get("snap_walls") == SNAP_WALLS)):
                 saved[round(float(r["angle"]), 4)] = r
     cmt: dict = {}
     for a in angs:
@@ -176,7 +180,7 @@ def coupling_sweep(ctx, values) -> dict:
                       dn=[float(r["dn"]) for r in c["rows"]])
         with open(store, "a", encoding="utf-8") as f:
             f.write(json.dumps(dict(H=H, W=W, R=R, gaps=gaps, ref=ref, steps=steps, angle=a,
-                                    snap=True, **cmt[a])) + "\n")
+                                    snap=True, snap_walls=SNAP_WALLS, **cmt[a])) + "\n")
         ctx.ui.say(f"  sidewall {a:g}°: coupled-mode γ = {c['gamma_per_um']:.2f} /µm, "
                    f"Δn = " + ", ".join(f"{r['dn']:.3e}" for r in c["rows"]))
     if 90.0 not in cmt:

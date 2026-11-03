@@ -7,6 +7,35 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
+Fixes found in the 780 nm paper run (v0.1.4, to be tagged after the 780 nm re-run).
+
+### Added
+- **`[grating] boundary`** (`GratingConfig.boundary`): the absorbing boundary of every
+  grating FDTD run, `pml` (default, as before), `stable_pml` or `absorber`. At fine meshes
+  the standard PML can diverge where the dispersive core and oxide run into it (the 780 nm
+  mesh ladder diverged at 2.5x and 3x); `stable_pml` avoids that. The default builds exactly
+  the simulations of earlier versions, so nothing saved is run again; another choice is a
+  new simulation (cache names end in `_spml` / `_abs`) and is priced first. The 3D focusing
+  grating uses the same boundary.
+- `validation/mesh_study/`: a free study of why D of the thin 780 nm core moves between
+  meshes (band of the dispersion fit against the mesh itself).
+
+### Fixed
+- **Diverged runs are reported and never used.** A result whose solver reported divergence
+  raises `SimulationDivergedError` (with the task link) instead of being read; the checks
+  stage leaves it out with a message. Before, a diverged grating run lost its mode-monitor
+  data and the mesh ladder dropped it without a word (the 780 nm table showed 3 meshes of
+  5). Failed ladder meshes are listed under the table and in
+  `tables/grating_mesh_ladder_failed.csv`.
+- **Sloped walls snap continuously into vertical ones.** The sidewall sweep snapped both
+  corners of each sloped wall; near 90° the two grid lines of a wall were a few nanometres
+  apart, a sliver cell the vertical core never has, so 90° was solved on a different mesh
+  from its neighbours (1550 nm design: coupled-mode decay 6.17 /µm at 90° against 5.57 and
+  5.52 at 89° and 91°). Now one grid line per wall at mid-height plus the core's faces; the
+  lines meet the vertical walls' lines as the angle goes to 90°. Sloped-wall results are
+  recorded with `snap_walls = "mid"`, so older ones are solved again (free, local):
+  `--redo checks`. Vertical cross-sections are unchanged.
+
 ## [0.1.3] - 2026-11-02
 
 From the 780 nm paper run: a grating mesh that converges for thin films, the sidewall

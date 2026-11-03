@@ -154,9 +154,9 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
                     center=(c[0], 0.0, c[2]), size=(s[0], s[1] + shift, s[2]))))
             gs = gs.updated_copy(override_structures=overrides)
             if snap:
-                wb, wt = sw.core_widths(W, H, sidewall_deg, sidewall_ref)
-                pts = [(None, sgn * shift / 2 + side * w / 2, z) for sgn in (-1, 1)
-                       for side in (-1, 1) for w, z in ((wb, 0.0), (wt, H))]
+                from tarang.waveguide.dispersion_mapping.core import sloped_snap_points
+                pts = [p for sgn in (-1, 1) for p in sloped_snap_points(
+                    W, H, sidewall_deg, sidewall_ref, y0=sgn * shift / 2)]
                 gs = gs.updated_copy(snapping_points=pts)
             return sim.updated_copy(center=(sim.center[0], 0.0, sim.center[2]),
                                     size=(sim.size[0], sim.size[1] + shift, sim.size[2]),

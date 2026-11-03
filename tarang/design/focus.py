@@ -195,6 +195,7 @@ def focusing_sim(ctx, design: dict):
     the fundamental mode of the waveguide is recorded."""
     import tidy3d as td
     from tarang.design.stages import grating_device
+    from tarang.geometries.grating_coupler import open_boundary
     from tarang.grating_coupler.grating_coupler import GratingCoupler
     cfg = ctx.cfg
     gc = ctx.results("grating")
@@ -266,7 +267,8 @@ def focusing_sim(ctx, design: dict):
                                    wavelength=cfg.run.wavelength_um,
                                    override_structures=[override]),
         structures=structs, sources=[src], monitors=[mon, plane], run_time=base.sim.run_time,
-        boundary_spec=td.BoundarySpec.all_sides(td.PML()), medium=clad)
+        boundary_spec=td.BoundarySpec.all_sides(
+            open_boundary(getattr(cfg.grating, "boundary", "pml")).plus), medium=clad)
 
     class FocusingCoupler(GratingCoupler):
         def _readable_name(self) -> str:

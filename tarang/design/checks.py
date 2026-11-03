@@ -338,10 +338,23 @@ def _edge_budget(ctx: Context, straight: float) -> list[dict]:
 
 # ============================================================================ cloud checks
 def _load(sim, folder: Path, name: str):
+    """Saved results of ``sim``, or None when there are none or the run diverged (a
+    diverged result is reported once, on the console and in the log, and never used)."""
     import tidy3d as td
-    from tarang.utilities.cloud_run import find_cached
+    from tarang import get_logger
+    from tarang.utilities.cloud_run import (SimulationDivergedError, check_diverged,
+                                            find_cached)
     p = find_cached(sim, folder, name)
-    return None if p is None else td.SimulationData.from_file(str(p))
+    if p is None:
+        return None
+    data = td.SimulationData.from_file(str(p))
+    try:
+        check_diverged(data, name, p.parent)
+    except SimulationDivergedError as err:
+        get_logger(__name__).warning(str(err))
+        print(f"  ({err})")
+        return None
+    return data
 
 
 def _run_batch(ctx: Context, jobs: dict, folder: Path, label: str) -> Optional[bool]:
@@ -615,7 +628,7 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
         try:
             wls, eta = d.get_spectrum(folder)
         except Exception as err:                                  # noqa: BLE001
-            ctx.ui.say(f"  ({k}: spectrum unreadable: {type(err).__name__})")
+            ctx.ui.say(f"  ({k}: spectrum unreadable: {type(err).__name__}: {err})")
             continue
         s = spectrum_summary(wls, eta, wl0)
         spectra[k] = (wls, eta)
@@ -644,7 +657,10 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
     if angle_rows:
         _write_csv(ctx.path("tables", "grating_angle_sweep.csv"), angle_rows)
         visuals.safe(ctx, "grating angle sweep", draw_angle_sweep, ctx, gc, angle_rows)
-    ladder_rows = mesh_ladder_rows(ctx, gc, ladder, spectra)
+    ladder_failed: list[dict] = []
+    ladder_rows = mesh_ladder_rows(ctx, gc, ladder, spectra, failed=ladder_failed)
+    if ladder_failed:
+        _write_csv(ctx.path("tables", "grating_mesh_ladder_failed.csv"), ladder_failed)
     if ladder_rows:
         _write_csv(ctx.path("tables", "grating_mesh_ladder.csv"), ladder_rows)
         visuals.safe(ctx, "grating mesh ladder", draw_mesh_ladder, ctx, ladder_rows)
@@ -652,7 +668,7 @@ def grating_checks(ctx: Context, gc: dict) -> Optional[dict]:
     if wall_rows:
         _write_csv(ctx.path("tables", "sidewall_grating.csv"), wall_rows)
     return dict(variants=rows, power_budget=budget, angle_sweep=angle_rows,
-                mesh_ladder=ladder_rows, sidewall=wall_rows)
+                mesh_ladder=ladder_rows, mesh_ladder_failed=ladder_failed, sidewall=wall_rows)
 
 
 def _fine_steps(scale: float) -> int:
@@ -681,9 +697,12 @@ def mesh_ladder_variants(ctx: Context, gc: dict, variants: dict) -> dict:
     return out
 
 
-def mesh_ladder_rows(ctx: Context, gc: dict, ladder: dict, spectra: dict) -> list[dict]:
+def mesh_ladder_rows(ctx: Context, gc: dict, ladder: dict, spectra: dict,
+                     failed: Optional[list] = None) -> list[dict]:
     """The final grating's efficiency against the mesh: the design's own mesh, the x1.5
-    check and the ladder's scales, finest last, each against the finest."""
+    check and the ladder's scales, finest last, each against the finest. A scale whose run
+    diverged or cannot be read is left out of the rows and listed in ``failed`` (scale,
+    cells per wavelength, reason), so the table never silently loses a mesh."""
     from tarang.grating_coupler.grating_coupler import spectrum_summary
     if not ladder:
         return []
@@ -700,7 +719,13 @@ def mesh_ladder_rows(ctx: Context, gc: dict, ladder: dict, spectra: dict) -> lis
             continue
         try:
             found[sc] = d.get_spectrum(folder)
-        except Exception:                                          # noqa: BLE001
+        except Exception as err:                                   # noqa: BLE001
+            from tarang.utilities.cloud_run import SimulationDivergedError
+            why = ("diverged" if isinstance(err, SimulationDivergedError)
+                   else f"unreadable ({type(err).__name__}: {err})")
+            if failed is not None:
+                failed.append(dict(mesh_scale=sc, cells_per_wavelength=_fine_steps(sc),
+                                   reason=why, url=getattr(err, "url", None) or ""))
             continue
     if len(found) < 2:
         return []
@@ -1003,6 +1028,12 @@ def stage_checks(ctx: Context) -> dict:
                                             "efficiency_at_target", "peak_wavelength_nm",
                                             "change_db_vs_finest"],
                          {"efficiency_at_target": ".3f"})
+            for f_ in r.get("mesh_ladder_failed") or []:
+                ui.say(f"  NOT IN THE TABLE: mesh scale {f_['mesh_scale']:g} "
+                       f"({f_['cells_per_wavelength']} cells per wavelength): {f_['reason']}"
+                       + (f" ({f_['url']})" if f_.get("url") else "")
+                       + (". Set grating.boundary = 'stable_pml' and run the grating stages "
+                          "again." if f_["reason"] == "diverged" else "."))
             if r.get("sidewall"):
                 walls_res["grating"] = r["sidewall"]
             b = (r.get("power_budget") or {}).get("at_target")

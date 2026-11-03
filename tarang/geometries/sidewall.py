@@ -32,6 +32,10 @@ from __future__ import annotations
 import math
 
 REFERENCES = ("top", "bottom", "middle")
+# How sloped walls are snapped to the mode-solver grid (v0.1.4: one line per wall at
+# mid-height; see tarang.waveguide.dispersion_mapping.core.sloped_snap_points). Recorded
+# with sloped-wall results so results snapped the older way are not reused.
+SNAP_WALLS = "mid"
 
 
 def wall_shift(height: float, angle_deg: float) -> float:

@@ -92,6 +92,11 @@ class GratingConfig(RenamedAttributes):
     # where the tooth lengths hold ('top' = the mask edge; see tarang.geometries.sidewall).
     sidewall_deg: float = 90.0
     sidewall_ref: str = "top"
+    # Absorbing boundary at the open sides (x, z; and y in 3D) (v0.1.4): 'pml' (the default
+    # and the only choice before), 'stable_pml' (Tidy3D's stable PML: for fine meshes and
+    # dispersive media reaching the boundary, where the standard PML can diverge) or
+    # 'absorber' (adiabatic absorber; most robust, slightly more reflection).
+    boundary: str = "pml"
 
     _renamed_attrs = {"cladding_height": "top_cladding_height",
                       "substrate_height": "handle_height"}
@@ -254,6 +259,9 @@ class GratingCoupler(CloudCachedDevice, RenamedAttributes):
         tag = "" if abs(float(wall) - 90.0) < 1e-9 else (
             f"_wall{float(wall):g}" + ("" if getattr(cfg, "sidewall_ref", "top") == "top"
                                        else cfg.sidewall_ref[0]))
+        bnd = str(getattr(cfg, "boundary", "pml") or "pml")
+        if bnd != "pml":
+            tag += {"stable_pml": "_spml", "absorber": "_abs"}.get(bnd, f"_{bnd}")
         if cfg.teeth:
             import hashlib
             sig = ",".join(f"{a:.4f}:{b:.4f}" for a, b in cfg.teeth)

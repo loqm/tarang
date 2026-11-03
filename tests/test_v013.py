@@ -71,7 +71,7 @@ def test_vertical_cross_section_is_unchanged_and_sloped_one_is_a_trapezoid():
     (_, y0, z0), (_, y1, z1) = core.geometry.bounds
     s = 0.35 / math.tan(math.radians(85))
     assert y1 - y0 == pytest.approx(0.5 + 2 * s) and (z0, z1) == pytest.approx((0.0, 0.35))
-    assert len(c.grid_spec.snapping_points) == 4                # both faces on grid lines
+    assert len(c.grid_spec.snapping_points) == 2   # v0.1.4: each wall at mid-height + faces
     assert not any(isinstance(s.geometry, td.Box) and abs(s.geometry.size[1] - 0.5) < 1e-9
                    for s in c.structures)
 
