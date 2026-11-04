@@ -338,7 +338,9 @@ the same chip. Both choices are sound; the table lets you weigh such near-ties y
   the mesh check (`cross_section.mesh_ladder`, default 50, 60, 70, 80, 90);
 - whether the grid is snapped to the core edges (`cross_section.snap_grid`, on; a design
   whose cross-section was computed before keeps it off, so its numbers stay, until you set
-  it to `true`);
+  it to `true`), and how (`cross_section.snap_sides`: 2, the default since v0.1.5, solves
+  each cross-section twice and averages, see "How exact is D?"; a design computed before
+  v0.1.5 keeps 1 until you set it to 2);
 - the parallel workers (about 1.5 GB of memory each);
 - the **pump mode**, TE00 (default) or TM00 (`cross_section.pump_mode`). At short wavelengths
   TM00 is often anomalous where TE00 is not (map 10). With TM00 the map's targets are
@@ -362,6 +364,24 @@ times. For 700 × 1000 nm at 1550 nm:
 |---|---|---|---|---|---|---|---|
 | not snapped | 378.7 | 373.6 | 361.6 | 372.5 | 374.6 | | 373.6 ± 12.0 |
 | snapped | 374.0 | 374.0 | 376.8 | 373.8 | 370.9 | 373.7 | 373.9 ± 3.0 |
+
+Snapping has a catch, found on the 780 nm design (350 × 500 nm). The local mode solver gives
+each field sample one material (no sub-pixel averaging), and with grid lines exactly on a
+face the samples of the field normal to that face lie *on* it. Whether they get the core or
+the cladding is then decided by rounding: a 10⁻¹² µm change of the width moved n_eff by
+3 × 10⁻³, and D at 50 steps came out 198.8 on one computer and 235.3 on another from the
+same code. Since v0.1.5 (`cross_section.snap_sides = 2`) every cross-section is solved
+twice, with the lines 10⁻⁶ µm inside and 10⁻⁶ µm outside the faces, and the two are
+averaged. The two sides err in opposite directions by about the same amount, so the mean
+is steady and the same on every computer:
+
+| 350 × 500 nm at 780 nm | 50 | 60 |
+|---|---|---|
+| lines just inside the core | 240.4 | 233.5 |
+| lines just outside | 150.7 | 158.7 |
+| **mean (v0.1.5)** | **195.5** | **196.1** |
+
+Local solves take twice as long. Each record keeps both sides (`snap_split`).
 
 So quote D as the mesh check's **median ± spread** (report, key numbers and
 `tables/mesh_band.csv`), not as the value at one mesh.

@@ -36,6 +36,7 @@ from __future__ import annotations
 from tarang.figures import save as save_fig
 
 from tarang.waveguide.dispersion_mapping._console import safe_console
+from tarang.waveguide.dispersion_mapping.snapping import snap_offsets, snap_sides_of, SNAP_SIDES
 
 import argparse
 import csv
@@ -88,29 +89,46 @@ def solve_profile(H, W, wl_min, wl_max, nwl, steps, bend_radius, num_modes=10, m
     from tidy3d.plugins.mode import ModeSolver
     from tarang.waveguide.dispersion_mapping import core as sc
     pump = pump or default_pump(wl_min, wl_max)
-    sim = sc.build_sim(H, W, wl0=(wl_min + wl_max) / 2, steps=steps,
-                       margin_y=(3.0 if bend_radius else 2.0), band=(wl_min, wl_max), **mat)
+    sides = int(mat.pop("snap_sides", SNAP_SIDES))
+    snap = bool(mat.get("snap", False))
     core_m = sc.medium_for(mat.get("core", sc.DEFAULT_CORE), wl_min, wl_max)
     sub_m = sc.medium_for(mat.get("substrate", sc.DEFAULT_SUBSTRATE), wl_min, wl_max)
     top_key = mat.get("cladding")
     top_m = None if sc.is_air(top_key) else sc.medium_for(top_key, wl_min, wl_max)
     wls = np.linspace(wl_min, wl_max, nwl)
-    plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
     kw = dict(num_modes=num_modes, target_neff=sc.n_of(core_m, pump))
     if bend_radius:
         kw.update(bend_radius=float(bend_radius), bend_axis=1, num_pml=(12, 12))
-    data = ModeSolver(simulation=sim, plane=plane, freqs=td.C_0 / wls,
-                      mode_spec=td.ModeSpec(**kw)).solve()
-    neff, tefrac, aeff = [], [], []
-    for fi in range(nwl):
-        best, bt, bm = None, None, None
-        for m in range(num_modes):
-            tf = sc._te_frac(data, m, fi)
-            n = float(np.real(data.n_eff.isel(f=fi, mode_index=m)))
-            if (tf > 0.5) == te and (best is None or n > best):
-                best, bt, bm = n, tf, m
-        neff.append(best); tefrac.append(bt)
-        aeff.append(_aeff(data, bm, fi) if bm is not None else None)
+
+    def once(offset):
+        sim = sc.build_sim(H, W, wl0=(wl_min + wl_max) / 2, steps=steps,
+                           margin_y=(3.0 if bend_radius else 2.0), band=(wl_min, wl_max),
+                           snap_offset=offset, **mat)
+        plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
+        data = ModeSolver(simulation=sim, plane=plane, freqs=td.C_0 / wls,
+                          mode_spec=td.ModeSpec(**kw)).solve()
+        neff, tefrac, aeff = [], [], []
+        for fi in range(nwl):
+            best, bt, bm = None, None, None
+            for m in range(num_modes):
+                tf = sc._te_frac(data, m, fi)
+                n = float(np.real(data.n_eff.isel(f=fi, mode_index=m)))
+                if (tf > 0.5) == te and (best is None or n > best):
+                    best, bt, bm = n, tf, m
+            neff.append(best); tefrac.append(bt)
+            aeff.append(_aeff(data, bm, fi) if bm is not None else None)
+        return neff, tefrac, aeff
+
+    # two-sided snapping: the mean of the lines just inside and just outside the core's
+    # faces, wavelength by wavelength (see snapping.snap_offsets)
+    runs = [once(o) for o in snap_offsets(snap, sides)]
+
+    def avg(vals):
+        vals = [v for v in vals if v is not None]
+        return float(np.mean(vals)) if vals else None
+    neff, tefrac, aeff = ([avg([r[k][i] for r in runs]) for i in range(nwl)] for k in range(3))
+    if aeff and all(a is not None for a in aeff):
+        aeff = [round(a, 5) for a in aeff]
     ncut = [max(sc.n_of(sub_m, w), sc.n_of(top_m, w) if top_m is not None else 1.0)
             for w in wls]
     return dict(H=H, W=W, steps=steps, bend_radius=bend_radius,
@@ -118,7 +136,7 @@ def solve_profile(H, W, wl_min, wl_max, nwl, steps, bend_radius, num_modes=10, m
                 substrate=mat.get("substrate", sc.DEFAULT_SUBSTRATE),
                 cladding=None if sc.is_air(top_key) else top_key, pump=pump,
                 pump_mode="TE00" if te else "TM00",
-                snap=bool(mat.get("snap", False)), wl=list(map(float, wls)),
+                snap=snap, snap_sides=(sides if snap else 1), wl=list(map(float, wls)),
                 n_cut=ncut, **{f"neff_{P}": neff, f"te_frac_{P}": tefrac,
                                f"aeff_{P}_um2": aeff})
 
@@ -339,6 +357,10 @@ def main():
                     help="write the plots here (default: dispersion_profile_plots next to the data)")
     ap.add_argument("--snap", action="store_true",
                     help="grid lines through the four core edges (steadier D from mesh to mesh)")
+    ap.add_argument("--snap-sides", type=int, default=2, choices=[1, 2],
+                    help="with --snap: 2 (default) averages two solves with the lines just "
+                         "inside and just outside the core's faces (same result on every "
+                         "computer); 1 reproduces results before v0.1.5")
     a = ap.parse_args()
     clad = None if str(a.cladding).lower() in ("", "air", "none") else a.cladding
     data = Path(a.data); data.parent.mkdir(parents=True, exist_ok=True)
@@ -352,17 +374,18 @@ def main():
                         continue        # solved before A_eff was recorded: solve again (free)
                     done.add((r["H"], r["W"], r["bend_radius"], r["steps"], r.get("core", "si3n4"),
                               r.get("substrate", "sio2"), r.get("cladding") or None,
-                              bool(r.get("snap", False)), _mode(r)))
+                              bool(r.get("snap", False)), snap_sides_of(r), _mode(r)))
         for tok in a.points.split(","):
             H, W = (round(float(v), 4) for v in tok.lower().split("x"))
-            if (H, W, a.bend_radius, a.steps, a.core, a.substrate, clad, a.snap, a.pump_mode) in done:
+            if (H, W, a.bend_radius, a.steps, a.core, a.substrate, clad, a.snap,
+                    (a.snap_sides if a.snap else 1), a.pump_mode) in done:
                 print(f"skip {H}x{W} (done)"); continue
             t = time.time()
             try:
                 rec = solve_profile(H, W, a.wl_min, a.wl_max, a.nwl, a.steps, a.bend_radius,
                                     mat=dict(core=a.core, substrate=a.substrate, cladding=clad,
                                              box=a.box, cladding_height=a.cladding_height,
-                                             snap=a.snap),
+                                             snap=a.snap, snap_sides=a.snap_sides),
                                     pump=a.pump, mode=a.pump_mode)
             except Exception as e:
                 rec = dict(H=H, W=W, steps=a.steps, bend_radius=a.bend_radius,

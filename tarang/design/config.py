@@ -85,6 +85,10 @@ class CrossSection:
     snap_grid: bool = _f(True, "Put grid lines through the four core edges in every mode solve "
                                "(D varies about 4x less from mesh to mesh; false reproduces "
                                "designs made before v0.1.0)")
+    snap_sides: int = _f(2, "With snap_grid: 2 solves every cross-section twice, the grid lines "
+                            "just inside and just outside the core's faces, and averages them "
+                            "(the same D on every computer and steady from mesh to mesh; local "
+                            "solves take twice as long); 1 reproduces designs made before v0.1.5")
     tolerance_width_um: float = _f(0.05, "Fabrication tolerance of the width (+/-)", "um")
     tolerance_height_um: float = _f(0.02, "Fabrication tolerance of the film thickness (+/-)", "um")
     stop_after_map: bool = _f(False, "Stop after the map so a candidate can be chosen (the GUI "
@@ -391,7 +395,7 @@ class Device:
 # If a run folder already has results for the stage and its design.toml lacks the setting,
 # the legacy value is used (so saved simulations stay valid), and the stage's settings key
 # leaves it out (so the stage is not repeated).
-LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00"},
+LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00", "snap_sides": 1},
           "checks": {"angle_sweep_deg": [], "grating_mesh_ladder": [], "sidewall_sweep_deg": [],
                      "sidewall_grating_deg": [], "sidewall_reference": "top",
                      "ladder_boundary": ""},

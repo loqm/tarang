@@ -95,10 +95,15 @@ def mesh_band(values: dict) -> dict:
                 meshes=S)
 
 
+def snap_sides_of(r):
+    from tarang.waveguide.dispersion_mapping.snapping import snap_sides_of as f
+    return f(r)
+
+
 def key(r):
     return (round(r["H"], 4), round(r["W"], 4), r.get("bend_radius"), round(r.get("wl0", 1.55), 4),
             r.get("core", "si3n4"), r.get("substrate", "sio2"), r.get("cladding") or None,
-            bool(r.get("snap", False)))
+            bool(r.get("snap", False)), snap_sides_of(r))
 
 
 def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None, pump="TE00"):
@@ -217,10 +222,14 @@ def main():
                     help="the mode whose D, n_eff and n_g are checked")
     ap.add_argument("--snap", action="store_true",
                     help="grid lines through the four core edges (steadier D from mesh to mesh)")
+    ap.add_argument("--snap-sides", type=int, default=2, choices=[1, 2],
+                    help="with --snap: 2 (default) averages two solves with the lines just "
+                         "inside and just outside the core's faces (same result on every "
+                         "computer); 1 reproduces results before v0.1.5")
     a = ap.parse_args()
     clad = None if str(a.cladding).lower() in ("", "air", "none") else a.cladding
     mat = dict(core=a.core, substrate=a.substrate, cladding=clad, box=a.box,
-               cladding_height=a.cladding_height, snap=a.snap)
+               cladding_height=a.cladding_height, snap=a.snap, snap_sides=a.snap_sides)
     data = Path(a.data); data.parent.mkdir(parents=True, exist_ok=True)
 
     if not a.plot_only:
@@ -235,7 +244,8 @@ def main():
                         done.add(key(r) + (r["steps"],))
         jobs = [(H, W, s, a.bend_radius, a.wl, mat) for (H, W) in pts for s in steps
                 if (round(H, 4), round(W, 4), a.bend_radius, round(a.wl, 4),
-                    a.core, a.substrate, clad, a.snap, s) not in done]
+                    a.core, a.substrate, clad, a.snap,
+                    (a.snap_sides if a.snap else 1), s) not in done]
         print(f"{len(pts)} geometries x {len(steps)} meshes; {len(jobs)} runs to do "
               f"(finest meshes are slowest: ~1-3 min each at 90 steps).")
         if jobs:

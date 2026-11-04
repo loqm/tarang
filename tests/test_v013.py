@@ -192,8 +192,9 @@ def test_coupling_sweep_anchors_on_the_fdtd_fit(tmp_path, monkeypatch):
         fit=dict(theta_0=theta0, gamma=gamma))}
     calls = []
 
-    def fake(ctx, H, W, R, gaps, steps=None, sidewall_deg=90.0, sidewall_ref="top", snap=False):
-        assert snap                                              # edges on grid lines
+    def fake(ctx, H, W, R, gaps, steps=None, sidewall_deg=90.0, sidewall_ref="top", snap=False,
+             snap_sides=1):
+        assert snap and snap_sides == 2                          # two-sided snapping (v0.1.5)
         calls.append((sidewall_deg, tuple(gaps)))
         boost = 1.2 if sidewall_deg < 90 else 1.0                # more coupling below 90°
         return dict(theta0=0.5 * boost, gamma_per_um=9.0, rows=[dict(dn=1e-3)] * len(gaps))
