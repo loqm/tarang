@@ -282,8 +282,17 @@ def write(ctx) -> dict:
                     if xs.get("ng_mesh") is not None else [])]
         L += ["", ("The mode solver's n_eff jitters by about 1e-3 from mesh to mesh, so D does "
                    "not converge monotonically. "
-                   + ("The grid was snapped to the core edges, which removes most of it; quote "
-                      "D as the median over the mesh check with its band."
+                   + (("The grid was snapped to the core edges, two-sided: every solve is the "
+                       "mean of the grid lines just inside and just outside the faces, so the "
+                       "result does not depend on rounding (one-sided snapping left the "
+                       "samples on the faces to rounding: D of the 780 nm core at 50 steps "
+                       "was 198.8 on one computer and 235.3 on another). Quote D as the "
+                       "median over the mesh check with its band."
+                       if xs.get("snap_sides") == 2 else
+                       "The grid was snapped to the core edges (one-sided, before v0.1.5): "
+                       "samples on the faces are left to rounding, which can move D by tens "
+                       "of ps/(nm km) at some meshes and between computers. Rerun the "
+                       "cross-section with cross_section.snap_sides = 2 before quoting D.")
                       if xs.get("grid_snapped") else
                       "This design was made without grid snapping (before v0.1.0): treat D as "
                       "±5 %, or rerun the cross-section with cross_section.snap_grid = true.")),

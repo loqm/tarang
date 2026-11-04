@@ -30,6 +30,7 @@ from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 from tarang.geometries.sidewall import SNAP_WALLS
+from tarang.waveguide.dispersion_mapping.snapping import same_snap
 
 
 
@@ -88,6 +89,10 @@ def main():
     ap.add_argument("--out", default=None, help="output .jsonl path")
     ap.add_argument("--snap", action="store_true",
                     help="grid lines through the four core edges (steadier D from mesh to mesh)")
+    ap.add_argument("--snap-sides", type=int, default=2, choices=[1, 2],
+                    help="with --snap: 2 (default) averages two solves with the lines just "
+                         "inside and just outside the core's faces (same result on every "
+                         "computer); 1 reproduces results before v0.1.5")
     ap.add_argument("--sidewalls", default=None,
                     help='etched-wall angles in degrees, e.g. "85,87,90,93" (90 = vertical): '
                          'every point is solved at each angle (default: vertical only)')
@@ -140,7 +145,7 @@ def main():
                 same = (r.get("steps") == a.steps and abs(r.get("wl0", 1.55) - a.wl) < 1e-9
                         and r.get("bend_radius") == a.bend_radius
                         and bool(r.get("si_handle", False)) == a.si_handle
-                        and bool(r.get("snap", False)) == a.snap
+                        and same_snap(r, a.snap, a.snap_sides)
                         and r.get("core", "si3n4") == a.core
                         and r.get("substrate", "sio2") == a.substrate
                         and (r.get("cladding") or None) == clad
@@ -154,6 +159,7 @@ def main():
 
     kw = dict(wl0=a.wl, steps=a.steps, box=a.box, margin=a.margin,
               si_handle=a.si_handle, pml=a.pml, bend_radius=a.bend_radius, snap=a.snap,
+              snap_sides=a.snap_sides,
               core=a.core, substrate=a.substrate, cladding=clad,
               cladding_height=a.cladding_height, n_shift=a.n_shift)
     todo = [(H, W, kw if ang == 90.0 else dict(kw, sidewall_deg=ang, sidewall_ref=a.sidewall_ref))

@@ -102,7 +102,7 @@ def tm00(modes: list[dict]) -> Optional[dict]:
 
 def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
                        sidewall_deg: float = 90.0, sidewall_ref: str = "top",
-                       snap: bool = False) -> dict:
+                       snap: bool = False, snap_sides: int = 1) -> dict:
     """Even and odd TE supermodes of two identical cores (bus and ring at the closest
     point, the ring treated as straight there) separated by ``gap``.
 
@@ -121,14 +121,16 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
     W + gap being fixed by the mask. ``snap`` puts grid lines through every core edge
     (both faces of both cores), so the gap is resolved exactly at any mesh: comparisons
     between geometries whose edges sit in different places (the sidewall sweep) then
-    measure the geometry, not where the edges fall in the cells.
+    measure the geometry, not where the edges fall in the cells. With ``snap_sides`` 2 each
+    supermode is solved with the lines just inside and just outside every face and its
+    n_eff is the mean of the two (see dispersion_mapping.snapping.snap_offsets).
     """
     from tarang.geometries import sidewall as sw
     import tidy3d as td
     core_medium = ctx.medium(ctx.cfg.materials.core)
     shift = W + gap
 
-    def two_cores(symmetry):
+    def two_cores(symmetry, offset=0.0):
         def make(sim):
             kept = [st for st in sim.structures if st.name != "core_sloped" and not (
                 isinstance(st.geometry, td.Box) and abs(st.geometry.size[1] - W) < 1e-9
@@ -156,7 +158,7 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
             if snap:
                 from tarang.waveguide.dispersion_mapping.core import sloped_snap_points
                 pts = [p for sgn in (-1, 1) for p in sloped_snap_points(
-                    W, H, sidewall_deg, sidewall_ref, y0=sgn * shift / 2)]
+                    W, H, sidewall_deg, sidewall_ref, y0=sgn * shift / 2, offset=offset)]
                 gs = gs.updated_copy(snapping_points=pts)
             return sim.updated_copy(center=(sim.center[0], 0.0, sim.center[2]),
                                     size=(sim.size[0], sim.size[1] + shift, sim.size[2]),
@@ -168,15 +170,23 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
     old = cfg.cross_section.decision_steps
     if steps:
         cfg.cross_section.decision_steps = int(steps)
+    from tarang.waveguide.dispersion_mapping.snapping import snap_offsets
     found = {}
     try:
         for name, sym in (("even", -1), ("odd", 1)):
-            data = _solver(ctx, H, W, wl, margin_y=2.5, num_modes=2, extra=two_cores(sym),
-                           sidewall_deg=sidewall_deg, sidewall_ref=sidewall_ref)
-            te = [m for m in _modes_from(data) if m["te"] > 0.5]
-            if not te:
-                raise RuntimeError(f"no {name} TE supermode found at gap {gap} um")
-            found[name] = max(te, key=lambda m: m["neff"])
+            per_side = []
+            for off in snap_offsets(snap, snap_sides):
+                data = _solver(ctx, H, W, wl, margin_y=2.5, num_modes=2,
+                               extra=two_cores(sym, off), sidewall_deg=sidewall_deg,
+                               sidewall_ref=sidewall_ref)
+                te = [m for m in _modes_from(data) if m["te"] > 0.5]
+                if not te:
+                    raise RuntimeError(f"no {name} TE supermode found at gap {gap} um")
+                per_side.append(max(te, key=lambda m: m["neff"]))
+            mode = dict(per_side[0])
+            mode["neff"] = float(np.mean([m["neff"] for m in per_side]))
+            mode["neff_sides"] = [m["neff"] for m in per_side]
+            found[name] = mode
     finally:
         cfg.cross_section.decision_steps = old
     even, odd = found["even"], found["odd"]
@@ -189,14 +199,14 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
 
 
 def coupling_from_supermodes(ctx, H, W, radius_um, gaps, steps=None, sidewall_deg=90.0,
-                             sidewall_ref="top", snap=False) -> dict:
+                             sidewall_ref="top", snap=False, snap_sides=1) -> dict:
     """Coupled-mode estimate of the coupling per pass at ``gaps``: dn from the supermodes,
     its decay rate gamma from a fit over the gaps, then theta(g) = kappa(g) sqrt(2 pi R /
     gamma). Returns the per-gap values and the fit."""
     rows = []
     for g in gaps:
         sm = coupler_supermodes(ctx, H, W, g, steps=steps, sidewall_deg=sidewall_deg,
-                                sidewall_ref=sidewall_ref, snap=snap)
+                                sidewall_ref=sidewall_ref, snap=snap, snap_sides=snap_sides)
         rows.append(dict(gap_um=g, dn=sm["dn"], kappa_per_um=sm["kappa_per_um"]))
     gs = np.array([r["gap_um"] for r in rows])
     ks = np.array([r["kappa_per_um"] for r in rows])

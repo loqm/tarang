@@ -1,0 +1,47 @@
+python 3.12.15 on Linux x86_64; tidy3d 2.12.2, numpy 2.4.6, scipy 1.18.1
+  (threadpoolctl not installed: BLAS not listed)
+materials as fitted here (the fit is cached on disk; a different cached fit changes D):
+  0.6800 um  n_core = 2.034094718  n_box = 1.455763571
+  0.7050 um  n_core = 2.031651737  n_box = 1.455179468
+  0.7300 um  n_core = 2.029433096  n_box = 1.454640249
+  0.7550 um  n_core = 2.027407103  n_box = 1.454139343
+  0.7800 um  n_core = 2.025547321  n_box = 1.453671248
+  0.8050 um  n_core = 2.023831557  n_box = 1.453231327
+  0.8300 um  n_core = 2.022241056  n_box = 1.452815646
+  0.8550 um  n_core = 2.020759883  n_box = 1.452420855
+  0.8800 um  n_core = 2.019374425  n_box = 1.452044079
+
+grid lines 1e-06 um inside the faces: 309 x 334 cells; target n_eff 2.025547
+  D = 240.37 ps/(nm km), n_g = 2.267681, fit residual 2.85e-07 (31 s)
+  0.6800 um  n_eff = 1.810529252
+  0.7050 um  n_eff = 1.793905573
+  0.7300 um  n_eff = 1.777247113
+  0.7550 um  n_eff = 1.760539892
+  0.7800 um  n_eff = 1.743776687
+  0.8050 um  n_eff = 1.726956274
+  0.8300 um  n_eff = 1.710082915
+  0.8550 um  n_eff = 1.693166053
+  0.8800 um  n_eff = 1.676220165
+
+grid lines 1e-06 um outside the faces: 309 x 334 cells; target n_eff 2.025547
+  D = 150.69 ps/(nm km), n_g = 2.270684, fit residual 2.47e-07 (32 s)
+  0.6800 um  n_eff = 1.798002799
+  0.7050 um  n_eff = 1.780752570
+  0.7300 um  n_eff = 1.763477626
+  0.7550 um  n_eff = 1.746167405
+  0.7800 um  n_eff = 1.728818505
+  0.8050 um  n_eff = 1.711433985
+  0.8300 um  n_eff = 1.694022912
+  0.8550 um  n_eff = 1.676600122
+  0.8800 um  n_eff = 1.659186151
+
+mean of the two sides: D = 195.53 ps/(nm km), n_g = 2.269183
+  0.6800 um  n_eff = 1.804266026
+  0.7050 um  n_eff = 1.787329071
+  0.7300 um  n_eff = 1.770362369
+  0.7550 um  n_eff = 1.753353648
+  0.7800 um  n_eff = 1.736297596
+  0.8050 um  n_eff = 1.719195129
+  0.8300 um  n_eff = 1.702052914
+  0.8550 um  n_eff = 1.684883088
+  0.8800 um  n_eff = 1.667703158

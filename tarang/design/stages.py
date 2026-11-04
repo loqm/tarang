@@ -24,6 +24,7 @@ from tarang import get_logger
 from tarang.design import physics
 from tarang.design.config import DesignConfig
 from tarang.design.ui import Prompter, parse_list
+from tarang.waveguide.dispersion_mapping.snapping import same_snap
 
 logger = get_logger(__name__)
 C_UM = 2.99792458e14                 # um/s: f = C_UM / wavelength_um gives Hz
@@ -173,7 +174,13 @@ class Context:
         m, s = self.cfg.materials, self.cfg.stack
         return ["--core", m.core, "--substrate", m.box, "--cladding", m.cladding,
                 "--box", s.box_height_um, "--cladding-height", s.cladding_height_um,
-                *(["--snap"] if self.cfg.cross_section.snap_grid else [])]
+                *(["--snap", "--snap-sides", self.snap_sides] if self.cfg.cross_section.snap_grid
+                  else [])]
+
+    @property
+    def snap_sides(self) -> int:
+        """1 or 2 (cross_section.snap_sides; see dispersion_mapping.snapping)."""
+        return int(getattr(self.cfg.cross_section, "snap_sides", 1) or 1)
 
     def cloud_limit(self):
         """Context manager: cap every cloud run at run.max_cost_per_run."""
@@ -654,7 +661,8 @@ def stage_cross_section(ctx: Context) -> dict:
     rows = [r for r in _read_jsonl(grid_file)
             if r.get("steps") == steps and abs(r.get("wl0", 1.55) - wl) < 1e-9
             and round(r["H"], 4) in {round(h, 4) for h in heights}
-            and round(r["W"], 4) in {round(w, 4) for w in widths}]
+            and round(r["W"], 4) in {round(w, 4) for w in widths}
+            and same_snap(r, bool(cfg.cross_section.snap_grid), ctx.snap_sides)]
     ranked = _rank_targets(rows, heights, widths, anomalous=not loss_test, mode=pump_mode(cfg))
     F = pump_fields(cfg)
     pol = pump_mode(cfg)[:2]
@@ -736,7 +744,7 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
     found = [r for r in _read_jsonl(fin_file)
              if abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6 and r["steps"] == dsteps
              and r.get("bend_radius") is None and "error" not in r]
-    centre = ([r for r in found if bool(r.get("snap", False)) == snap] or found)[-1]
+    centre = ([r for r in found if same_snap(r, snap, ctx.snap_sides)] or found)[-1]
     mode, F = pump_mode(cfg), pump_fields(cfg)
     R_b = compare_radius(cfg, centre[F["ng"]])
     bend_file = ctx.path("results", f"finalist_{dsteps}steps_R{R_b:g}um.jsonl")
@@ -772,7 +780,7 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
     every = [r for r in _read_jsonl(conv_file)
              if "error" not in r and abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6
              and r.get("bend_radius") is None]
-    this = [r for r in every if bool(r.get("snap", False)) == snap and r["steps"] in meshes]
+    this = [r for r in every if same_snap(r, snap, ctx.snap_sides) and r["steps"] in meshes]
     conv = sorted(this if len(this) >= 2 else every, key=lambda r: r["steps"])
     band = ng_band = None
     if len(conv) >= 2:
@@ -781,8 +789,10 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
         band = mesh_band({r["steps"]: r[F["D"]] for r in conv})
         ng_band = (mesh_band({r["steps"]: r[F["ng"]] for r in conv})
                    if all(r.get(F["ng"]) is not None for r in conv) else None)
-        ui.say(f"Mesh check ({len(conv)} meshes, grid {'snapped to' if snap else 'not snapped to'}"
-               " the core edges): D = " + ", ".join(f"{r[F['D']]:.1f} ({r['steps']})" for r in conv)
+        ui.say(f"Mesh check ({len(conv)} meshes, grid "
+               + (("snapped to the core edges, two-sided" if ctx.snap_sides == 2 else
+                   "snapped to the core edges") if snap else "not snapped to the core edges")
+               + "): D = " + ", ".join(f"{r[F['D']]:.1f} ({r['steps']})" for r in conv)
                + f"\n  -> D = {band['value']:.1f} ± {band['band']:.1f} ps/(nm km) (median ± largest "
                "distance)" + (f", n_g = {ng_band['value']:.4f} ± {ng_band['band']:.4f}"
                               if ng_band else ""))
@@ -805,6 +815,7 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
                 D_mesh=band["value"] if band else None, D_mesh_band=band["band"] if band else None,
                 ng_mesh=ng_band["value"] if ng_band else None,
                 ng_mesh_band=ng_band["band"] if ng_band else None, grid_snapped=snap,
+                snap_sides=(ctx.snap_sides if snap else 1),
                 map_file=str(grid_file) if grid_file else None,
                 map_figure=str(plots / "design_map.png") if plots else None,
                 candidates=cands, recommend=recommend,

@@ -7,10 +7,17 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
-Fixes found in the 1550 and 780 nm paper runs (v0.1.4 merged; v0.1.5 adds the second round;
-tagged after the 780 nm re-run).
+## [0.1.5] - 2026-11-04
+
+Fixes found in the 1550 and 780 nm paper runs. The fixes merged as v0.1.4 (never tagged)
+are part of this release and marked (v0.1.4).
 
 ### Added
+- **`[cross_section] snap_sides`** (default 2; `--snap-sides` of the `sweep`, `convergence`
+  and `broadband` tools; `solve_point(..., snap_sides=)`): two-sided grid snapping, see
+  Fixed. Designs computed before keep 1 (`config.LEGACY`) until it is set to 2; every record
+  carries `snap_sides`, and two-sided records keep both sides' D, n_g and n_eff
+  (`snap_split`). Local solves take twice as long.
 - **`[grating] boundary`** (`GratingConfig.boundary`, v0.1.4): the absorbing boundary of
   every grating FDTD run, `pml` (default, as before), `stable_pml` or `absorber`. The default
   builds exactly the simulations of earlier versions, so nothing saved is run again; another
@@ -22,13 +29,34 @@ tagged after the 780 nm re-run).
   oxide, Si handle) inside the PML, which a stable PML does not cure. Tidy3D advises the
   adiabatic absorber there. With a boundary other than the grating's, the ladder also runs
   the design mesh, so every rung differs from the others in the mesh alone; the table has a
-  `boundary` column.
+  `boundary` column. Note: with its default 40 layers (about half a wavelength at these
+  meshes) the absorber reflects a little. On the 780 nm grating the spectrum then shows
+  lobes about 15 nm apart (+/-0.07 in efficiency) that the stable PML does not; averaged over
+  one lobe period, the two boundaries agree to 0.2 dB and the finest two meshes to 0.01 dB.
+  Compare spectra, not single-wavelength values, across boundaries.
 - `validation/mesh_study/` (v0.1.4, extended in v0.1.5): `mesh_study.py` (D against the mesh
   for the paper's 0.2 um dispersion band and for a band scaled to the wavelength) and
   `platform_check.py` (n_eff at the nine fit wavelengths and the fitted materials, to 9
-  decimals, to compare two computers number by number).
+  decimals, to compare two computers number by number; both sides and their mean since
+  two-sided snapping, `reference_linux_50steps_two_sided.txt`).
 
 ### Fixed
+- **D no longer depends on rounding: two-sided grid snapping** (v0.1.5). The local mode
+  solver gives every field sample one material (no sub-pixel averaging). With the grid lines
+  snapped exactly onto the core's faces (`snap_grid`, since v0.1.0), the samples of the field
+  normal to a face lie on it, and whether they get the core or the cladding was decided by
+  the last bits of floating-point coordinates: a 1e-12 um change of the width moved n_eff of
+  the 780 nm core by 3e-3, the same code gave D = 198.8 ps/(nm km) at 50 steps on Linux and
+  235.3 on Windows (grids identical to 1e-13 um), and the 780 nm mesh ladder read 235, 198,
+  198, 193, 219 (median +/- 37). Each snapped solve is now the mean of two, the lines
+  1e-6 um inside and 1e-6 um outside every face: the two err in opposite directions by
+  about the same amount (780 nm core at 50 and 60 steps: inside 240.4 and 233.5, outside
+  150.7 and 158.7, mean 195.5 and 196.1). Applies to the map, the check and its mesh
+  ladder, the ring's dispersion profile, the sidewall sweep and the sidewall coupling's
+  supermodes. The 90 deg point of the sidewall coupling sweep, solved on the faces while the
+  sloped walls cross cells, was the one most exposed. Designs keep their results until
+  `cross_section.snap_sides = 2` is set; then the cross-section and every stage after it
+  run again (local solves; cloud runs come from the cache).
 - **Diverged runs are reported and never used** (v0.1.4). A result whose solver reported
   divergence raises `SimulationDivergedError` (with the task link) instead of being read;
   the checks stage leaves it out with a message. Before, a diverged grating run lost its

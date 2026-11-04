@@ -48,6 +48,7 @@ from typing import Optional
 import numpy as np
 
 from tarang.geometries.sidewall import SNAP_WALLS
+from tarang.waveguide.dispersion_mapping.snapping import same_snap
 
 C_M_S = 299792458.0
 
@@ -92,7 +93,7 @@ def cross_section_sweep(ctx, values) -> list[dict]:
     got: dict = {}
     for r in _read_jsonl(f):
         if (abs(r["H"] - H) < 1e-6 and abs(r["W"] - W) < 1e-6 and r["steps"] == steps
-                and r.get("bend_radius") is None and bool(r.get("snap", False)) == snap):
+                and r.get("bend_radius") is None and same_snap(r, snap, getattr(ctx, "snap_sides", 1))):
             a = round(float(r.get("sidewall_deg", 90.0)), 4)
             if a == 90.0 or (r.get("sidewall_ref", "top") == ref
                              and (not snap or r.get("snap_walls") == SNAP_WALLS)):
@@ -156,6 +157,7 @@ def coupling_sweep(ctx, values) -> dict:
     import json
     steps = int(cfg.cross_section.decision_steps)
     store = ctx.path("results", "sidewall_coupling.jsonl")
+    sides = getattr(ctx, "snap_sides", 1)  # the coupler solves always snap (one- or two-sided)
     saved: dict = {}
     if store.exists():                       # angles solved before (e.g. by a price-only run)
         for line in store.read_text(encoding="utf-8").splitlines():
@@ -164,8 +166,9 @@ def coupling_sweep(ctx, values) -> dict:
             r = json.loads(line)
             if (abs(r["H"] - H) < 1e-9 and abs(r["W"] - W) < 1e-9 and abs(r["R"] - R) < 1e-9
                     and r["gaps"] == gaps and r["ref"] == ref and r["steps"] == steps
-                    and r.get("snap") and (abs(float(r["angle"]) - 90.0) < 1e-9
-                                           or r.get("snap_walls") == SNAP_WALLS)):
+                    and r.get("snap") and int(r.get("snap_sides", 1)) == sides
+                    and (abs(float(r["angle"]) - 90.0) < 1e-9
+                         or r.get("snap_walls") == SNAP_WALLS)):
                 saved[round(float(r["angle"]), 4)] = r
     cmt: dict = {}
     for a in angs:
@@ -178,7 +181,8 @@ def coupling_sweep(ctx, values) -> dict:
             continue
         try:
             c = localmodes.coupling_from_supermodes(ctx, H, W, R, gaps, sidewall_deg=a,
-                                                    sidewall_ref=ref, snap=True)
+                                                    sidewall_ref=ref, snap=True,
+                                                    snap_sides=sides)
         except Exception as err:                                   # noqa: BLE001
             ctx.ui.say(f"  sidewall {a:g}°: coupled-mode solve failed ({type(err).__name__}: {err})")
             continue
@@ -186,7 +190,8 @@ def coupling_sweep(ctx, values) -> dict:
                       dn=[float(r["dn"]) for r in c["rows"]])
         with open(store, "a", encoding="utf-8") as f:
             f.write(json.dumps(dict(H=H, W=W, R=R, gaps=gaps, ref=ref, steps=steps, angle=a,
-                                    snap=True, snap_walls=SNAP_WALLS, **cmt[a])) + "\n")
+                                    snap=True, snap_sides=sides, snap_walls=SNAP_WALLS,
+                                    **cmt[a])) + "\n")
         ctx.ui.say(f"  sidewall {a:g}°: coupled-mode γ = {c['gamma_per_um']:.2f} /µm, "
                    f"Δn = " + ", ".join(f"{r['dn']:.3e}" for r in c["rows"]))
     if 90.0 not in cmt:

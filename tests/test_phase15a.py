@@ -217,7 +217,7 @@ def test_snap_and_ladder_settings(tmp_path):
     assert settings_key(c, "cross_section") != k               # snapping changes the numbers
     from tarang.design.ui import Prompter
     ctx = Context(DesignConfig(), Prompter(interactive=False), tmp_path)
-    assert ctx.stack_args()[-1] == "--snap"
+    assert ctx.stack_args()[-3:] == ["--snap", "--snap-sides", 2]       # two-sided (v0.1.5)
     ctx.cfg.cross_section.snap_grid = False
     assert "--snap" not in ctx.stack_args()
 

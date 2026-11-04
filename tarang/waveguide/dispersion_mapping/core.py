@@ -24,6 +24,9 @@ Improvements over ``RidgeWaveguide.get_dispersion()``
 4. Mesh is user-set (>= 50 steps/lambda recommended; TARANG's default 20 is ~25 % off in D).
 5. Optional Si handle, absorbing boundaries, bent waveguides, and a core-index shift
    (for uncertainty budgets).
+6. Two-sided grid snapping (``snap=True``, ``snap_sides=2``, see ``snap_offsets``): every
+   result is the mean of two solves whose grid lines sit just inside and just outside the
+   core's faces, so it does not depend on how a computer rounds a coordinate.
 """
 from __future__ import annotations
 
@@ -47,6 +50,9 @@ AIR_KEYS = (None, "", "air", "none")
 # Defaults: stoichiometric LPCVD Si3N4 (Luke et al.) on Malitson fused silica, air top
 DEFAULT_CORE = "si3n4"
 DEFAULT_SUBSTRATE = "sio2"
+
+from tarang.waveguide.dispersion_mapping.snapping import (  # noqa: E402,F401
+    SNAP_OFFSET_UM, SNAP_SIDES, same_snap, snap_offsets, snap_sides_of)
 
 
 @lru_cache(maxsize=None)
@@ -98,14 +104,15 @@ def stack_label(core=DEFAULT_CORE, substrate=DEFAULT_SUBSTRATE, cladding=None, b
 def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
               substrate=DEFAULT_SUBSTRATE, cladding=None, cladding_height=2.0,
               n_shift=0.0, si_handle=False, si_thick=2.0, margin_y=2.0, band=None,
-              snap=False, sidewall_deg=90.0, sidewall_ref="top"):
+              snap=False, sidewall_deg=90.0, sidewall_ref="top", snap_offset=0.0):
     """Tidy3D simulation of the cross-section (lengths in um). Materials are fitted over
     a range covering ``band`` (default wl0 +/- 0.1 um). ``snap``: grid lines through the
     four core edges, so the edges sit on cell faces at every mesh (without it, where an
     edge falls inside a cell changes from mesh to mesh). ``sidewall_deg``: angle of the
     etched walls (90 = vertical, the default and the only case before v0.1.3; < 90 the
     core widens downwards), ``width`` being the width at the ``sidewall_ref`` plane
-    ('top', 'bottom' or 'middle'; see tarang.geometries.sidewall)."""
+    ('top', 'bottom' or 'middle'; see tarang.geometries.sidewall). ``snap_offset``: move
+    the snapped lines this far outside the core (negative: inside; see snap_offsets)."""
     lo, hi = band or (wl0 - 0.1, wl0 + 0.1)
     core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
     sub_m = medium_for(substrate, lo, hi)
@@ -121,10 +128,7 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
     if not vertical:
         sim = sloped_core(sim, height, width, core_m, sidewall_deg, sidewall_ref)
     if snap:
-        if vertical:
-            pts = ((None, -width / 2, 0.0), (None, width / 2, height))
-        else:
-            pts = sloped_snap_points(width, height, sidewall_deg, sidewall_ref)
+        pts = sloped_snap_points(width, height, sidewall_deg, sidewall_ref, offset=snap_offset)
         sim = sim.updated_copy(grid_spec=sim.grid_spec.updated_copy(snapping_points=pts))
     if si_handle:
         (x0, y0, z0), (x1, y1, z1) = sim.bounds
@@ -140,9 +144,11 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
 from tarang.geometries.sidewall import SNAP_WALLS  # noqa: E402  (recorded with sloped-wall results)
 
 
-def sloped_snap_points(width, height, sidewall_deg, sidewall_ref="top", y0=0.0):
-    """Grid lines for a sloped core centred on ``y0``: one per wall, where the wall crosses
-    mid-height, plus the core's bottom and top faces (z = 0, ``height``).
+def sloped_snap_points(width, height, sidewall_deg, sidewall_ref="top", y0=0.0, offset=0.0):
+    """Grid lines for a core centred on ``y0``: one per wall, where the wall crosses
+    mid-height (the wall itself for vertical walls), plus the core's bottom and top faces
+    (z = 0, ``height``). ``offset`` moves every line that far outside the core (negative:
+    inside), for two-sided snapping (see snap_offsets).
 
     Before v0.1.4 both corners of each wall were snapped. Near 90° the two lines of a wall
     are only nanometres apart (12 nm at 89° on a 700 nm film), which leaves a sliver cell
@@ -150,11 +156,12 @@ def sloped_snap_points(width, height, sidewall_deg, sidewall_ref="top", y0=0.0):
     neighbours and jumped off the sweep's trend (1550 nm design: coupling decay 6.17 /µm
     at 90° against 5.57 and 5.52 at 89° and 91°). The mid-height lines move continuously
     into the vertical walls' lines as the angle goes to 90°; the wall itself crosses the
-    cells in between and is handled by sub-pixel averaging."""
+    cells in between (each cell gets the material at its sample points: the local solver
+    does no sub-pixel averaging)."""
     from tarang.geometries import sidewall as sw
     wb, wt = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
-    wm = (wb + wt) / 2
-    return ((None, y0 - wm / 2, 0.0), (None, y0 + wm / 2, height))
+    half = (wb + wt) / 4 + offset
+    return ((None, y0 - half, -offset), (None, y0 + half, height + offset))
 
 
 def find_core(sim, height, width) -> int:
@@ -243,7 +250,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                 cladding_height: float = 2.0, n_shift: float = 0.0,
                 si_handle: bool = False, pml: int = 0,
                 bend_radius: float | None = None, snap: bool = False,
-                sidewall_deg: float = 90.0, sidewall_ref: str = "top") -> dict:
+                sidewall_deg: float = 90.0, sidewall_ref: str = "top",
+                snap_sides: int = SNAP_SIDES) -> dict:
     """Analyse one cross-section.
 
     core / substrate / cladding : media.json keys (cladding None or "air" = air top)
@@ -255,76 +263,105 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                   n_g, loss and TE/TM splitting only.
     sidewall_deg, sidewall_ref : etched-wall angle (90 = vertical) and the plane where
                   ``width`` holds (see build_sim)
+    snap, snap_sides : grid lines through the core's faces; with ``snap_sides`` 2 (the
+                  default) the cross-section is solved twice, the lines just inside and
+                  just outside the faces, and every number is the mean of the two
+                  (see snap_offsets). The record keeps both values of D and n_g
+                  (``snap_split``).
     """
     bent = bend_radius is not None
     if bent or si_handle:
         pml = max(pml, 12)
     lo, hi = wl0 - span / 2, wl0 + span / 2
-    sim = build_sim(height, width, wl0=wl0, steps=steps, box=box, core=core,
-                    substrate=substrate, cladding=cladding, cladding_height=cladding_height,
-                    n_shift=n_shift, si_handle=si_handle, margin_y=(3.0 if bent else 2.0),
-                    band=(lo, hi), snap=snap, sidewall_deg=sidewall_deg,
-                    sidewall_ref=sidewall_ref)
     wls = np.linspace(lo, hi, npts)
-    plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
     core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
     spec_kw = dict(num_modes=num_modes, target_neff=n_of(core_m, wl0))
     if pml:
         spec_kw["num_pml"] = (pml, pml)
     if bent:
         spec_kw.update(bend_radius=float(bend_radius), bend_axis=1)
-    data = ModeSolver(simulation=sim, plane=plane, freqs=td.C_0 / wls,
-                      mode_spec=td.ModeSpec(**spec_kw)).solve()
-
-    te0, tm0 = [], []
-    for fi in range(npts):
-        te, tm = [], []
-        for m in range(num_modes):
-            n = float(np.real(data.n_eff.isel(f=fi, mode_index=m)))
-            (te if _te_frac(data, m, fi) > 0.5 else tm).append(n)
-        te0.append(max(te) if te else np.nan)
-        tm0.append(max(tm) if tm else np.nan)
-    D_te, b2_te, ng_te, res_te = dispersion_from_neff(wls, np.array(te0), wl0)
-    D_tm, b2_tm, ng_tm, res_tm = dispersion_from_neff(wls, np.array(tm0), wl0)
-
     fc = npts // 2
-    m_te0 = max((m for m in range(num_modes) if _te_frac(data, m, fc) > 0.5),
-                key=lambda m: float(np.real(data.n_eff.isel(f=fc, mode_index=m))))
-    tm_modes = [m for m in range(num_modes) if _te_frac(data, m, fc) <= 0.5]
-    m_tm0 = max(tm_modes, key=lambda m: float(np.real(data.n_eff.isel(f=fc, mode_index=m)))) \
-        if tm_modes else None
-    y = data.Ey.coords["y"].values
-    z = data.Ey.coords["z"].values
 
-    def mode_numbers(m):
-        """loss (dB/cm), A_eff (µm²) and core power fraction of mode m at the pump."""
-        if m is None:
-            return None, None, None
-        k = float(np.real(data.k_eff.isel(f=fc, mode_index=m)))       # Im(n) lives in k_eff
-        loss = 10 * np.log10(np.e) * 4 * np.pi * abs(k) / (wl0 * 1e-4)
-        E2 = np.squeeze(sum(np.abs(getattr(data, c).isel(mode_index=m, f=fc).values) ** 2
-                            for c in ("Ex", "Ey", "Ez")))
-        if E2.ndim != 2:
-            return float(loss), float("nan"), float("nan")
-        dA = np.outer(np.gradient(y), np.gradient(z)).reshape(E2.shape)
-        Y, Z = np.meshgrid(y, z, indexing="ij")
-        from tarang.geometries import sidewall as sw
-        wb, wt = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
-        half = (wb + (wt - wb) * np.clip(Z / height, 0.0, 1.0)) / 2   # a trapezoid's half-width
-        in_core = (np.abs(Y) <= half) & (Z >= 0) & (Z <= height)
-        return (float(loss), float(np.sum(E2 * dA) ** 2 / np.sum(E2 ** 2 * dA)),
-                float(np.sum(E2 * dA * in_core) / np.sum(E2 * dA)))
+    def once(offset: float) -> dict:
+        sim = build_sim(height, width, wl0=wl0, steps=steps, box=box, core=core,
+                        substrate=substrate, cladding=cladding, cladding_height=cladding_height,
+                        n_shift=n_shift, si_handle=si_handle, margin_y=(3.0 if bent else 2.0),
+                        band=(lo, hi), snap=snap, sidewall_deg=sidewall_deg,
+                        sidewall_ref=sidewall_ref, snap_offset=offset)
+        plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
+        data = ModeSolver(simulation=sim, plane=plane, freqs=td.C_0 / wls,
+                          mode_spec=td.ModeSpec(**spec_kw)).solve()
+        te0, tm0 = [], []
+        for fi in range(npts):
+            te, tm = [], []
+            for m in range(num_modes):
+                n = float(np.real(data.n_eff.isel(f=fi, mode_index=m)))
+                (te if _te_frac(data, m, fi) > 0.5 else tm).append(n)
+            te0.append(max(te) if te else np.nan)
+            tm0.append(max(tm) if tm else np.nan)
+        m_te0 = max((m for m in range(num_modes) if _te_frac(data, m, fc) > 0.5),
+                    key=lambda m: float(np.real(data.n_eff.isel(f=fc, mode_index=m))))
+        tm_modes = [m for m in range(num_modes) if _te_frac(data, m, fc) <= 0.5]
+        m_tm0 = max(tm_modes, key=lambda m: float(np.real(data.n_eff.isel(f=fc, mode_index=m)))) \
+            if tm_modes else None
+        y = data.Ey.coords["y"].values
+        z = data.Ey.coords["z"].values
 
-    loss_db_cm, aeff, gamma_core = mode_numbers(m_te0)
-    loss_tm, aeff_tm, gamma_tm = mode_numbers(m_tm0)
+        def mode_numbers(m):
+            """loss (dB/cm), A_eff (µm²) and core power fraction of mode m at the pump."""
+            if m is None:
+                return None, None, None
+            k = float(np.real(data.k_eff.isel(f=fc, mode_index=m)))       # Im(n) lives in k_eff
+            loss = 10 * np.log10(np.e) * 4 * np.pi * abs(k) / (wl0 * 1e-4)
+            E2 = np.squeeze(sum(np.abs(getattr(data, c).isel(mode_index=m, f=fc).values) ** 2
+                                for c in ("Ex", "Ey", "Ez")))
+            if E2.ndim != 2:
+                return float(loss), float("nan"), float("nan")
+            dA = np.outer(np.gradient(y), np.gradient(z)).reshape(E2.shape)
+            Y, Z = np.meshgrid(y, z, indexing="ij")
+            from tarang.geometries import sidewall as sw
+            wb, wt = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
+            half = (wb + (wt - wb) * np.clip(Z / height, 0.0, 1.0)) / 2   # a trapezoid's half-width
+            in_core = (np.abs(Y) <= half) & (Z >= 0) & (Z <= height)
+            return (float(loss), float(np.sum(E2 * dA) ** 2 / np.sum(E2 ** 2 * dA)),
+                    float(np.sum(E2 * dA * in_core) / np.sum(E2 * dA)))
+
+        modes = sorted(((float(np.real(data.n_eff.isel(f=fc, mode_index=m))),
+                         _te_frac(data, m, fc)) for m in range(num_modes)), key=lambda t: -t[0])
+        return dict(te0=np.array(te0), tm0=np.array(tm0), te_nums=mode_numbers(m_te0),
+                    tm_nums=mode_numbers(m_tm0), modes=modes)
+
+    sides = [once(o) for o in snap_offsets(snap, snap_sides)]
+
+    def mean(vals):
+        vals = [v for v in vals if v is not None]
+        if not vals:
+            return None
+        return float(np.mean(vals))
+
+    te0 = np.mean([s["te0"] for s in sides], axis=0)
+    tm0 = np.mean([s["tm0"] for s in sides], axis=0)
+    loss_db_cm, aeff, gamma_core = (mean([s["te_nums"][i] for s in sides]) for i in range(3))
+    loss_tm, aeff_tm, gamma_tm = (mean([s["tm_nums"][i] for s in sides]) for i in range(3))
+    n_modes = min(len(s["modes"]) for s in sides)
+    raw_modes = [(mean([s["modes"][i][0] for s in sides]), mean([s["modes"][i][1] for s in sides]))
+                 for i in range(n_modes)]
+    D_te, b2_te, ng_te, res_te = dispersion_from_neff(wls, te0, wl0)
+    D_tm, b2_tm, ng_tm, res_tm = dispersion_from_neff(wls, tm0, wl0)
+    split = None
+    if len(sides) == 2:
+        fits = [(dispersion_from_neff(wls, s["te0"], wl0), dispersion_from_neff(wls, s["tm0"], wl0))
+                for s in sides]
+        split = dict(offsets_um=list(snap_offsets(snap, snap_sides)),
+                     D_TE0=[round(f[0][0], 2) for f in fits], ng_TE0=[round(f[0][2], 5) for f in fits],
+                     D_TM0=[round(f[1][0], 2) for f in fits], ng_TM0=[round(f[1][2], 5) for f in fits],
+                     neff_TE0=[round(float(s["te0"][fc]), 6) for s in sides])
 
     n_sub = n_of(medium_for(substrate, lo, hi), wl0)
     n_top = 1.0 if is_air(cladding) else n_of(medium_for(cladding, lo, hi), wl0)
     n_cut = max(n_sub, n_top)
     modes = []
-    for m in range(num_modes):
-        n = float(np.real(data.n_eff.isel(f=fc, mode_index=m)))
-        tf = _te_frac(data, m, fc)
+    for n, tf in raw_modes:
         modes.append(dict(neff=round(n, 5), te_frac=round(tf, 3), pol=_pol(tf),
                           guided=bool(n > n_cut), guided_margin=bool(n > n_cut + margin)))
     modes.sort(key=lambda d: -d["neff"])
@@ -332,6 +369,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     tm_like = [d for d in modes if d["te_frac"] < 0.5]
     return dict(
         H=round(height, 4), W=round(width, 4), wl0=wl0, steps=steps, snap=bool(snap),
+        snap_sides=(int(snap_sides) if snap else 1), snap_split=split,
         core=core, substrate=substrate, cladding=(None if is_air(cladding) else cladding),
         box=box, n_shift=n_shift, n_cut=round(n_cut, 5), margin=margin,
         si_handle=si_handle, pml=pml, bend_radius=bend_radius,

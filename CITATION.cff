@@ -13,8 +13,8 @@ authors:
     affiliation: "Laboratory of Optics of Quantum Materials, Indian Institute of Technology Bombay"
   - given-names: Esraaj
     family-names: Sarkar Gupta
-version: 0.1.3
-date-released: 2026-11-02
+version: 0.1.5
+date-released: 2026-11-04
 license: MIT
 repository-code: "https://github.com/loqm/tarang"
 url: "https://github.com/loqm/tarang"

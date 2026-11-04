@@ -17,6 +17,13 @@ to the wavelength (span 0.1 um at 780 nm, the same +/-6.5 % as 0.2 um at 1550 nm
 more points. If D settles with the scaled band, the fix is the band (cheap, free); if it
 still jumps, the mesh is the cause.
 
+Result (v0.1.5): neither. With the grid lines exactly on the core's faces, the samples of
+the field normal to a face lie on it and get SiN or air by rounding, so each mesh (and each
+computer) lands somewhere between "every face sample in the core" and "every face sample
+outside" (780 nm core at 50 steps: D = 240.4 and 150.7). The mean of the two, the
+two-sided snapping of v0.1.5 (the default here, --snap-sides 2), is steady: 195.5 and 196.1
+at 50 and 60 steps. --snap-sides 1 reproduces the one-sided study.
+
 Local mode solves only (free). About 10-20 min per solve at 780 nm on a laptop; with 4
 workers the default 15 solves take 1-1.5 h. Results are appended to the --out file, so a
 stopped run continues where it left off.
@@ -41,11 +48,13 @@ CASES = [  # (label, span_um at 780 nm scaled with the wavelength, npts)
 
 
 def _one(args):
-    H, W, wl, steps, span, npts, label = args
+    H, W, wl, steps, span, npts, label, sides = args
     from tarang.waveguide.dispersion_mapping import core
     t0 = time.time()
-    r = core.solve_point(H, W, wl0=wl, steps=steps, span=span, npts=npts, snap=True)
-    keep = {k: r[k] for k in ("D_TE0", "ng_TE0", "ng_TE0_fine", "fit_resid_TE0", "neff_TE")}
+    r = core.solve_point(H, W, wl0=wl, steps=steps, span=span, npts=npts, snap=True,
+                         snap_sides=sides)
+    keep = {k: r[k] for k in ("D_TE0", "ng_TE0", "ng_TE0_fine", "fit_resid_TE0", "neff_TE",
+                              "snap_sides", "snap_split")}
     return dict(H=H, W=W, wl=wl, steps=steps, span=span, npts=npts, case=label,
                 secs=round(time.time() - t0, 1), **keep)
 
@@ -59,9 +68,12 @@ def main():
     ap.add_argument("--steps", default="50,60,70,80,90")
     ap.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) // 2)))
     ap.add_argument("--out", default="mesh_study_780.jsonl")
+    ap.add_argument("--snap-sides", type=int, default=2, choices=[1, 2],
+                    help="2: mean of the grid lines just inside and just outside the faces "
+                         "(v0.1.5); 1: lines exactly on the faces (before v0.1.5)")
     a = ap.parse_args()
     scale = a.wl / 0.78
-    jobs = [(a.h, a.w, a.wl, int(s), round(span * scale, 4), n, label)
+    jobs = [(a.h, a.w, a.wl, int(s), round(span * scale, 4), n, label, a.snap_sides)
             for s in a.steps.split(",") for label, span, n in CASES]
     out = Path(a.out)
     done = set()
@@ -69,8 +81,8 @@ def main():
         for line in out.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 r = json.loads(line)
-                done.add((r["steps"], r["span"], r["npts"]))
-    todo = [j for j in jobs if (j[3], j[4], j[5]) not in done]
+                done.add((r["steps"], r["span"], r["npts"], int(r.get("snap_sides", 1))))
+    todo = [j for j in jobs if (j[3], j[4], j[5], j[7]) not in done]
     print(f"{len(jobs)} solves, {len(jobs) - len(todo)} already done, {len(todo)} to run "
           f"with {a.workers} worker(s) -> {out.resolve()}")
     from tarang.waveguide.dispersion_mapping import core  # noqa: F401  (fit materials once)
@@ -82,8 +94,9 @@ def main():
             f.flush()
             print(f"[{i:2d}/{len(todo)}] steps {r['steps']:3d}  {r['case']:24s} D = {r['D_TE0']:8.2f}"
                   f"  n_g = {r['ng_TE0']:.4f}  ({r['secs']:.0f} s)")
-    rows = [json.loads(x) for x in out.read_text(encoding="utf-8").splitlines() if x.strip()]
-    print("\nD_TE0 [ps/(nm km)] against the mesh:")
+    rows = [r for r in (json.loads(x) for x in out.read_text(encoding="utf-8").splitlines()
+                        if x.strip()) if int(r.get("snap_sides", 1)) == a.snap_sides]
+    print(f"\nD_TE0 [ps/(nm km)] against the mesh ({a.snap_sides}-sided snapping):")
     labels = sorted({r["case"] for r in rows}, key=lambda c: [x[0] for x in CASES].index(c)
                     if c in [x[0] for x in CASES] else 99)
     steps = sorted({r["steps"] for r in rows})
