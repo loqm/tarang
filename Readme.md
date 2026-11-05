@@ -69,7 +69,7 @@ can be stopped at any point and continued with the same command; nothing is paid
 ## Pipeline
 
 <p align="center">
-  <img src="docs/assets/pipeline.svg" alt="TARANG pipeline: Materials, Waveguide, Ring radius, Ring-bus gap, Grating coupler, Edge coupler, with an automated sweep loop feeding back into the waveguide stage, all running on the Tidy3D cloud FDTD engine." width="100%">
+  <img src="docs/assets/pipeline.svg" alt="TARANG pipeline: Materials, Waveguide, Ring radius, Ring-bus gap, Grating coupler, Edge coupler, with an automated sweep loop feeding back into the waveguide stage; blue stages use the local mode solver (free), orange stages run cloud FDTD on Tidy3D." width="100%">
 </p>
 
 Material fits set the waveguide dispersion; the waveguide's group index sets the ring's FSR; the
@@ -84,7 +84,7 @@ Settle a geometry in the blue stages before running orange ones.
 | Materials | Pole-residue media fitted to measured *n*, *k*; cached | `tarang.media.get_medium`, `get_medium_dispersion` |
 | Waveguide | *n*<sub>eff</sub>, TE/TM labels, *D* [ps/(nm·km)], Γ, *A*<sub>eff</sub> | `tarang.waveguide.RidgeWaveguide` |
 | Waveguide sweeps | Width × height maps of modes, dispersion, confinement | `tarang.waveguide.modes_in_geometry`, `dispersion_in_geometry`, `confinement_in_geometry` |
-| Dispersion mapping | Converged *D* maps, *D*(λ), *D*<sub>int</sub>, finalist reports (command line) | `tarang.waveguide.dispersion_mapping` ([README](tarang/waveguide/dispersion_mapping/README.md)) |
+| Dispersion mapping | Converged *D* maps, *D*(λ), *D*<sub>int</sub>, finalist reports (command line); two-sided grid snapping makes *D* reproducible to better than 1 ps/(nm·km) on any computer | `tarang.waveguide.dispersion_mapping` ([README](tarang/waveguide/dispersion_mapping/README.md)) |
 | Rings | Full, half and partial rings; FSR, group index, mode fluxes | `tarang.ring_resonator.RingResonator`, `HalfRingResonator`, `PartialRingResonator` |
 | Ring radius | Bend loss over arc angles, *Q*<sub>int</sub>, FSR | `tarang.ring_resonator.ring_radius_sweep.radius_sweep` |
 | Ring–bus gap | Coupling against gap, critical-coupling gap | `tarang.ring_resonator.ring_gap_sweep.ring_gap_sweep`, `radius_gap_sweep` |
@@ -531,10 +531,25 @@ python -m tarang.migrate path/to/your/scripts --write    # apply
   and the parts are joined by their scattering matrices. Backscattering inside the ring
   (resonance splitting), the coupler's own phase and the taper's reflection are left out,
   and the gratings' reflection phase is unknown (the ripple's depth and period are right,
-  its position is not). For the apodised and focusing gratings the reflection of the
-  uniform grating is used.
+  its position is not). The reflection comes from a reverse run of the grating: the
+  apodised grating's own when `apodise.reflection_check` ran, otherwise the uniform
+  grating's from the checks stage; without either, the spectrum has no ripple.
 * The focusing grating's efficiency outside 3D FDTD comes from an in-plane model; the
   3D check (`focus.check_3d`) is the reference.
+* **Designs started before v0.1.5 keep one-sided grid snapping.** Their `design.toml` has
+  no `snap_sides`, so it is read as 1 and their saved results stay valid. With the grid
+  lines exactly on the core's faces, *D* depends on how the computer rounds the face
+  coordinates and can differ by tens of ps/(nm·km) between meshes and between computers.
+  Add `snap_sides = 2` under `[cross_section]` and run again (local solves only, free).
+* **Grating efficiencies depend on the mesh.** The design mesh (15 cells per wavelength in
+  the core) overestimated a 1550 nm full-etch grating by 0.6 dB against a converged ladder.
+  Run `checks.grating_mesh_ladder` (e.g. `[2.0, 2.5, 3.0]`) before quoting an efficiency.
+* **Absorbing boundaries at short wavelengths.** When dispersive materials (SiN, oxide, the
+  absorbing Si handle near 780 nm) reach the boundary, the standard and the stable PML can
+  diverge on fine meshes. The adiabatic absorber (`grating.boundary = "absorber"`) does not,
+  but its default 40 layers reflect a little and add lobes to the spectrum (about 15 nm
+  apart on a 780 nm grating). Average over one lobe period, or compare two boundaries
+  (`checks.ladder_boundary`), before quoting an efficiency.
 
 ## Troubleshooting
 
@@ -562,8 +577,10 @@ a material or device); every pull request runs the tests on Linux and Windows
 ([tests/README.md](tests/README.md)). Release steps (tag, wheel, later PyPI):
 [docs/RELEASING.md](docs/RELEASING.md).
 
-**Citing:** cite TARANG using [CITATION.cff](CITATION.cff) (**Cite this repository** on GitHub);
-a paper is in preparation. Also cite the material data you used
+**Citing:** cite TARANG using [CITATION.cff](CITATION.cff) (**Cite this repository** on GitHub).
+A paper describing TARANG v0.1.5, with two complete designs at 1550 and 780 nm, is in
+preparation; until it is published, cite this repository and the version you used.
+Also cite the material data you used
 ([SOURCES.md](tarang/media/data/SOURCES.md)), [Tidy3D](https://docs.flexcompute.com/projects/tidy3d/),
 and for nested sampling [dynesty](https://dynesty.readthedocs.io/) (Speagle, *MNRAS* **493**,
 3132 (2020)) or MultiNest (Feroz, Hobson & Bridges, *MNRAS* **398**, 1601 (2009)), and
