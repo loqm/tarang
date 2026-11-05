@@ -19,12 +19,12 @@ Robust dispersion mapping and design selection for ridge waveguides, built on TA
 Run from any folder once TARANG is installed (see the main README). Results are written to `results/` inside the folder you run from.
 
 ```powershell
-python -m tarang.waveguide.dispersion_mapping.sweep --heights 0.60:0.90:0.05 --widths 0.60:1.60:0.10 --steps 50 --workers 4
+python -m tarang.waveguide.dispersion_mapping.sweep --heights 0.60:0.90:0.05 --widths 0.60:1.60:0.10 --steps 50 --snap --workers 4
 python -m tarang.waveguide.dispersion_mapping.maps --data results/air_sweep_50steps.jsonl --tm
-python -m tarang.waveguide.dispersion_mapping.convergence --points 0.80x0.80,0.70x1.00 --steps-list 20,30,40,50,70,90
-python -m tarang.waveguide.dispersion_mapping.sweep --points 0.80x0.80,0.70x1.00 --tol 0.05,0.02 --steps 70
-python -m tarang.waveguide.dispersion_mapping.broadband --points 0.80x0.80,0.70x1.00 --steps 70 --radius 100
-python -m tarang.waveguide.dispersion_mapping.sweep --points 0.80x0.80,0.70x1.00 --steps 70 --bend-radius 100
+python -m tarang.waveguide.dispersion_mapping.convergence --points 0.80x0.80,0.70x1.00 --steps-list 20,30,40,50,70,90 --snap
+python -m tarang.waveguide.dispersion_mapping.sweep --points 0.80x0.80,0.70x1.00 --tol 0.05,0.02 --steps 70 --snap
+python -m tarang.waveguide.dispersion_mapping.broadband --points 0.80x0.80,0.70x1.00 --steps 70 --snap --radius 100
+python -m tarang.waveguide.dispersion_mapping.sweep --points 0.80x0.80,0.70x1.00 --steps 70 --snap --bend-radius 100
 python -m tarang.waveguide.dispersion_mapping.report --straight results/air_sweep_70steps_finalists.jsonl --bends "results/air_sweep_70steps_R*um_finalists.jsonl" --finalists 0.80x0.80,0.70x1.00
 ```
 
@@ -36,7 +36,7 @@ Python API:
 
 ```python
 from tarang.waveguide.dispersion_mapping import solve_point
-r = solve_point(0.70, 1.00, steps=70)                       # air-clad Si3N4 on SiO2
+r = solve_point(0.70, 1.00, steps=70, snap=True)            # air-clad Si3N4 on SiO2
 r = solve_point(0.74, 1.425, cladding="sio2")      # oxide-clad
 r = solve_point(0.70, 1.00, n_shift=+0.02)                  # index-uncertainty study
 print(r["D_TE0"], r["guided_TE"], r["neff_TE"][0] - r["neff_TM"][0])
@@ -46,6 +46,7 @@ print(r["D_TE0"], r["guided_TE"], r["neff_TE"][0] - r["neff_TM"][0])
 
 - **Data safety.** Result files are append-only and named by their settings (cladding, core, mesh, wavelength, bend radius, index shift), and finished points are skipped on rerun. Plot and report folders get `_v2`, `_v3`, … instead of being overwritten unless `--overwrite` is given. `maps`, `broadband` and `convergence` take `--plots-dir` to write their plots elsewhere (the guided design puts them in `figures/2_dispersion_map/`, `figures/3_dispersion_profile/` and `figures/2_mesh_convergence/`); the data stay where `--data` / `--out` say.
 - **Mesh.** At least 50 steps/λ in the core for maps and 70 for decisions. The TARANG default of 20 is about 25 % off in D.
+- **Grid snapping.** `--snap` (`solve_point(..., snap=True)`) puts grid lines through the core's faces, so that where a face falls in its cell does not change from mesh to mesh. With it, `--snap-sides 2` (the default) averages two solves with the lines 10⁻⁶ µm inside and outside every face: with the lines exactly on a face, the field samples on it get the core or the cladding by floating-point rounding, which moved D of a 350 × 500 nm core by tens of ps/(nm·km) between meshes and between computers. The two-sided mean is the same on every computer and steady to better than 1 ps/(nm·km) over 50–90 steps/λ. `--snap-sides 1` reproduces one-sided results. The guided design always snaps (`cross_section.snap_grid`, `snap_sides`).
 - **SiO₂ data.** `sio2` now points to the standard Malitson fused-silica data (n = 1.444 at 1550 nm). The previous dataset (Nyakuchena; n = 1.420, 1.10–1.65 µm only) remains available as `sio2_nyakuchena` for reproducing older results.
 - **Regime classes.** By default the maps use three classes: normal (D < 0, grey), target (D ≥ 0 with exactly one guided TE mode, green) and multimode (D ≥ 0 with two or more guided TE modes, red). The package applies no dispersion safety margin. To apply your own (for example, from a calibration against measured devices), pass `--dmargin X` to `maps` or `report`; geometries with 0 ≤ D < X then form a yellow class.
 - **Other wavelengths.** `--wl 0.78` (and `--wl-min/--wl-max` for `broadband`) work at any wavelength the material data cover: the materials are fitted over a range covering the solved band (1.1–2.4 µm for telecom bands, as before), and `broadband --pump` sets the pump for D_int (default 1.55 µm if in the band, else the band centre).
