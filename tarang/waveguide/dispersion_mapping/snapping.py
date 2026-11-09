@@ -13,8 +13,9 @@ def snap_offsets(snap: bool, snap_sides: int = SNAP_SIDES) -> tuple:
     """Offsets of the snapped grid lines from the core's faces, one solve each.
 
     The local mode solver gives every field sample a single material (no sub-pixel
-    averaging). With grid lines exactly on a face, the samples of the field component
-    normal to that face sit exactly on it, and which material they get is decided by the
+    averaging). With grid lines exactly on a face, the samples of the field components
+    parallel to that face sit exactly on it (on the Yee grid the normal component is half a
+    cell away), and which material they get is decided by the
     last bits of floating-point coordinates: a 1e-12 um change of the width moved n_eff of
     the 780 nm core by 3e-3, and D at 50 steps came out 198.8 on Linux and 235.3 on Windows
     from the same code. With the lines just inside the core every such sample is SiN; just
