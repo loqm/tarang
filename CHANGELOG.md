@@ -7,6 +7,13 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
+### Documentation
+- Corrected the description of two-sided grid snapping: on Tidy3D's Yee grid the field
+  samples that lie on a snapped face belong to the components parallel to that face; the
+  normal component sits half a cell away (checked with `Simulation.epsilon_on_grid`). The
+  wording is fixed in `snapping.py`, `docs/USER_GUIDE.md`, `validation/mesh_study/mesh_study.py`
+  and the 0.1.5 notes below. Documentation only: no change to code or results.
+
 ## [0.1.5] - 2026-11-04
 
 Fixes found in the 1550 and 780 nm paper runs. The fixes merged as v0.1.4 (never tagged)
@@ -44,7 +51,8 @@ are part of this release and marked (v0.1.4).
 - **D no longer depends on rounding: two-sided grid snapping** (v0.1.5). The local mode
   solver gives every field sample one material (no sub-pixel averaging). With the grid lines
   snapped exactly onto the core's faces (`snap_grid`, since v0.1.0), the samples of the field
-  normal to a face lie on it, and whether they get the core or the cladding was decided by
+  components parallel to a face lie on it, and whether they get the core or the cladding
+  was decided by
   the last bits of floating-point coordinates: a 1e-12 um change of the width moved n_eff of
   the 780 nm core by 3e-3, the same code gave D = 198.8 ps/(nm km) at 50 steps on Linux and
   235.3 on Windows (grids identical to 1e-13 um), and the 780 nm mesh ladder read 235, 198,

@@ -18,7 +18,8 @@ more points. If D settles with the scaled band, the fix is the band (cheap, free
 still jumps, the mesh is the cause.
 
 Result (v0.1.5): neither. With the grid lines exactly on the core's faces, the samples of
-the field normal to a face lie on it and get SiN or air by rounding, so each mesh (and each
+the field components parallel to a face lie on it and get SiN or air by rounding, so each
+mesh (and each
 computer) lands somewhere between "every face sample in the core" and "every face sample
 outside" (780 nm core at 50 steps: D = 240.4 and 150.7). The mean of the two, the
 two-sided snapping of v0.1.5 (the default here, --snap-sides 2), is steady: 195.5 and 196.1

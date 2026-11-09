@@ -367,7 +367,8 @@ times. For 700 × 1000 nm at 1550 nm:
 
 Snapping has a catch, found on the 780 nm design (350 × 500 nm). The local mode solver gives
 each field sample one material (no sub-pixel averaging), and with grid lines exactly on a
-face the samples of the field normal to that face lie *on* it. Whether they get the core or
+face the samples of the field components parallel to that face lie *on* it (on the Yee
+grid the normal component sits half a cell away). Whether they get the core or
 the cladding is then decided by rounding: a 10⁻¹² µm change of the width moved n_eff by
 3 × 10⁻³, and D at 50 steps came out 198.8 on one computer and 235.3 on another from the
 same code. Since v0.1.5 (`cross_section.snap_sides = 2`) every cross-section is solved
