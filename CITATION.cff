@@ -13,11 +13,12 @@ authors:
     affiliation: "Laboratory of Optics of Quantum Materials, Indian Institute of Technology Bombay"
   - given-names: Esraaj
     family-names: Sarkar Gupta
+    affiliation: "Laboratory of Optics of Quantum Materials, Indian Institute of Technology Bombay"
 version: 0.1.5
 date-released: 2026-11-04
 license: MIT
-repository-code: "https://github.com/loqm/tarang"
-url: "https://github.com/loqm/tarang"
+repository-code: "[https://github.com/loqm/tarang](https://github.com/loqm/tarang)"
+url: "[https://github.com/loqm/tarang](https://github.com/loqm/tarang)"
 keywords:
   - photonics
   - integrated photonics
@@ -28,3 +29,18 @@ keywords:
   - FDTD
   - Tidy3D
   - nested sampling
+preferred-citation:
+  type: article
+  title: "TARANG: Toolkit for Automated Resonator Analysis and Nonlinear-comb Generation"
+  authors:
+    - given-names: Divyanshu
+      family-names: Tiwari
+      affiliation: "Laboratory of Optics of Quantum Materials, Indian Institute of Technology Bombay"
+    - given-names: Esraaj
+      family-names: Sarkar Gupta
+      affiliation: "Laboratory of Optics of Quantum Materials, Indian Institute of Technology Bombay"
+  year: 2026
+  identifiers:
+    - type: arxiv
+      value: "2611.16469"
+  url: "[https://arxiv.org/abs/2611.16469](https://arxiv.org/abs/2611.16469)"
