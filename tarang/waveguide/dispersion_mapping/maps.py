@@ -195,6 +195,22 @@ def plot_modes(series, xkey, fixed_lbl, fname, a, plt):
     plt.close(fig) if not a.show else None
 
 
+def d_colour_limit(Dm, dmargin: float = 0.0) -> float:
+    """Half-range of the diverging colour scale of a D map (centred on D = 0).
+
+    Normally 1.1 x the largest anomalous D (or the margin), so that near-cutoff points at
+    -2000 and below do not wash out the anomalous region. A map with no anomalous point
+    (every D < 0, e.g. an oxide-clad film at a visible pump) would give zero, which
+    matplotlib refuses; it is then scaled to twice its least normal D, so the map is still
+    drawn and the stage can report that it found no target geometry.
+    """
+    dmax = float(np.nanmax(Dm)) if np.isfinite(Dm).any() else float("nan")
+    lim = max(dmax, dmargin) * 1.1
+    if lim > 0:
+        return lim
+    return 2.0 * abs(dmax) if np.isfinite(dmax) and dmax != 0 else 1.0
+
+
 def plot_map(rows, outdir, a, plt):
     Hs = sorted({r["H"] for r in rows})
     Ws = sorted({r["W"] for r in rows})
@@ -212,7 +228,7 @@ def plot_map(rows, outdir, a, plt):
     fig, axs = plt.subplots(1, 2, figsize=(13, 5), dpi=140)
     # Clip the colour scale: near-cutoff points reach -2000+ and would wash out the
     # anomalous region.  Scale to the largest positive D (the design-relevant side).
-    lim = max(float(np.nanmax(Dm)), a.dmargin) * 1.1
+    lim = d_colour_limit(Dm, a.dmargin)
     im = axs[0].pcolormesh(Ws, Hs, np.clip(Dm, -lim, lim), cmap="RdBu_r",
                            norm=TwoSlopeNorm(0, -lim, lim), shading="nearest")
     if len(Hs) > 1 and len(Ws) > 1:
@@ -326,7 +342,7 @@ def plot_extra_maps(rows, outdir, a, plt):
 
     wl = rows[0]["wl0"]
     Dm = _mat(Hs, Ws, idx, lambda r: r[a.f["D"]])
-    lim = max(float(np.nanmax(Dm)), a.dmargin) * 1.1
+    lim = d_colour_limit(Dm, a.dmargin)
 
     # 1  D map
     fig, ax = plt.subplots(figsize=(7.5, 5), dpi=140)

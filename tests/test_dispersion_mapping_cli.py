@@ -78,3 +78,16 @@ def test_tools_survive_windows_legacy_console_encoding(sweep_file):
         env={"PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"})
     assert (out_dir / "report.md").read_text(encoding="utf-8").count("λ") >= 1   # file stays UTF-8
 
+
+def test_maps_of_an_all_normal_grid_do_not_crash(sweep_file):
+    """Every D < 0 (as for an oxide-clad film at a visible pump): the maps are drawn, with no
+    target geometry, instead of matplotlib refusing a zero colour scale (v0.1.6)."""
+    rows = [json.loads(line) for line in sweep_file.read_text(encoding="utf-8").splitlines()]
+    for r in rows:
+        for k in ("D_TE0", "D_TM0"):
+            r[k] = -abs(r[k]) - 100.0
+    normal = sweep_file.parent / "all_normal.jsonl"
+    normal.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    run("maps", "--data", str(normal), "--tm")
+    plots = [p for p in normal.parent.iterdir() if p.is_dir() and p.name.startswith("plots_all_normal")]
+    assert len(plots) == 1 and (plots[0] / "design_map.png").exists()

@@ -322,6 +322,13 @@ def _read_jsonl(path: Path) -> list[dict]:
     return [r for r in rows if "error" not in r]
 
 
+def _n2(cfg) -> float:
+    """Kerr index of the core: your value, else the core material's published one; a
+    SettingsError naming the setting when neither exists (never another material's)."""
+    from tarang.design.assumptions import n2
+    return n2(cfg)
+
+
 def _losses(cfg) -> tuple[float, float]:
     """Scattering and absorption loss (dB/cm): your values, else the loss preset's."""
     from tarang.design.assumptions import preset
@@ -442,13 +449,13 @@ def compare_candidates(ctx: Context, points: list, dW: float, dH: float, ng: flo
     scat, absl = _losses(cfg)
     ctx.tool("report", "--straight", rel(straight), "--bends", rel(bend), "--finalists", pts,
              "--tol", f"{dW},{dH}", "--alpha-scat", scat, "--alpha-abs", absl,
-             "--n2", cfg.assumptions.n2_m2_w, "--out", CAND_DIR, "--overwrite",
+             "--n2", _n2(cfg), "--out", CAND_DIR, "--overwrite",
              "--pump", pump_mode(cfg))
     lo, hi = ctx.band
     ctx.tool("broadband", "--points", pts, "--wl-min", lo, "--wl-max", hi, "--pump", wl,
              "--steps", dsteps, "--radius", R, "--data", "results/candidates_broadband.jsonl",
              "--plots-dir", f"{CAND_DIR}/profiles", "--overwrite", "--pump-mode", pump_mode(cfg),
-             "--n2", cfg.assumptions.n2_m2_w, *ctx.stack_args())
+             "--n2", _n2(cfg), *ctx.stack_args())
     cand_dir = ctx.out / CAND_DIR
     _to_tables(ctx, cand_dir, {"finalists.csv": "candidates_compared.csv",
                                "finalists_bend.csv": "candidates_bend.csv"})
@@ -584,7 +591,19 @@ def stage_materials(ctx: Context) -> dict:
     fig = _plot_materials(ctx, wls, curves)
     ui.figure(fig)
     ui.say(f"  table : {table}")
-    return dict(band=[lo, hi], materials=rows, table=str(table), figure=str(fig))
+    from tarang.design import material_checks
+    n_at = {r["role"]: r["n_at_wl"] for r in rows if r["n_at_wl"] is not None}
+    findings = material_checks.run_checks(cfg, (lo, hi), n_at)
+    shown = [f for f in findings if f["level"] != "ok"]
+    if shown:
+        ui.say("Material checks:")
+        for f in shown:
+            ui.say(f"  {f['level'].upper()} ({f['check']}, {f['material']}): {f['message']}")
+    else:
+        ui.say("Material checks: nothing to report.")
+    checks_csv = material_checks.write_csv(findings, ctx.path("tables", "materials_checks.csv"))
+    return dict(band=[lo, hi], materials=rows, table=str(table), figure=str(fig),
+                checks=findings, checks_table=str(checks_csv))
 
 
 def _plot_materials(ctx, wls, curves) -> Path:
@@ -753,7 +772,7 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
     ctx.tool("report", "--straight", fin_file.relative_to(ctx.out), "--bends",
              bend_file.relative_to(ctx.out), "--finalists", f"{H}x{W}",
              "--tol", f"{dW},{dH}", "--alpha-scat", _losses(cfg)[0],
-             "--alpha-abs", _losses(cfg)[1], "--n2", cfg.assumptions.n2_m2_w,
+             "--alpha-abs", _losses(cfg)[1], "--n2", _n2(cfg),
              "--out", FIN_DIR, "--overwrite", "--pump", mode)
     _to_tables(ctx, ctx.out / FIN_DIR, {"finalists.csv": "finalists.csv",
                                          "finalists_bend.csv": "finalists_bend.csv"})
@@ -1027,7 +1046,7 @@ def stage_ring(ctx: Context) -> dict:
     bb_file = ctx.path("results", "broadband.jsonl")
     ctx.tool("broadband", "--points", f"{H}x{W}", "--wl-min", lo, "--wl-max", hi,
              "--pump", wl, "--steps", cfg.cross_section.decision_steps, "--radius", R,
-             "--n2", cfg.assumptions.n2_m2_w, "--pump-mode", pump_mode(cfg),
+             "--n2", _n2(cfg), "--pump-mode", pump_mode(cfg),
              "--data", bb_file.relative_to(ctx.out), "--overwrite", "--plots-dir", PROFILE_DIR,
              *ctx.stack_args())
     _to_tables(ctx, ctx.out / PROFILE_DIR, {"profiles_summary.csv": "dispersion_profiles.csv"})
@@ -1057,10 +1076,15 @@ def stage_ring(ctx: Context) -> dict:
                     gamma_c = r[F["gamma"]]
             if gamma_c is not None:
                 break
-    if gamma_c is not None:
-        a_ = cfg.assumptions
-        thermal = physics.thermal_shift_pm_per_K(wl, ng, gamma_c,
-                                                 a_.dn_dT_core_per_K, a_.dn_dT_box_per_K)
+    from tarang.design.assumptions import material_value
+    dndt_core, why_core = material_value(cfg, "dn_dT_core")
+    dndt_box, why_box = material_value(cfg, "dn_dT_box")
+    if gamma_c is not None and (dndt_core is None or dndt_box is None):
+        ui.say("Thermal shift of the resonances not computed: the thermo-optic coefficient "
+               f"of the {'core' if dndt_core is None else 'BOX'} is "
+               f"{why_core if dndt_core is None else why_box}.")
+    elif gamma_c is not None:
+        thermal = physics.thermal_shift_pm_per_K(wl, ng, gamma_c, dndt_core, dndt_box)
         ui.say(f"Thermal shift of the resonances: {thermal[0]:.1f} to {thermal[1]:.1f} pm/K "
                f"(core fraction {gamma_c:.2f}; rest in air to rest in the BOX)")
     if prof.get("DW_nm") and prof.get("DW_nm") != "none in band":

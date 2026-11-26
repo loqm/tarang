@@ -83,7 +83,8 @@ def export(ctx) -> Optional[dict]:
                     FSR_Hz=A["D1"] / (2 * math.pi), D2_2pi_Hz=A["D2_2pi_MHz"] * 1e6,
                     D3_2pi_Hz=A["D3_2pi_kHz"] * 1e3, modes=len(rows))
     f_pump = disp["f_pump_Hz"] if disp else C / (wl * 1e-6)
-    n2 = float(cfg.assumptions.n2_m2_w)
+    from tarang.design.assumptions import n2 as _n2
+    n2 = _n2(cfg)
     aeff = xs.get("aeff_um2")
     qi = ring["q_intrinsic"]
     regimes = {}

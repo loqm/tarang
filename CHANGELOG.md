@@ -7,6 +7,65 @@ breaking changes; they are announced here first).
 
 ## [Unreleased]
 
+Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N4 only.
+
+### Added
+- **Material registry** (`tarang/media/materials.json`, read by `tarang.media.materials`).
+  For every material key it records, where published and each with its source: the Kerr
+  index n2, the thermo-optic coefficient dn/dT, the band gap and the measured transparency
+  window. A value not recorded is `null`, never borrowed from another material.
+- **Tantala** (`ta2o5`): ion-beam-sputtered Ta2O5, the Sellmeier fit of Black et al.,
+  Opt. Lett. 46, 817 (2021), tabulated over 0.5-5 µm (`Black_Ta2O5_Sellmeier.csv`); n2 and
+  dn/dT from Jung et al., Optica 8, 811 (2021).
+- **Gallium phosphide** (`gap`): the temperature-dependent Sellmeier equation of Wei et al.,
+  Opt. Mater. Express 8, 485 (2018), at 295 K over 0.7-12.5 µm; n2 from Wilson et al.,
+  Nat. Photonics 14, 57 (2020); band gap 2.26 eV (indirect).
+- **Al0.2Ga0.8As** (`al0.2ga0.8as`): the model of Gehrsitz et al., J. Appl. Phys. 87, 7825
+  (2000), at 296 K over 0.8-3 µm (below the direct gap); n2 and dn/dT from Chang et al.,
+  Nat. Commun. 11, 1331 (2020).
+- **`tarang.media.index_models`**: the published formulas behind these three tables;
+  `python -m tarang.media.index_models` writes them again, and the tests check each
+  shipped file against its formula byte for byte.
+- **Material checks** in the materials stage (`tarang/design/material_checks.py`): the band
+  against each material's transparency window; one- and two-photon absorption across the
+  core's band gap; which side of a resonance is thermally self-stable (sign of dn/dT); a
+  missing n2 or dn/dT; a value of yours far (> 20 %) from the published one; the Si3N4 loss
+  presets used for another core; a core whose index is not above its surroundings. They are
+  printed, written to `tables/materials_checks.csv` and listed in the report. None stops
+  the design.
+
+### Changed
+- **`[assumptions] n2_m2_w`, `dn_dT_core_per_K` and `dn_dT_box_per_K` default to the
+  registry's value for the chosen core and BOX** instead of fixed Si3N4 and SiOx numbers,
+  so a Ta2O5 (or any other) core no longer inherits Si3N4's Kerr index silently. For Si3N4
+  on SiO2 the values are the old defaults exactly (2.4e-19 m^2/W, 2.45e-5 /K, 0.95e-5 /K):
+  every number of a Si3N4 design is unchanged, and design files that set them keep them.
+  For a material whose value is not recorded (your own CSV, for example) the stage that
+  needs it stops with a message naming the setting, instead of using Si3N4's. The
+  assumptions table shows each value's source.
+
+### Fixed
+- **README and CITATION.cff after the arXiv update (1cf1772).** 400 non-breaking spaces
+  had replaced ordinary spaces, 357 of them inside code blocks, so commands copied from the
+  README failed in the shell; they are spaces again. In `CITATION.cff` the URLs had become
+  Markdown links and the arXiv identifier used a type the CFF 1.2.0 schema does not have,
+  so GitHub could not offer "Cite this repository"; the URLs are plain again and the
+  preprint is identified by its DOI, 10.48550/arXiv.2611.16469. A new test
+  (`tests/test_v020_repo_hygiene.py`) guards both.
+- **Dispersion maps with no anomalous point no longer crash.** The colour scale of the D map
+  (`maps.py`: the design map and map 1) was set by the largest positive D; when every D was
+  negative (e.g. an oxide-clad 800 nm film pumped at 780 nm) it became zero, matplotlib
+  refused it ("vmin, vcenter, and vmax must be in ascending order") and the cross-section
+  stage stopped with a traceback instead of "No target geometry". Such a map is now scaled
+  to twice its least normal D (`d_colour_limit`). Maps with an anomalous point are drawn
+  exactly as before.
+- **A diverged edge-coupler facet run is no longer used.** The 3D FDTD facet run of the
+  edge stage was read without the divergence check that every other FDTD result gets
+  (v0.1.4), so a diverged run would have been analysed as if it were physical. It is now
+  read through the same check (`checks._load`): reported with the link to its record and
+  left out, and the butt-coupling estimate stands instead. Runs that did not diverge give
+  the same results as before.
+
 ### Documentation
 - Corrected the description of two-sided grid snapping: on Tidy3D's Yee grid the field
   samples that lie on a snapped face belong to the components parallel to that face; the

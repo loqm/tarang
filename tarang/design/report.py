@@ -183,8 +183,9 @@ def write(ctx) -> dict:
                            xs["width_um"], ctx.path("figures", "2_cross_section.png"))
         if fig:
             xs = dict(xs, figure=str(fig))
-    n2 = cfg.assumptions.n2_m2_w
-    pth_c = threshold_mw(xs, ring, n2, 1.0) if xs and ring else None
+    from tarang.design.assumptions import material_value
+    n2 = material_value(cfg, "n2")[0]
+    pth_c = threshold_mw(xs, ring, n2, 1.0) if xs and ring and n2 else None
     K = gap.get("over_coupling") if gap and not gap.get("skipped") else None
     pth_o = threshold_mw(xs, ring, n2, K) if K and K != 1 and pth_c else None
     gap_ok = gap and not gap.get("skipped")
@@ -244,6 +245,12 @@ def write(ctx) -> dict:
                      f"{r['covers_band']} |")
         L += [""] + _fig(ctx, mat.get("figure"), "materials") + [
             f"Fitted n, k over the band: `{_rel(ctx, mat['table'])}`.", ""]
+        found = [c for c in mat.get("checks") or [] if c.get("level") != "ok"]
+        if mat.get("checks") is not None:
+            L += ["Material checks (published properties in `tarang/media/materials.json`; "
+                  f"all findings in `{_rel(ctx, mat['checks_table'])}`):", ""]
+            L += ([f"- **{c['level']}** ({c['check']}, `{c['material']}`): {c['message']}"
+                   for c in found] or ["- nothing to report"]) + [""]
 
     # ---- 2 cross-section
     if xs:

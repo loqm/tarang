@@ -314,12 +314,15 @@ class Edge:
 
 @dataclass
 class Assumptions:
-    n2_m2_w: float = _f(2.4e-19, "Kerr index of the core for the threshold estimate (Si3N4: "
-                                 "Ikeda et al., Opt. Express 16, 12987 (2008))", "m^2/W")
-    dn_dT_core_per_K: float = _f(2.45e-5, "Thermo-optic coefficient of the core (LPCVD Si3N4: "
-                                          "Arbabi and Goddard, Opt. Lett. 38, 3878 (2013))", "1/K")
-    dn_dT_box_per_K: float = _f(0.95e-5, "Thermo-optic coefficient of the BOX (SiOx: Arbabi and "
-                                         "Goddard, Opt. Lett. 38, 3878 (2013))", "1/K")
+    n2_m2_w: Optional[float] = _f(None, "Kerr index of the core (default: the core material's "
+                                        "published value, tarang/media/materials.json; "
+                                        "Si3N4 2.4e-19)", "m^2/W")
+    dn_dT_core_per_K: Optional[float] = _f(None, "Thermo-optic coefficient of the core (default: "
+                                                 "the core material's published value; Si3N4 "
+                                                 "2.45e-5)", "1/K")
+    dn_dT_box_per_K: Optional[float] = _f(None, "Thermo-optic coefficient of the BOX (default: the "
+                                                "BOX material's published value; SiO2 0.95e-5)",
+                                          "1/K")
 
 
 @dataclass

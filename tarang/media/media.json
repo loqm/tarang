@@ -4,5 +4,8 @@
     "si": "data/Wang_Si_25C.csv",
     "si3n4_hong": "data/Hong_Si3N4_LPCVD.csv",
     "sio2_nyakuchena": "data/Nyakuchena_fusedSilica.csv",
-    "si_franta": "data/_Franta_Si_300K.csv"
+    "si_franta": "data/_Franta_Si_300K.csv",
+    "ta2o5": "data/Black_Ta2O5_Sellmeier.csv",
+    "gap": "data/Wei_GaP_295K.csv",
+    "al0.2ga0.8as": "data/Gehrsitz_Al0.20Ga0.80As_296K.csv"
 }
