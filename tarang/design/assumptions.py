@@ -32,11 +32,64 @@ LOSS_PRESETS: dict[str, dict] = {
              "0.13 dB/m measured; intrinsic Q 3.7 x 10^7."),
 }
 
-N2_SOURCE = ("Ikeda, Saperstein, Alic, Fainman, Opt. Express 16, 12987 (2008); the value "
-             "used by Ji et al., Optica 4, 619 (2017)")
-DNDT_SOURCE = ("Arbabi and Goddard, Opt. Lett. 38, 3878 (2013), doi:10.1364/OL.38.003878: "
-               "Si3N4 (2.45 ± 0.09)e-5 /K, SiOx (0.95 ± 0.10)e-5 /K")
 MFD_SOURCE = "Corning SMF-28 single-mode fibre: MFD 10.4 ± 0.5 µm at 1550 nm (datasheet)"
+
+
+# ---- material properties: your value, else the material registry --------------------- #
+#: name -> (setting in [assumptions], role in [materials], registry field, what it is)
+MATERIAL_VALUES = {
+    "n2": ("n2_m2_w", "core", "n2_m2_w", "Kerr index n2 of the core", "m^2/W"),
+    "dn_dT_core": ("dn_dT_core_per_K", "core", "dn_dT_per_K",
+                   "thermo-optic coefficient of the core", "1/K"),
+    "dn_dT_box": ("dn_dT_box_per_K", "box", "dn_dT_per_K",
+                  "thermo-optic coefficient of the BOX", "1/K"),
+}
+
+
+def material_value(cfg, name: str) -> tuple[Optional[float], str]:
+    """(value, source) of a material property ('n2', 'dn_dT_core', 'dn_dT_box'): your
+    setting if given, otherwise the published value recorded for the material in
+    tarang/media/materials.json; (None, why) if neither exists."""
+    from tarang.media import materials
+    setting, role, field_, _, _ = MATERIAL_VALUES[name]
+    key = getattr(cfg.materials, role)
+    inf = materials.info(key)
+    reg = getattr(inf, field_) if inf else None
+    reg_src = getattr(inf, field_.replace("_m2_w", "").replace("_per_K", "") + "_source", "") \
+        if inf else ""
+    mine = getattr(cfg.assumptions, setting)
+    if mine is not None:
+        if reg is not None and _same(mine, reg):
+            return float(mine), reg_src
+        return float(mine), "your value (design.toml)"
+    if reg is not None:
+        return float(reg), reg_src
+    return None, (f"not recorded for {key!r} (tarang/media/materials.json); set "
+                  f"[assumptions] {setting}")
+
+
+def _same(a, b) -> bool:
+    a, b = float(a), float(b)
+    return a == b or abs(a - b) <= 1e-9 * max(abs(a), abs(b))
+
+
+def required(cfg, name: str) -> float:
+    """The value of a material property the design cannot do without; a SettingsError that
+    says which setting to fill when it is neither set nor recorded."""
+    value, why = material_value(cfg, name)
+    if value is None:
+        from tarang.design.config import SettingsError
+        setting, role, _, what, unit = MATERIAL_VALUES[name]
+        key = getattr(cfg.materials, role)
+        raise SettingsError(f"The {what} is not recorded for {key!r} in "
+                            f"tarang/media/materials.json and not set. Give it in the design "
+                            f"settings: [assumptions] {setting} = <value in {unit}>.")
+    return value
+
+
+def n2(cfg) -> float:
+    """Kerr index n2 of the core, m^2/W."""
+    return required(cfg, "n2")
 
 
 def preset(name: str) -> dict:
@@ -45,6 +98,14 @@ def preset(name: str) -> dict:
     except KeyError:
         raise ValueError(f"unknown loss preset {name!r}; choose one of "
                          f"{', '.join(LOSS_PRESETS)}") from None
+
+
+
+def _material_row(cfg, name: str, note: str) -> dict:
+    value, source = material_value(cfg, name)
+    _, _, _, what, unit = MATERIAL_VALUES[name]
+    return dict(quantity=what, value=value if value is not None else "not set", unit=unit,
+                source=source, note=note)
 
 
 def loss_source(cfg, which: str) -> str:
@@ -70,12 +131,11 @@ def table(cfg, results: Optional[dict] = None) -> list[dict]:
              source=loss_source(cfg, "absorption"),
              note="Unannealed LPCVD/PECVD nitride absorbs near 1520 nm (N-H bonds); use a "
                   "larger value for unannealed films."),
-        dict(quantity="Kerr index n2 of the core", value=cfg.assumptions.n2_m2_w, unit="m^2/W",
-             source=N2_SOURCE, note="Used only for the comparative threshold estimate (±~2x)."),
-        dict(quantity="thermo-optic coefficient of the core", value=cfg.assumptions.dn_dT_core_per_K,
-             unit="1/K", source=DNDT_SOURCE, note="For the resonance shift with temperature only."),
-        dict(quantity="thermo-optic coefficient of the BOX", value=cfg.assumptions.dn_dT_box_per_K,
-             unit="1/K", source=DNDT_SOURCE, note="PECVD SiOx; thermal oxide is close."),
+        _material_row(cfg, "n2", "Threshold, gamma and the LLE inputs (threshold ±~2x)."),
+        _material_row(cfg, "dn_dT_core", "For the resonance shift with temperature only."),
+        _material_row(cfg, "dn_dT_box", "PECVD SiOx; thermal oxide is close."
+                      if str(cfg.materials.box).lower().startswith("sio2")
+                      else "For the resonance shift with temperature only."),
         dict(quantity="fibre mode-field diameter", value=g.mfd_um, unit="um",
              source=MFD_SOURCE, note="Gaussian beam with its waist at the source plane."),
         dict(quantity="fibre angle from vertical", value=g.fiber_angle_deg, unit="deg",

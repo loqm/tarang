@@ -82,4 +82,4 @@ version = { attr = "tarang.__version__" }
 include = ["tarang*"]                       # every package lives inside tarang/
 
 [tool.setuptools.package-data]
-"tarang.media" = ["media.json", "data/*.csv"]
+"tarang.media" = ["media.json", "materials.json", "data/*.csv"]

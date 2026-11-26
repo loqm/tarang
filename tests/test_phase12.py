@@ -359,7 +359,8 @@ def test_lle_inputs_are_written_in_pylle_format(tmp_path):
     assert r and len(r["files"]) == 3
     data = json.loads((ctx.out / "lle" / "lle_inputs.json").read_text(encoding="utf-8"))
     gamma = 2 * math.pi * 2.4e-19 / (1.55e-6 * 0.75e-12)
-    assert data["gamma_per_W_m"] == pytest.approx(gamma * ctx.cfg.assumptions.n2_m2_w / 2.4e-19)
+    from tarang.design.assumptions import n2
+    assert data["gamma_per_W_m"] == pytest.approx(gamma * n2(ctx.cfg) / 2.4e-19)
     crit = data["coupling"]["critical"]
     assert crit["Q_c"] == pytest.approx(9.785e5) and crit["Q_L"] == pytest.approx(9.785e5 / 2)
     assert data["pyLLE"]["res"]["dispfile"] == "pyLLE_dispersion.csv"

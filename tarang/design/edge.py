@@ -498,7 +498,7 @@ def stage_edge(ctx) -> dict:
     """Facet width (free), taper shape and length (free 2D model, priced EME), facet in 3D
     FDTD (priced)."""
     from tarang.design import visuals
-    from tarang.design.checks import _run_batch, _write_csv
+    from tarang.design.checks import _load, _run_batch, _write_csv
     from tarang.design.taper import eme_taper, taper_transmission
     from tarang.utilities.cloud_run import _data_class, find_cached
     _form(ctx)
@@ -643,10 +643,10 @@ def stage_edge(ctx) -> dict:
         name = facet_name(w_use, H, wl, steps)
         folder = ctx.out / "cloud" / "edge_facet"
         ok = _run_batch(ctx, {"facet": (sim, name)}, folder, "edge-coupler facet in 3D FDTD")
-        hit = find_cached(sim, folder, name) if ok else None
-        if hit is not None:
-            import tidy3d as td
-            data = td.SimulationData.from_file(str(hit))
+        # _load reports a diverged run (with the link to its record) and returns None, so
+        # its result is never used: the butt-coupling estimate stands instead (v0.1.6)
+        data = _load(sim, folder, name) if ok else None
+        if data is not None:
             res3 = analyse(data, ctx, mfd, tol, float(e.offset_um), wl)
             ui.say(f"  3D FDTD: {res3['eta'] * 100:.1f} % ({res3['eta_db']:.2f} dB) per facet at {wl} µm, "
                    f"fibre {res3['fibre_height_um']:.2f} µm above the BOX, waist "

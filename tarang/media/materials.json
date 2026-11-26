@@ -1,0 +1,105 @@
+{
+ "_about": "Material properties beyond n and k, one entry per key of media.json (and 'air'). Every value carries its source; null means not recorded, and TARANG then asks for your value where it needs one. Read by tarang.media.materials.",
+ "air": {
+  "name": "Air",
+  "n2_m2_w": 0.0,
+  "n2_source": "neglected: several orders of magnitude below any solid core or cladding",
+  "dn_dT_per_K": 0.0,
+  "dn_dT_source": "neglected (about -1e-6 /K)",
+  "band_gap_ev": null, "band_gap_source": "",
+  "transparent_um": null, "transparent_source": "",
+  "family": "air"
+ },
+ "si3n4": {
+  "name": "Stoichiometric Si3N4 (LPCVD)",
+  "n2_m2_w": 2.4e-19,
+  "n2_source": "Ikeda, Saperstein, Alic, Fainman, Opt. Express 16, 12987 (2008); the value used by Ji et al., Optica 4, 619 (2017)",
+  "dn_dT_per_K": 2.45e-5,
+  "dn_dT_source": "Arbabi and Goddard, Opt. Lett. 38, 3878 (2013), doi:10.1364/OL.38.003878: Si3N4 (2.45 ± 0.09)e-5 /K, SiOx (0.95 ± 0.10)e-5 /K",
+  "band_gap_ev": null, "band_gap_source": "",
+  "transparent_um": null, "transparent_source": "",
+  "family": "si3n4"
+ },
+ "si3n4_hong": {
+  "name": "LPCVD SiN (Hong et al. index)",
+  "n2_m2_w": 2.4e-19,
+  "n2_source": "Ikeda, Saperstein, Alic, Fainman, Opt. Express 16, 12987 (2008); the value used by Ji et al., Optica 4, 619 (2017)",
+  "dn_dT_per_K": 2.45e-5,
+  "dn_dT_source": "Arbabi and Goddard, Opt. Lett. 38, 3878 (2013), doi:10.1364/OL.38.003878: Si3N4 (2.45 ± 0.09)e-5 /K, SiOx (0.95 ± 0.10)e-5 /K",
+  "band_gap_ev": null, "band_gap_source": "",
+  "transparent_um": null, "transparent_source": "",
+  "family": "si3n4"
+ },
+ "sio2": {
+  "name": "Fused silica / SiO2",
+  "n2_m2_w": 2.6e-20,
+  "n2_source": "fused silica, as tabulated in 'Platforms for integrated nonlinear optics compatible with silicon integrated circuits', arXiv:1410.7713, Table I note",
+  "dn_dT_per_K": 0.95e-5,
+  "dn_dT_source": "Arbabi and Goddard, Opt. Lett. 38, 3878 (2013), doi:10.1364/OL.38.003878: Si3N4 (2.45 ± 0.09)e-5 /K, SiOx (0.95 ± 0.10)e-5 /K",
+  "band_gap_ev": null, "band_gap_source": "",
+  "transparent_um": null, "transparent_source": "",
+  "family": "sio2"
+ },
+ "sio2_nyakuchena": {
+  "name": "Silica glass (Nyakuchena et al. index)",
+  "n2_m2_w": 2.6e-20,
+  "n2_source": "fused silica, as tabulated in 'Platforms for integrated nonlinear optics compatible with silicon integrated circuits', arXiv:1410.7713, Table I note",
+  "dn_dT_per_K": 0.95e-5,
+  "dn_dT_source": "Arbabi and Goddard, Opt. Lett. 38, 3878 (2013), doi:10.1364/OL.38.003878: Si3N4 (2.45 ± 0.09)e-5 /K, SiOx (0.95 ± 0.10)e-5 /K",
+  "band_gap_ev": null, "band_gap_source": "",
+  "transparent_um": null, "transparent_source": "",
+  "family": "sio2"
+ },
+ "si": {
+  "name": "Crystalline silicon (thin SOI film)",
+  "n2_m2_w": null, "n2_source": "",
+  "dn_dT_per_K": null, "dn_dT_source": "",
+  "band_gap_ev": 1.12,
+  "band_gap_source": "crystalline Si, indirect gap at 300 K ('the indirect bandgap is only 1.1 eV', arXiv:1410.7713)",
+  "transparent_um": null, "transparent_source": "",
+  "family": "si"
+ },
+ "si_franta": {
+  "name": "Float-zone crystalline silicon",
+  "n2_m2_w": null, "n2_source": "",
+  "dn_dT_per_K": null, "dn_dT_source": "",
+  "band_gap_ev": 1.12,
+  "band_gap_source": "crystalline Si, indirect gap at 300 K ('the indirect bandgap is only 1.1 eV', arXiv:1410.7713)",
+  "transparent_um": null, "transparent_source": "",
+  "family": "si"
+ },
+ "ta2o5": {
+  "name": "Tantala, Ta2O5 (ion-beam sputtered)",
+  "n2_m2_w": 6.2e-19,
+  "n2_source": "Jung, Yu, Carlson, Drake, Briles, Papp, Optica 8, 811 (2021), doi:10.1364/OPTICA.411968: 6.2(23) x 10^-19 m^2/W, from the parametric threshold",
+  "dn_dT_per_K": 8.8e-6,
+  "dn_dT_source": "Jung et al., Optica 8, 811 (2021), doi:10.1364/OPTICA.411968",
+  "band_gap_ev": null, "band_gap_source": "",
+  "transparent_um": [0.32, 8.0],
+  "transparent_source": "Black, Streater, Lamee, Carlson, Yu, Papp, Opt. Lett. 46, 817 (2021), Fig. 1(a): absorption low from 320 nm to 8 um",
+  "family": "ta2o5"
+ },
+ "gap": {
+  "name": "Gallium phosphide, GaP (crystalline, 295 K)",
+  "n2_m2_w": 1.1e-17,
+  "n2_source": "Wilson et al., Nat. Photonics 14, 57 (2020): 1.1(3) x 10^-17 m^2/W from the parametric threshold (1.2(5) x 10^-17 from four-wave mixing)",
+  "dn_dT_per_K": 1.2e-4,
+  "dn_dT_source": "computed at 1550 nm and 295 K from the temperature-dependent Sellmeier equation of Wei et al., Opt. Mater. Express 8, 485 (2018)",
+  "band_gap_ev": 2.26,
+  "band_gap_source": "indirect gap; Wilson et al., Nat. Photonics 14, 57 (2020): negligible two-photon absorption above 1.1 um (direct gap 2.87 eV, Wei et al. 2018)",
+  "transparent_um": [0.55, 11.0],
+  "transparent_source": "Wilson et al., Nat. Photonics 14, 57 (2020): transparency from 0.55 to 11 um",
+  "family": "iii-v"
+ },
+ "al0.2ga0.8as": {
+  "name": "Al0.2Ga0.8As (296 K)",
+  "n2_m2_w": 2.6e-17,
+  "n2_source": "Chang, Xie, Shu et al., Nat. Commun. 11, 1331 (2020), the value they use for AlGaAs-on-insulator (Pu et al., Optica 3, 823 (2016): 2.6 x 10^-17 for x = 0.17)",
+  "dn_dT_per_K": 2.3e-4,
+  "dn_dT_source": "Chang et al., Nat. Commun. 11, 1331 (2020): AlGaAs thermo-optic coefficient 2.3 x 10^-4 /K",
+  "band_gap_ev": 1.707,
+  "band_gap_source": "direct gap at x = 0.2, 296 K: Gehrsitz et al., J. Appl. Phys. 87, 7825 (2000), Eqs. 11 and 14",
+  "transparent_um": null, "transparent_source": "",
+  "family": "iii-v"
+ }
+}
