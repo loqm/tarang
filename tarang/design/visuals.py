@@ -16,6 +16,8 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from tarang.design.config import profile_of
+
 C_UM = 2.99792458e14
 
 # Okabe-Ito colours: distinguishable with every common colour-vision deficiency
@@ -78,41 +80,21 @@ def _save(fig, path: Path, meta: Optional[dict] = None) -> Path:
 
 # =============================================================== cross-section
 def cross_section(ctx, H: float, W: float, path: Path, mode: bool = True) -> Path:
-    """Stack drawing with every dimension, and the TE00 field of the chosen core."""
+    """The chosen cross-section as the mode solver sees it (refractive index cell by cell,
+    from the same simulation; see tarang.design.stack) and the TE00 field of the core."""
+    from tarang.design import stack
     plt = _plt()
     cfg = ctx.cfg
     clad_air = str(cfg.materials.cladding).lower() == "air"
-    box = cfg.stack.box_height_um
     ncols = 2 if mode else 1
     fig, axes = plt.subplots(1, ncols, figsize=(6.2 * ncols, 4.6))
     axes = np.atleast_1d(axes)
-    ax = axes[0]
-    span = max(3 * W, 4.0)
-    show_box = min(box, 2.5)
-    ax.add_patch(plt.Rectangle((-span / 2, -show_box), span, show_box, color="#9ecae1",
-                               label=f"BOX: {cfg.materials.box}, {box:g} µm"))
-    if not clad_air:
-        ax.add_patch(plt.Rectangle((-span / 2, 0), span, cfg.stack.cladding_height_um,
-                                   color="#fdd0a2", alpha=0.6,
-                                   label=f"cladding: {cfg.materials.cladding}"))
-    ax.add_patch(plt.Rectangle((-W / 2, 0), W, H, color="#e6550d",
-                               label=f"core: {cfg.materials.core}"))
-    ax.annotate("", xy=(-W / 2, H + 0.15), xytext=(W / 2, H + 0.15),
-                arrowprops=dict(arrowstyle="<->"))
-    ax.text(0, H + 0.22, f"W = {W * 1e3:.0f} nm", ha="center", va="bottom")
-    ax.annotate("", xy=(W / 2 + 0.15, 0), xytext=(W / 2 + 0.15, H),
-                arrowprops=dict(arrowstyle="<->"))
-    ax.text(W / 2 + 0.22, H / 2, f"H = {H * 1e3:.0f} nm", va="center")
-    if show_box < box:
-        ax.text(-span / 2 + 0.1, -show_box + 0.1, f"(BOX continues to {box:g} µm; Si handle "
-                "below)", ha="left", fontsize=8)
-    ax.set_xlim(-span / 2, span / 2)
-    ax.set_ylim(-show_box, H + 1.0)
-    ax.set_aspect("equal")
-    ax.set_xlabel("y (µm)")
-    ax.set_ylabel("z (µm)")
-    ax.set_title(f"Cross-section ({'air' if clad_air else cfg.materials.cladding} top)")
-    ax.legend(loc="upper right", fontsize=8)
+    p = profile_of(cfg)
+    stack.draw(axes[0], stack.simulation(ctx, H, W), H, W, cfg.run.wavelength_um,
+               labels=stack._labels(cfg, H, W),
+               title=(f"Cross-section ({'air' if clad_air else cfg.materials.cladding} top; "
+                      f"BOX {cfg.stack.box_height_um:g} µm {cfg.materials.box})"
+                      + (f"\n{p.label()}" if p.label() else "")))
     if mode:
         _mode_panel(ctx, axes[1], H, W)
     return _save(fig, path)
@@ -128,7 +110,8 @@ def _mode_panel(ctx, ax, H, W) -> None:
     sim = dm.build_sim(H, W, wl0=wl, steps=cfg.cross_section.decision_steps,
                        box=cfg.stack.box_height_um, core=cfg.materials.core,
                        substrate=cfg.materials.box, cladding=cfg.materials.cladding,
-                       cladding_height=cfg.stack.cladding_height_um, band=ctx.band)
+                       cladding_height=cfg.stack.cladding_height_um, band=ctx.band,
+                       profile=profile_of(cfg))
     plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
     n_core = ctx.n(cfg.materials.core)
     data = ModeSolver(simulation=sim, plane=plane, freqs=[C_UM / wl],

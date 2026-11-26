@@ -99,7 +99,10 @@ def main():
     ap.add_argument("--sidewall-ref", default="top", choices=["top", "bottom", "middle"],
                     help="plane where the width holds when the walls slope (default top: the "
                          "mask edge)")
+    from tarang.waveguide.dispersion_mapping import profile as xs_profile
+    xs_profile.add_args(ap)
     a = ap.parse_args()
+    prof = xs_profile.from_args(a)
     angles = ([round(float(v), 4) for v in a.sidewalls.split(",") if v.strip()]
               if a.sidewalls else [90.0])
 
@@ -134,6 +137,7 @@ def main():
         tag += "_finalists"
     if a.sidewalls:
         tag += "_sidewalls"
+    tag += xs_profile.tag(prof)
     out = Path(a.out) if a.out else Path("results") / f"{tag}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -150,6 +154,7 @@ def main():
                         and r.get("substrate", "sio2") == a.substrate
                         and (r.get("cladding") or None) == clad
                         and float(r.get("n_shift", 0.0)) == a.n_shift
+                        and xs_profile.of_record(r) == prof
                         and (float(r.get("sidewall_deg", 90.0)) == 90.0
                              or (r.get("sidewall_ref", "top") == a.sidewall_ref
                                  and (not a.snap or r.get("snap_walls") == SNAP_WALLS))))
@@ -162,6 +167,8 @@ def main():
               snap_sides=a.snap_sides,
               core=a.core, substrate=a.substrate, cladding=clad,
               cladding_height=a.cladding_height, n_shift=a.n_shift)
+    if not prof.is_default:
+        kw["profile"] = prof
     todo = [(H, W, kw if ang == 90.0 else dict(kw, sidewall_deg=ang, sidewall_ref=a.sidewall_ref))
             for (H, W) in pts for ang in angles if (H, W, ang) not in done]
     pts = [(H, W, ang) for (H, W) in pts for ang in angles]

@@ -16,6 +16,8 @@ from typing import Optional
 
 import numpy as np
 
+from tarang.design.config import profile_of
+
 C_UM = 2.99792458e14
 
 
@@ -29,7 +31,8 @@ def _solver(ctx, H, W, wl, *, margin_y=2.0, bend_radius=None, num_modes=4, pml=0
                        box=cfg.stack.box_height_um, core=cfg.materials.core,
                        substrate=cfg.materials.box, cladding=cfg.materials.cladding,
                        cladding_height=cfg.stack.cladding_height_um, band=ctx.band,
-                       margin_y=margin_y, sidewall_deg=sidewall_deg, sidewall_ref=sidewall_ref)
+                       margin_y=margin_y, sidewall_deg=sidewall_deg, sidewall_ref=sidewall_ref,
+                       profile=profile_of(cfg))
     if extra is not None:
         sim = extra(sim)
     spec = dict(num_modes=num_modes, target_neff=ctx.n(cfg.materials.core))

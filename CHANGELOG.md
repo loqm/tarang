@@ -10,6 +10,24 @@ breaking changes; they are announced here first).
 Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N4 only.
 
 ### Added
+- **Cross-section profile** (`[stack]`, all optional, default off;
+  `tarang/waveguide/dispersion_mapping/profile.py`): a partial-etch slab of core material
+  (`slab_um`; across the chip for a rib, or `slab_width_um` wide for a pedestal such as the
+  50 nm tantala one of Black et al. 2021), and a BOX recess with undercut and its own
+  pedestal material (`box_recess_um`, `box_undercut_um`, `pedestal_material`), the oxide
+  window of Applied Nanotools' air-clad process. Built in one place
+  (`build_sim(..., profile=)`) and used by every local mode solve: map, check, mesh check,
+  broadband profiles, ring bends, test waveguides and the edge stage's taper. New faces
+  get grid lines like the core's. The sweep, broadband and convergence tools take
+  `--slab`, `--slab-width`, `--recess`, `--undercut` and `--pedestal`; records carry the
+  profile (`profile`) and results of different profiles are kept apart. Checked against
+  the ANT window scan of 26 Nov 2026: for all 12 points and both snapping sides the
+  profile builds the same grid and the same permittivity in every cell as the scan's
+  script, so its values hold. The 3D cloud stages use the plain strip in this version.
+- **Stack preview**: before any solve, the cross-section stage prints the layer stack and
+  draws it (`figures/2_stack.png`) from the simulation the mode solver gets, cell by cell.
+  The chosen cross-section's figure (`2_cross_section`) is drawn the same way instead of
+  as a sketch.
 - **Material registry** (`tarang/media/materials.json`, read by `tarang.media.materials`).
   For every material key it records, where published and each with its source: the Kerr
   index n2, the thermo-optic coefficient dn/dT, the band gap and the measured transparency
@@ -35,6 +53,8 @@ Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N
   the design.
 
 ### Changed
+- **Designs without a profile are unchanged**: no simulation, settings key, command or
+  result record changes (the new settings at their defaults are left out of the keys).
 - **`[assumptions] n2_m2_w`, `dn_dT_core_per_K` and `dn_dT_box_per_K` default to the
   registry's value for the chosen core and BOX** instead of fixed Si3N4 and SiOx numbers,
   so a Ta2O5 (or any other) core no longer inherits Si3N4's Kerr index silently. For Si3N4
@@ -45,6 +65,10 @@ Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N
   assumptions table shows each value's source.
 
 ### Fixed
+- **Mesh-check figures of unsnapped runs said "snapped".** `convergence.py` read the
+  snapping flag from the last field of a group's key, which held the number of snap sides
+  (never 0), so every run was labelled snapped. It now reads the flag itself; snapped
+  runs, as every design since v0.1.0, are labelled as before.
 - **README and CITATION.cff after the arXiv update (1cf1772).** 400 non-breaking spaces
   had replaced ordinary spaces, 357 of them inside code blocks, so commands copied from the
   README failed in the shell; they are spaces again. In `CITATION.cff` the URLs had become

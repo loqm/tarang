@@ -239,6 +239,28 @@ follow:
 - the group-velocity dispersion D = −(λ/c) d²n_eff/dλ². Anomalous dispersion (D > 0) is
   what a bright soliton comb needs.
 
+**The stack first.** Before any solve, the step prints the layer stack and draws it
+(`figures/2_stack.png`) from the very simulation the mode solver gets: the refractive index
+cell by cell, the core's dimensions and every layer. Check here that the solver sees the
+wafer you have.
+
+**Beyond a plain strip** (all optional, `[stack]`, default off; a design without them is
+exactly as before v0.2.0):
+
+| Setting | What the etch leaves | Example |
+|---|---|---|
+| `slab_um` | core material from the BOX up to this thickness, beside the core (partial etch) | rib or ridge waveguide |
+| `slab_width_um` | that slab only this wide, centred under the core | the 50 nm tantala pedestal of Black et al. 2021 |
+| `box_recess_um` | the BOX etched this deep beside the core, filled by the top cladding (air when none) | an oxide window, as in Applied Nanotools' air-clad process |
+| `box_undercut_um` | that etch reaching this far under each core edge: the core stands on a narrower pedestal | isotropic etch: equal to the recess |
+| `pedestal_material` | the pedestal's material (default: the BOX's) | |
+
+A slab and a recess cannot be combined in one design (v0.2.0). New faces get grid lines
+like the core's, so grid snapping covers them. Every local mode solve uses the profile (the
+map, the check, the ring's dispersion and the LLE inputs); in this version the 3D cloud
+simulations of the ring, gap and gratings still use the plain strip, and the assumptions
+table says so. In a rib, a bend can leak into the slab: the bend solve shows that loss.
+
 The step maps D and the number of guided modes over a grid of H × W. Each candidate is
 then judged by its 8 neighbours on the grid: a cross-section whose neighbours are also
 good survives the fabrication tolerance (± width, ± thickness).
