@@ -271,6 +271,12 @@ def focusing_sim(ctx, design: dict):
         structures=structs, sources=[src], monitors=[mon, plane], run_time=base.sim.run_time,
         boundary_spec=td.BoundarySpec.all_sides(
             open_boundary(getattr(cfg.grating, "boundary", "pml")).plus), medium=clad)
+    # the cross-section profile under the waveguide, the tip taper, the slab and every
+    # tooth, as a self-aligned etch leaves it (v0.2.0; a plain strip: unchanged)
+    from tarang.design.edge import _with_profile
+    names = ["Waveguide"] + (["Tip_taper"] if Lt > 0 else []) + ["Focusing_slab"] + \
+        [f"Tooth_{i}" for i in range(len(g["teeth"]))]
+    sim = _with_profile(ctx, sim, W, tuple(names), clad)
 
     class FocusingCoupler(GratingCoupler):
         def _readable_name(self) -> str:

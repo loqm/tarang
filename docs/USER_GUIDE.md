@@ -257,9 +257,16 @@ exactly as before v0.2.0):
 
 A slab and a recess cannot be combined in one design (v0.2.0). New faces get grid lines
 like the core's, so grid snapping covers them. Every local mode solve uses the profile (the
-map, the check, the ring's dispersion and the LLE inputs); in this version the 3D cloud
-simulations of the ring, gap and gratings still use the plain strip, and the assumptions
-table says so. In a rib, a bend can leak into the slab: the bend solve shows that loss.
+map, the check, the ring's dispersion and the LLE inputs), and so does every 3D cloud run
+that holds the waveguide: the ring-bus gap (under the ring and the bus), the taper (EME),
+the edge facet and the focusing grating (under the waveguide, the slab and every tooth).
+In 3D each core feature is copied into the layer below, its outline moved in by the
+undercut, and the inside of the ring moved out by as much, so a curved ring gets the same
+pedestal as a straight bus. With a profile, the gap stage leaves out the ring-hole BOX
+pocket (`ring_inner_box_recess_um`): the profile sets the BOX around the ring. The 2D
+grating runs (uniform and apodised) are uniform across the width, so the lateral profile
+does not enter them. In a rib, a bend can leak into the slab: the bend solve shows that
+loss.
 
 The step maps D and the number of guided modes over a grid of H × W. Each candidate is
 then judged by its 8 neighbours on the grid: a cross-section whose neighbours are also

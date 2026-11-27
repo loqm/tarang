@@ -314,6 +314,9 @@ def facet_sim(ctx, w_facet: float, n_te: float, steps: int = 15, w0_max: float =
     x_lo, x_hi = -6.0, FIBRE_PLANE_UM + 1.5
     y_half = w_facet / 2 + 2.5
     z_lo = -2.5
+    from tarang.design.config import profile_of
+    if profile_of(cfg).recess_um:                 # the recess floor stays inside
+        z_lo = min(z_lo, -float(profile_of(cfg).recess_um) - 1.0)
     z_hi = H + 2.5
     handle = None
     pw = (0, w_facet + 4.0, H + 4.0)                      # port planes: core region only
@@ -338,7 +341,7 @@ def facet_sim(ctx, w_facet: float, n_te: float, steps: int = 15, w0_max: float =
         geometry=td.Box.from_bounds((x_lo - 1, -w_facet / 2 - 0.5, -0.4), (x_hi + 1, w_facet / 2 + 0.5,
                                                                             H + 0.4)),
         dl=[dl, dl, dl], enforce=True)
-    return td.Simulation(
+    sim = td.Simulation(
         center=((x_lo + x_hi) / 2, 0, (z_lo + z_hi) / 2),
         size=(x_hi - x_lo, 2 * y_half, z_hi - z_lo),
         grid_spec=td.GridSpec.auto(min_steps_per_wvl=10, wavelength=wl,
@@ -346,6 +349,24 @@ def facet_sim(ctx, w_facet: float, n_te: float, steps: int = 15, w0_max: float =
         structures=structs, sources=[src], monitors=mons, run_time=0.6e-12,
         boundary_spec=td.BoundarySpec.all_sides(td.PML()), medium=clad,
         symmetry=(0, -1, 0))                 # TE00: Ey even across y = 0 (PMC plane)
+    return _with_profile(ctx, sim, w_facet, ("Facet waveguide",), clad)
+
+
+def _with_profile(ctx, sim, width: float, features, fill):
+    """``sim`` with the design's cross-section profile ([stack] slab / recess / undercut)
+    built under its waveguide; a plain strip leaves it untouched (v0.2.0). The BOX ends at
+    the chip edge, and so do the recess and a full-width slab."""
+    from tarang.design.config import profile_of
+    from tarang.waveguide.dispersion_mapping.profile import apply_3d
+    cfg = ctx.cfg
+    prof = profile_of(cfg)
+    if prof.is_default:
+        return sim
+    return apply_3d(sim, prof, height=ctx.results("cross_section")["height_um"],
+                    width_bottom=width, features=features, box_name="BOX",
+                    core_medium=ctx.medium(cfg.materials.core),
+                    box_medium=ctx.medium(cfg.materials.box), fill_medium=fill,
+                    pedestal_medium=ctx.medium(prof.pedestal) if prof.pedestal else None)
 
 
 def facet_name(w_facet: float, H: float, wl: float, steps: int) -> str:

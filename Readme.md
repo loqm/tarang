@@ -556,10 +556,10 @@ python -m tarang.migrate path/to/your/scripts --write    # apply
 
   ring's inner side only; the gap is unaffected). It is kept so cached gap results stay
   valid, and noted in the design report and benchmark pack.
-- **Cross-section profiles reach the local mode solves only (v0.2.0 development).** A slab or
-  BOX recess changes the map, the check, the ring's dispersion and the LLE inputs; the 3D
-  cloud simulations of the ring, gap and gratings still use the plain strip, as the
-  assumptions table states. A slab and a recess cannot be combined in one design.
+- **Cross-section profiles and the 2D grating runs.** A slab or BOX recess enters every
+  local mode solve and the 3D cloud runs (ring-bus gap, taper, edge facet, focusing
+  grating); the 2D grating runs are uniform across the width, so the lateral profile does
+  not enter them. A slab and a recess cannot be combined in one design.
 - The whole-device spectrum is a circuit model: each part comes from its own simulation
 
   and the parts are joined by their scattering matrices. Backscattering inside the ring

@@ -41,7 +41,18 @@ Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N
   profile (`profile`) and results of different profiles are kept apart. Checked against
   the ANT window scan of 26 Nov 2026: for all 12 points and both snapping sides the
   profile builds the same grid and the same permittivity in every cell as the scan's
-  script, so its values hold. The 3D cloud stages use the plain strip in this version.
+  script, so its values hold.
+- **Cross-section profile in the 3D cloud runs** (`profile.apply_3d`): the ring-bus gap
+  (under the ring and the bus; also the full- and half-ring builders), the taper (EME),
+  the edge facet and the focusing grating (under the waveguide, the slab and every tooth).
+  Each core feature is copied into the layer below, its outline moved in by the undercut
+  (a ring's radii, a bus's width, a taper's polygon), and holes such as the inside of a
+  ring moved out by as much; a finite slab is drawn the same way, moved out to its width.
+  The mesh override reaches 0.1 µm below the recess floor, which gets a grid line. With a
+  profile the gap stage leaves out the ring-hole BOX pocket, and the bus-only reference
+  drops the ring's pedestal with the ring. A plain strip leaves every simulation, and so
+  every cloud fingerprint, as it was. The 2D grating runs are uniform across the width,
+  so the lateral profile does not enter them.
 - **Stack preview**: before any solve, the cross-section stage prints the layer stack and
   draws it (`figures/2_stack.png`) from the simulation the mode solver gets, cell by cell.
   The chosen cross-section's figure (`2_cross_section`) is drawn the same way instead of
@@ -99,6 +110,10 @@ Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N
   assumptions table shows each value's source.
 
 ### Fixed
+- **The gap's supermode check with a cross-section profile** (since the profile was
+  added in this release): the two-core cross-section kept the one core's recess and
+  pedestal at y = 0, which is under the gap, not under either core. The profile is now
+  built under each core (`profile.apply(..., y0=(-s/2, s/2))`). Plain strips unchanged.
 - **Two-sided snapping averaged different modes near cutoff.** The mode lists of the two
   snapping sides were averaged rank by rank; where a mode is just above cutoff on one side
   and absent on the other, two different modes were averaged into one. For the ANT scan at

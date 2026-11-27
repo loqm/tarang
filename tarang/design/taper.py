@@ -315,7 +315,11 @@ def eme_taper(ctx, w_wide: float, w_narrow: float, length0: float, scale_factors
     # per cell: the straight end sections keep their length, the taper cells are scaled
     scales = [[1.0] + [float(s)] * int(n_cells) + [1.0] for s in scale_factors]
     z_lo, z_hi = -1.5, H + 1.5
-    return td.EMESimulation(
+    from tarang.design.config import profile_of
+    prof = profile_of(cfg)
+    if not prof.is_default:                       # z_lo: the recess floor stays inside
+        z_lo = min(z_lo, -float(prof.recess_um) - 1.0)
+    sim = td.EMESimulation(
         center=(length0 / 2, 0, (z_lo + z_hi) / 2),
         size=(length0 + 2 * straight, w_wide + 2 * margin, z_hi - z_lo),
         structures=structs, axis=0, freqs=[C_UM / wl], eme_grid_spec=grid,
@@ -323,6 +327,14 @@ def eme_taper(ctx, w_wide: float, w_narrow: float, length0: float, scale_factors
         symmetry=(0, -1, 0),                    # even modes only (E across the width even)
         boundary_spec=td.BoundarySpec.all_sides(td.PECBoundary()),
         sweep_spec=td.EMELengthSweep(scale_factors=scales))
+    if prof.is_default:
+        return sim
+    # the cross-section profile under the whole taper (v0.2.0); width_bottom: the narrow
+    # end, the waveguide whose cross-section the profile was chosen for
+    from tarang.design.edge import _with_profile
+    return _with_profile(ctx, sim, w_narrow, ("grating end", "taper", "waveguide"),
+                         td.Medium(permittivity=1.0) if clad_air
+                         else ctx.medium(cfg.materials.cladding))
 
 
 def taper_outline(w_wide: float, w_narrow: float, length: float, kind: str = "linear",

@@ -103,6 +103,9 @@ def tm00(modes: list[dict]) -> Optional[dict]:
     return max(tm, key=lambda m: m["neff"]) if tm else None
 
 
+PROFILE_NAMES = ("slab", "box_recess", "box_pedestal")      # profile.apply's structures
+
+
 def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
                        sidewall_deg: float = 90.0, sidewall_ref: str = "top",
                        snap: bool = False, snap_sides: int = 1) -> dict:
@@ -135,10 +138,14 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
 
     def two_cores(symmetry, offset=0.0):
         def make(sim):
+            # the profile's structures (slab, BOX recess, pedestal) belong to the one core at
+            # y = 0: taken out here and built again under both cores below (v0.2.0)
+            prof_st = {st.name: st for st in sim.structures if st.name in PROFILE_NAMES}
             kept = [st for st in sim.structures if st.name != "core_sloped" and not (
                 isinstance(st.geometry, td.Box) and abs(st.geometry.size[1] - W) < 1e-9
-                and abs(st.geometry.center[2] - H / 2) < 1e-9)]
-            if len(kept) == len(sim.structures):
+                and abs(st.geometry.center[2] - H / 2) < 1e-9) and st.name not in PROFILE_NAMES]
+            if len(kept) == len(sim.structures) - len(
+                    [st for st in sim.structures if st.name in PROFILE_NAMES]):
                 raise RuntimeError("core structure not found in the cross-section simulation")
             if sw.is_vertical(sidewall_deg):
                 cores = [td.Structure(geometry=td.Box(center=(0, sgn * shift / 2, H / 2),
@@ -163,10 +170,22 @@ def coupler_supermodes(ctx, H, W, gap, steps: Optional[int] = None,
                 pts = [p for sgn in (-1, 1) for p in sloped_snap_points(
                     W, H, sidewall_deg, sidewall_ref, y0=sgn * shift / 2, offset=offset)]
                 gs = gs.updated_copy(snapping_points=pts)
-            return sim.updated_copy(center=(sim.center[0], 0.0, sim.center[2]),
-                                    size=(sim.size[0], sim.size[1] + shift, sim.size[2]),
-                                    structures=kept + cores, symmetry=(0, symmetry, 0),
-                                    grid_spec=gs)
+            out = sim.updated_copy(center=(sim.center[0], 0.0, sim.center[2]),
+                                   size=(sim.size[0], sim.size[1] + shift, sim.size[2]),
+                                   structures=kept + cores, symmetry=(0, symmetry, 0),
+                                   grid_spec=gs)
+            if prof_st:
+                from tarang.waveguide.dispersion_mapping.profile import apply
+                prof = profile_of(cfg)
+                wb, _ = sw.core_widths(W, H, sidewall_deg, sidewall_ref)
+                ped = prof_st.get("box_pedestal")
+                out = apply(out, prof, width_bottom=wb, height=H, box=cfg.stack.box_height_um,
+                            core_medium=core_medium,
+                            box_medium=ped.medium if ped is not None else None,
+                            fill_medium=(prof_st["box_recess"].medium if "box_recess" in prof_st
+                                         else None),
+                            snap=snap, snap_offset=offset, y0=(-shift / 2, shift / 2))
+            return out
         return make
     wl = ctx.cfg.run.wavelength_um
     cfg = ctx.cfg
