@@ -1025,7 +1025,7 @@ def _gap_device(ctx: Context, gap_um: float):
                        top_cladding_medium=None if clad_is_air else ctx.medium(cfg.materials.cladding),
                        top_cladding_height=0.0 if clad_is_air else cfg.stack.cladding_height_um,
                        fine_steps_per_wvl=cfg.gap.fine_steps, coarse_steps_per_wvl=cfg.gap.coarse_steps,
-                       **gap_builder_options(cfg))
+                       **gap_builder_options(cfg, ctx.medium))
 
 
 def _rank_targets(rows, heights, widths, anomalous: bool = True, mode: str = "TE00") -> list[dict]:
@@ -1245,7 +1245,12 @@ def stage_gap(ctx: Context) -> dict:
                top_cladding_medium=None if clad_is_air else ctx.medium(cfg.materials.cladding),
                top_cladding_height=0.0 if clad_is_air else cfg.stack.cladding_height_um,
                fine_steps_per_wvl=fine, coarse_steps_per_wvl=coarse)
-    extra = gap_builder_options(cfg)
+    extra = gap_builder_options(cfg, ctx.medium)
+    if extra.get("profile"):
+        from tarang.waveguide.dispersion_mapping.profile import Profile
+        ui.say(f"  Cross-section profile under the ring and the bus: "
+               f"{Profile.from_record(extra['profile']).label()} (the ring-hole BOX pocket "
+               "is not used: the profile sets the BOX around the ring).")
     folder = ctx.out / "cloud" / "gap_sweep"
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -1352,7 +1357,8 @@ def stage_gap(ctx: Context) -> dict:
                 span_angle_deg=span, gaps_um=list(gaps), per_gap=per_gap, table=str(table),
                 figure=str(fig) if fig else None, estimated_cost=cost, folder=str(folder),
                 mesh_steps=[fine, coarse], band_points=int(cfg.gap.band_points),
-                ring_inner_box_recess_um=float(cfg.gap.ring_inner_box_recess_um),
+                ring_inner_box_recess_um=float(extra["inner_box_recess_um"]),
+                **({"cross_section_profile": extra["profile"]} if extra.get("profile") else {}),
                 coupled_mode_check=cmt or None,
                 recommend=dict(recommended=dict(critical_gap_um=g_crit, over_coupled_gap_um=g_over,
                                                 over_coupling=K),
@@ -1362,13 +1368,26 @@ def stage_gap(ctx: Context) -> dict:
                                    "K ≈ 1.5-2 is the usual compromise. Both gaps are drawn."))
 
 
-def gap_builder_options(cfg) -> dict:
+def gap_builder_options(cfg, medium=None) -> dict:
     """Partial-ring builder options from the gap settings: the BOX pocket inside the ring
     and the frequencies the ring-port monitors record (odd count, centred exactly on the
     design frequency, +/-8 %). The values of runs made before Phase 12 (0.1 um, one
-    frequency) give the builder's original simulation, bit for bit."""
+    frequency) give the builder's original simulation, bit for bit.
+
+    A cross-section profile ([stack] slab / recess / undercut) is built under the ring and
+    the bus (v0.2.0); it then sets the BOX around the ring, so the ring-hole pocket is not
+    used (0). ``medium``: key -> fitted medium, for a pedestal of another material."""
+    from tarang.design.config import profile_of
     g = cfg.gap
     opts = dict(inner_box_recess_um=float(g.ring_inner_box_recess_um))
+    prof = profile_of(cfg)
+    if not prof.is_default:
+        opts["inner_box_recess_um"] = 0.0
+        opts["profile"] = prof.record()
+        if prof.pedestal:
+            if medium is None:
+                raise ValueError("a pedestal material needs the design's media (medium=ctx.medium)")
+            opts["pedestal_medium"] = medium(prof.pedestal)
     if pump_mode(cfg) == "TM00":
         opts["mode_pol"] = "tm"                  # launch and record TM00 in the bus and ring
     n = int(g.band_points)

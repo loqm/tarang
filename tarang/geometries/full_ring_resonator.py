@@ -45,6 +45,8 @@ def get_passive_simulation(
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
     inner_box_recess_um: float = 0.1,  # air inside the ring reaches this deep into the BOX
+    profile=None,  # Cross-section profile (slab / BOX recess / undercut; a Profile or its record); None = plain strip, the simulation unchanged.
+    pedestal_medium: Optional[td.Medium] = None,  # Pedestal under a recessed core; None = the BOX medium.
 ) -> RingResonator:
     """
     Constructs a full-ring resonator passive simulation wrapped in a RingResonator object.
@@ -182,6 +184,13 @@ def get_passive_simulation(
         medium=air_medium,
     )
 
+    from tarang.waveguide.dispersion_mapping.profile import apply_3d
+    sim_passive = apply_3d(sim_passive, profile, height=wg_height, width_bottom=wg_width,
+                           features=("Ring_Outer", "Bus_Waveguide"),
+                           holes=("Ring_Inner_Hole",), box_name="Substrate",
+                           core_medium=core_medium, box_medium=box_medium,
+                           fill_medium=hole_medium, pedestal_medium=pedestal_medium)
+
     return RingResonator(
         sim=sim_passive,
         radius=radius,
@@ -226,6 +235,8 @@ def get_active_simulation(
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
     inner_box_recess_um: float = 0.1,  # air inside the ring reaches this deep into the BOX
+    profile=None,  # Cross-section profile (slab / BOX recess / undercut; a Profile or its record); None = plain strip, the simulation unchanged.
+    pedestal_medium: Optional[td.Medium] = None,  # Pedestal under a recessed core; None = the BOX medium.
 ) -> RingResonator:
     """Constructs an active full-ring simulation with mode sources and monitors across
     all cardinal points.
@@ -246,6 +257,8 @@ def get_active_simulation(
         wg_length=wg_length,
         run_time=run_time,
         inner_box_recess_um=inner_box_recess_um,
+        profile=profile,
+        pedestal_medium=pedestal_medium,
     )
 
     sim_passive = resonator_obj.sim

@@ -56,6 +56,8 @@ def get_passive_simulation(
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
     inner_box_recess_um: float = 0.1,  # Air pocket cut into the BOX inside the ring (um); 0.1 = before Phase 12, 0 = flat BOX.
+    profile=None,  # Cross-section profile (slab / BOX recess / undercut; a Profile or its record); None = plain strip, the simulation unchanged.
+    pedestal_medium: Optional[td.Medium] = None,  # Pedestal under a recessed core; None = the BOX medium.
 ) -> PartialRingResonator:
     """Constructs a passive simulation with the ring physically clipped to
     span_angle_rad.
@@ -240,6 +242,13 @@ def get_passive_simulation(
         medium=air_medium,
     )
 
+    from tarang.waveguide.dispersion_mapping.profile import apply_3d
+    sim_passive = apply_3d(sim_passive, profile, height=wg_height, width_bottom=wg_width,
+                           features=("Ring_Outer", "Bus_Waveguide"),
+                           holes=("Ring_Inner_Hole",), box_name="Substrate",
+                           core_medium=core_medium, box_medium=box_medium,
+                           fill_medium=hole_medium, pedestal_medium=pedestal_medium)
+
     return PartialRingResonator(
         span_angle_rad=span_angle_rad,
         sim=sim_passive,
@@ -288,6 +297,8 @@ def get_active_simulation(
     wg_length: Optional[float] = None,
     run_time: Optional[float] = None,  # Duration in seconds; None keeps the automatic estimate.
     inner_box_recess_um: float = 0.1,  # Air pocket in the BOX inside the ring (um); see get_passive_simulation.
+    profile=None,  # Cross-section profile (slab / BOX recess / undercut; a Profile or its record); None = plain strip, the simulation unchanged.
+    pedestal_medium: Optional[td.Medium] = None,  # Pedestal under a recessed core; None = the BOX medium.
     monitor_freqs=None,  # Frequencies (Hz) recorded by the mode monitors; None = the design wavelength only.
     mode_pol: Optional[str] = None,  # "tm": launch and record TM00 (the highest-index mostly-TM mode); None/"te": TE00 as before.
 ) -> PartialRingResonator:
@@ -324,6 +335,8 @@ def get_active_simulation(
         wg_length=wg_length,
         run_time=run_time,
         inner_box_recess_um=inner_box_recess_um,
+        profile=profile,
+        pedestal_medium=pedestal_medium,
     )
     sim = obj.sim
     frequency = td.C_0 / wavelength_um

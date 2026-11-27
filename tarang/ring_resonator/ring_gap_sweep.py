@@ -151,7 +151,9 @@ def bus_only_device(obj):
     import copy
 
     ref = copy.copy(obj)
-    kept = [s for s in obj.sim.structures if s.name not in RING_STRUCTURES]
+    # a cross-section profile adds '<ring name> pedestal' / 'recess' / 'slab': removed too
+    kept = [s for s in obj.sim.structures
+            if not any(s.name == r or str(s.name).startswith(r + " ") for r in RING_STRUCTURES)]
     if len(kept) == len(obj.sim.structures):
         raise ValueError(f"No ring structures {RING_STRUCTURES} found to remove for the "
                          "bus-only reference; use reference='source' with this builder.")

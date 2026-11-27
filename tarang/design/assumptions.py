@@ -110,9 +110,10 @@ def _profile_rows(cfg) -> list:
         return []
     return [dict(quantity="cross-section profile", value=p.label(), unit="",
                  source="your process",
-                 note="in every local mode solve (maps, check, ring dispersion, LLE inputs); "
-                      "the cloud ring, gap and grating simulations use the plain strip until "
-                      "a later v0.2.0 phase")]
+                 note="in every local mode solve (maps, check, ring dispersion, LLE inputs) "
+                      "and in the 3D cloud runs (ring-bus gap, taper, edge facet, focusing "
+                      "grating); the 2D grating runs are uniform across the width, so it does "
+                      "not enter them")]
 
 
 def _material_row(cfg, name: str, note: str) -> dict:

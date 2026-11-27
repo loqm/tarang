@@ -387,6 +387,10 @@ def write(ctx) -> dict:
               f"ring ports; inside the ring the air region reaches {recess:g} µm into the BOX"
               + (" (a recess the real full etch does not have; it touches only the ring's inner "
                  "side, not the gap)." if recess else " (no recess: the BOX top is flat).")]
+        if gap.get("cross_section_profile"):
+            from tarang.waveguide.dispersion_mapping.profile import Profile
+            L += ["", "Cross-section profile built under the ring and the bus in these 3D runs: "
+                  + Profile.from_record(gap["cross_section_profile"]).label() + "."]
         cmt = gap.get("coupled_mode_check") or st.get("checks", {}).get("coupled_mode_check") or {}
         if cmt.get("critical_gap_um"):
             L += ["", "**Independent check (coupled-mode theory, free).** The even and odd TE "
