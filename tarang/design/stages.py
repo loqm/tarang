@@ -172,10 +172,13 @@ class Context:
 
     def stack_args(self) -> list[str]:
         m, s = self.cfg.materials, self.cfg.stack
+        from tarang.design.config import profile_of
+        from tarang.waveguide.dispersion_mapping.profile import as_args
         return ["--core", m.core, "--substrate", m.box, "--cladding", m.cladding,
                 "--box", s.box_height_um, "--cladding-height", s.cladding_height_um,
                 *(["--snap", "--snap-sides", self.snap_sides] if self.cfg.cross_section.snap_grid
-                  else [])]
+                  else []),
+                *as_args(profile_of(self.cfg))]          # [] for a plain strip
 
     @property
     def snap_sides(self) -> int:
@@ -501,6 +504,56 @@ def _in_range(dotted: str):
     return lambda v: range_problem(dotted, v)
 
 
+def _profile_check(key: str):
+    """A form check of one cross-section profile setting: its value must be >= 0, the
+    slab thinner than the film, the recess shallower than the BOX (the checks that need a
+    core width run with each cross-section)."""
+    def check(v) -> str:
+        if v in (None, ""):
+            return ""
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return "a number in um"
+        if x < 0:
+            return "must be >= 0"
+        return ""
+    return check
+
+
+def _profile_settings(ctx) -> None:
+    """Stop with a clear message on a profile that cannot be built at all, and say which
+    profile the cross-sections carry."""
+    from tarang.design.config import SettingsError, profile_of
+    p = profile_of(ctx.cfg)
+    if p.is_default:
+        return
+    film = ctx.cfg.stack.core_height_um or 1e9
+    try:
+        p.check(width_bottom=1e9, height=film, box=float(ctx.cfg.stack.box_height_um))
+    except ValueError as e:
+        raise SettingsError(f"[stack] cross-section profile: {e}") from None
+    ctx.ui.say(f"Cross-section profile: {p.label()}. Every local mode solve of this design "
+               "uses it; the 3D cloud simulations (ring, gap, gratings) still use the plain "
+               "strip in this version.")
+
+
+def _stack_preview(ctx, H_fixed, heights, widths) -> None:
+    """The stack, drawn from the simulation the mode solver gets, before any solve: at the
+    fixed film (or the middle of the mapped heights) and the middle of the mapped widths."""
+    from tarang.design import stack
+    given = ctx.cfg.cross_section.height_um and ctx.cfg.cross_section.width_um
+    H = float(ctx.cfg.cross_section.height_um if given else
+              (H_fixed or sorted(heights)[len(heights) // 2]))
+    W = float(ctx.cfg.cross_section.width_um if given else sorted(widths)[len(widths) // 2])
+    note = "" if given else "a representative core of the map"
+    try:
+        stack.preview(ctx, H, W, ctx.path("figures", "2_stack.png"), note=note)
+    except ValueError as e:                     # a profile this core cannot take
+        from tarang.design.config import SettingsError
+        raise SettingsError(f"[stack] cross-section profile at {H:g} x {W:g} um: {e}") from None
+
+
 def _heights_default(cfg) -> list:
     wl, H, dH = cfg.run.wavelength_um, cfg.stack.core_height_um, cfg.cross_section.tolerance_height_um
     if H:
@@ -629,6 +682,13 @@ def stage_cross_section(ctx: Context) -> dict:
         dict(section="stack", key="core_height_um", check=_in_range("stack.core_height_um")),
         dict(section="stack", key="box_height_um", check=_in_range("stack.box_height_um")),
         dict(section="stack", key="cladding_height_um", show=clad_not_air),
+        dict(section="stack", key="slab_um", check=_profile_check("slab_um")),
+        dict(section="stack", key="slab_width_um", show=lambda c: bool(c.stack.slab_um),
+             check=_profile_check("slab_width_um")),
+        dict(section="stack", key="box_recess_um", check=_profile_check("box_recess_um")),
+        dict(section="stack", key="box_undercut_um", show=lambda c: bool(c.stack.box_recess_um),
+             check=_profile_check("box_undercut_um")),
+        dict(section="stack", key="pedestal_material", show=lambda c: bool(c.stack.box_recess_um)),
         dict(section="cross_section", key="tolerance_width_um"),
         dict(section="cross_section", key="tolerance_height_um"),
         dict(section="cross_section", key="heights_um", default=_heights_default, cast=parse_list,
@@ -656,6 +716,8 @@ def stage_cross_section(ctx: Context) -> dict:
     steps = ui.value(cfg, "cross_section", "map_steps", check=lambda v: "" if v >= 30 else
                      "use at least 30 (50 for maps)")
     ui.value(cfg, "run", "workers")
+    _profile_settings(ctx)
+    _stack_preview(ctx, H_fixed, heights, widths)
     loss_test = str(getattr(cfg.run, "goal", "comb_ring")) == "loss_test"
     given_hw = cfg.cross_section.height_um and cfg.cross_section.width_um
     if loss_test and given_hw:

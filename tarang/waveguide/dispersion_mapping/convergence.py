@@ -101,9 +101,10 @@ def snap_sides_of(r):
 
 
 def key(r):
+    from tarang.waveguide.dispersion_mapping.profile import of_record, tag
     return (round(r["H"], 4), round(r["W"], 4), r.get("bend_radius"), round(r.get("wl0", 1.55), 4),
             r.get("core", "si3n4"), r.get("substrate", "sio2"), r.get("cladding") or None,
-            bool(r.get("snap", False)), snap_sides_of(r))
+            bool(r.get("snap", False)), snap_sides_of(r), tag(of_record(r)))
 
 
 def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None, pump="TE00"):
@@ -140,7 +141,7 @@ def plot(data_path: Path, overwrite: bool, tol_pct: float, plots_dir=None, pump=
         Dref, neref, ngref = D[-1], ne[-1], ng[-1]
         bands = {q: mesh_band(dict(zip(S, y))) for q, y in (("D", D), ("neff", ne), ("ng", ng))}
         name = f"{H*1e3:.0f}×{W*1e3:.0f} nm" + (f", R = {R:g} µm" if R else " (straight)")
-        snapped = bool(_mat[-1]) if _mat else False
+        snapped = bool(_mat[3]) if len(_mat) > 3 else False   # key(): core, box, top, snap, ...
         label = name + ("" if snapped else ", not snapped")      # in the summary's legend
         fig, axs = plt.subplots(1, 3, figsize=(15, 4.6), dpi=140)
         for ax, y, q, lab, fmt in (
@@ -226,10 +227,15 @@ def main():
                     help="with --snap: 2 (default) averages two solves with the lines just "
                          "inside and just outside the core's faces (same result on every "
                          "computer); 1 reproduces results before v0.1.5")
+    from tarang.waveguide.dispersion_mapping import profile as xs_profile
+    xs_profile.add_args(ap)
     a = ap.parse_args()
+    prof = xs_profile.from_args(a)
     clad = None if str(a.cladding).lower() in ("", "air", "none") else a.cladding
     mat = dict(core=a.core, substrate=a.substrate, cladding=clad, box=a.box,
                cladding_height=a.cladding_height, snap=a.snap, snap_sides=a.snap_sides)
+    if not prof.is_default:
+        mat["profile"] = prof
     data = Path(a.data); data.parent.mkdir(parents=True, exist_ok=True)
 
     if not a.plot_only:
@@ -245,7 +251,7 @@ def main():
         jobs = [(H, W, s, a.bend_radius, a.wl, mat) for (H, W) in pts for s in steps
                 if (round(H, 4), round(W, 4), a.bend_radius, round(a.wl, 4),
                     a.core, a.substrate, clad, a.snap,
-                    (a.snap_sides if a.snap else 1), s) not in done]
+                    (a.snap_sides if a.snap else 1), xs_profile.tag(prof), s) not in done]
         print(f"{len(pts)} geometries x {len(steps)} meshes; {len(jobs)} runs to do "
               f"(finest meshes are slowest: ~1-3 min each at 90 steps).")
         if jobs:

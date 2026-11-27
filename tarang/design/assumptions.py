@@ -101,6 +101,20 @@ def preset(name: str) -> dict:
 
 
 
+def _profile_rows(cfg) -> list:
+    """The cross-section profile, when it is not a plain strip (tables of plain-strip
+    designs unchanged)."""
+    from tarang.design.config import profile_of
+    p = profile_of(cfg)
+    if p.is_default:
+        return []
+    return [dict(quantity="cross-section profile", value=p.label(), unit="",
+                 source="your process",
+                 note="in every local mode solve (maps, check, ring dispersion, LLE inputs); "
+                      "the cloud ring, gap and grating simulations use the plain strip until "
+                      "a later v0.2.0 phase")]
+
+
 def _material_row(cfg, name: str, note: str) -> dict:
     value, source = material_value(cfg, name)
     _, _, _, what, unit = MATERIAL_VALUES[name]
@@ -150,6 +164,7 @@ def table(cfg, results: Optional[dict] = None) -> list[dict]:
                                          "sloped walls"),
         dict(quantity="BOX thickness", value=s.box_height_um, unit="um", source="your wafer",
              note="Si handle below the BOX in the grating simulation"),
+        *_profile_rows(cfg),
         dict(quantity="smallest lithography feature", value=g.min_feature_um, unit="um",
              source="your process", note="grating teeth and grooves narrower than this are "
                                          "not simulated"),

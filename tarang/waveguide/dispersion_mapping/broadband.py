@@ -361,7 +361,10 @@ def main():
                     help="with --snap: 2 (default) averages two solves with the lines just "
                          "inside and just outside the core's faces (same result on every "
                          "computer); 1 reproduces results before v0.1.5")
+    from tarang.waveguide.dispersion_mapping import profile as xs_profile
+    xs_profile.add_args(ap)
     a = ap.parse_args()
+    prof = xs_profile.from_args(a)
     clad = None if str(a.cladding).lower() in ("", "air", "none") else a.cladding
     data = Path(a.data); data.parent.mkdir(parents=True, exist_ok=True)
     if not a.plot_only:
@@ -374,23 +377,27 @@ def main():
                         continue        # solved before A_eff was recorded: solve again (free)
                     done.add((r["H"], r["W"], r["bend_radius"], r["steps"], r.get("core", "si3n4"),
                               r.get("substrate", "sio2"), r.get("cladding") or None,
-                              bool(r.get("snap", False)), snap_sides_of(r), _mode(r)))
+                              bool(r.get("snap", False)), snap_sides_of(r), _mode(r),
+                              xs_profile.tag(xs_profile.of_record(r))))
         for tok in a.points.split(","):
             H, W = (round(float(v), 4) for v in tok.lower().split("x"))
             if (H, W, a.bend_radius, a.steps, a.core, a.substrate, clad, a.snap,
-                    (a.snap_sides if a.snap else 1), a.pump_mode) in done:
+                    (a.snap_sides if a.snap else 1), a.pump_mode, xs_profile.tag(prof)) in done:
                 print(f"skip {H}x{W} (done)"); continue
             t = time.time()
             try:
                 rec = solve_profile(H, W, a.wl_min, a.wl_max, a.nwl, a.steps, a.bend_radius,
                                     mat=dict(core=a.core, substrate=a.substrate, cladding=clad,
                                              box=a.box, cladding_height=a.cladding_height,
-                                             snap=a.snap, snap_sides=a.snap_sides),
+                                             snap=a.snap, snap_sides=a.snap_sides,
+                                             **({"profile": prof} if not prof.is_default else {})),
                                     pump=a.pump, mode=a.pump_mode)
             except Exception as e:
                 rec = dict(H=H, W=W, steps=a.steps, bend_radius=a.bend_radius,
                            error=f"{type(e).__name__}: {e}")
             rec["secs"] = round(time.time() - t, 1)
+            if not prof.is_default:
+                rec["profile"] = prof.record()
             with open(data, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
             print(f"{H}x{W} R={a.bend_radius}: {rec.get('error', 'ok')} ({rec['secs']}s)",

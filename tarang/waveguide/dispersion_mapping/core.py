@@ -104,7 +104,8 @@ def stack_label(core=DEFAULT_CORE, substrate=DEFAULT_SUBSTRATE, cladding=None, b
 def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
               substrate=DEFAULT_SUBSTRATE, cladding=None, cladding_height=2.0,
               n_shift=0.0, si_handle=False, si_thick=2.0, margin_y=2.0, band=None,
-              snap=False, sidewall_deg=90.0, sidewall_ref="top", snap_offset=0.0):
+              snap=False, sidewall_deg=90.0, sidewall_ref="top", snap_offset=0.0,
+              profile=None):
     """Tidy3D simulation of the cross-section (lengths in um). Materials are fitted over
     a range covering ``band`` (default wl0 +/- 0.1 um). ``snap``: grid lines through the
     four core edges, so the edges sit on cell faces at every mesh (without it, where an
@@ -112,7 +113,10 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
     etched walls (90 = vertical, the default and the only case before v0.1.3; < 90 the
     core widens downwards), ``width`` being the width at the ``sidewall_ref`` plane
     ('top', 'bottom' or 'middle'; see tarang.geometries.sidewall). ``snap_offset``: move
-    the snapped lines this far outside the core (negative: inside; see snap_offsets)."""
+    the snapped lines this far outside the core (negative: inside; see snap_offsets).
+    ``profile``: what the etch leaves around the core (a ``profile.Profile``: partial-etch
+    slab, BOX recess with undercut); None or the default profile is a plain strip and leaves
+    the simulation exactly as before v0.2.0."""
     lo, hi = band or (wl0 - 0.1, wl0 + 0.1)
     core_m = shifted(medium_for(core, lo, hi), n_shift, wl0)
     sub_m = medium_for(substrate, lo, hi)
@@ -138,6 +142,15 @@ def build_sim(height, width, *, wl0=1.55, steps=50, box=4.0, core=DEFAULT_CORE,
         sim = sim.updated_copy(center=(sim.center[0], sim.center[1], (z0_new + z1) / 2),
                                size=(sim.size[0], sim.size[1], z1 - z0_new),
                                structures=list(sim.structures) + [si])
+    if profile is not None and not profile.is_default:
+        from tarang.geometries import sidewall as sw
+        from tarang.waveguide.dispersion_mapping.profile import apply
+        wb, _ = sw.core_widths(width, height, sidewall_deg, sidewall_ref)
+        sim = apply(sim, profile, width_bottom=wb, height=height, box=box,
+                    core_medium=core_m, box_medium=sub_m, fill_medium=top_m,
+                    pedestal_medium=(medium_for(profile.pedestal, lo, hi)
+                                     if profile.pedestal else None),
+                    snap=snap, snap_offset=snap_offset)
     return sim
 
 
@@ -251,7 +264,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                 si_handle: bool = False, pml: int = 0,
                 bend_radius: float | None = None, snap: bool = False,
                 sidewall_deg: float = 90.0, sidewall_ref: str = "top",
-                snap_sides: int = SNAP_SIDES) -> dict:
+                snap_sides: int = SNAP_SIDES, profile=None) -> dict:
     """Analyse one cross-section.
 
     core / substrate / cladding : media.json keys (cladding None or "air" = air top)
@@ -268,6 +281,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                   just outside the faces, and every number is the mean of the two
                   (see snap_offsets). The record keeps both values of D and n_g
                   (``snap_split``).
+    profile     : partial-etch slab or BOX recess with undercut (see profile.Profile); the
+                  record keeps it under ``profile`` (absent for a plain strip)
     """
     bent = bend_radius is not None
     if bent or si_handle:
@@ -287,7 +302,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                         substrate=substrate, cladding=cladding, cladding_height=cladding_height,
                         n_shift=n_shift, si_handle=si_handle, margin_y=(3.0 if bent else 2.0),
                         band=(lo, hi), snap=snap, sidewall_deg=sidewall_deg,
-                        sidewall_ref=sidewall_ref, snap_offset=offset)
+                        sidewall_ref=sidewall_ref, snap_offset=offset, profile=profile)
         plane = td.Box(center=(0, 0, sim.center[2]), size=(0, sim.size[1], sim.size[2]))
         data = ModeSolver(simulation=sim, plane=plane, freqs=td.C_0 / wls,
                           mode_spec=td.ModeSpec(**spec_kw)).solve()
@@ -367,7 +382,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     modes.sort(key=lambda d: -d["neff"])
     te_like = [d for d in modes if d["te_frac"] >= 0.5]
     tm_like = [d for d in modes if d["te_frac"] < 0.5]
-    return dict(
+    rec = dict(
         H=round(height, 4), W=round(width, 4), wl0=wl0, steps=steps, snap=bool(snap),
         snap_sides=(int(snap_sides) if snap else 1), snap_split=split,
         core=core, substrate=substrate, cladding=(None if is_air(cladding) else cladding),
@@ -397,3 +412,6 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                          if len(tm_like) > 1 else None),
         modes=modes,
     )
+    if profile is not None and not profile.is_default:
+        rec["profile"] = profile.record()           # plain strips: records as before
+    return rec

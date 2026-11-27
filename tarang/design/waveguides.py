@@ -30,6 +30,8 @@ from typing import Optional
 
 import numpy as np
 
+from tarang.design.config import profile_of
+
 DB = 10 / math.log(10)
 
 
@@ -73,7 +75,7 @@ def bend_loss_db_cm(ctx, H: float, W: float, R: float) -> Optional[float]:
     sim = dm.build_sim(H, W, wl0=wl, steps=cfg.cross_section.map_steps, box=cfg.stack.box_height_um,
                        core=cfg.materials.core, substrate=cfg.materials.box,
                        cladding=cfg.materials.cladding, cladding_height=cfg.stack.cladding_height_um,
-                       band=ctx.band, margin_y=margin)
+                       band=ctx.band, margin_y=margin, profile=profile_of(cfg))
     plane = td.Box(center=(0, sim.center[1], sim.center[2]), size=(0, sim.size[1], sim.size[2]))
 
     def solve(**kw):

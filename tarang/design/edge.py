@@ -51,6 +51,8 @@ from typing import Optional
 
 import numpy as np
 
+from tarang.design.config import profile_of
+
 from tarang.design.taper import (PROFILES, eim_taper, loss_at, rise_db, shortest_length,
                                  slab_index_te)
 
@@ -148,7 +150,7 @@ def facet_mode(ctx, width: float, wl: Optional[float] = None, steps: Optional[in
                        box=cfg.stack.box_height_um, core=cfg.materials.core,
                        substrate=cfg.materials.box, cladding=cfg.materials.cladding,
                        cladding_height=cfg.stack.cladding_height_um, band=ctx.band,
-                       margin_y=3.0, si_handle=handle)
+                       margin_y=3.0, si_handle=handle, profile=profile_of(cfg))
     n_slab = slab_index_te(ctx.n(cfg.materials.core), ctx.n(cfg.materials.box),
                            1.0 if str(cfg.materials.cladding).lower() == "air"
                            else ctx.n(cfg.materials.cladding), H, wl)

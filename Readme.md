@@ -93,6 +93,7 @@ Settle a geometry in the blue stages before running orange ones.
 | Waveguide | *n*<sub>eff</sub>, TE/TM labels, *D* [ps/(nm·km)], Γ, *A*<sub>eff</sub> | `tarang.waveguide.RidgeWaveguide` |
 | Waveguide sweeps | Width × height maps of modes, dispersion, confinement | `tarang.waveguide.modes_in_geometry`, `dispersion_in_geometry`, `confinement_in_geometry` |
 | Dispersion mapping | Converged *D* maps, *D*(λ), *D*<sub>int</sub>, finalist reports (command line); two-sided grid snapping makes *D* reproducible to better than 1 ps/(nm·km) on any computer | `tarang.waveguide.dispersion_mapping` ([README](tarang/waveguide/dispersion_mapping/README.md)) |
+| Cross-section profile | Optional partial-etch slab (rib, or a pedestal of core material) and BOX recess with undercut and its own pedestal material, in every mode solve; the stack drawn from the solver's own simulation before any solve | `[stack]` in `design.toml`; `--slab`, `--recess`, `--undercut`, `--pedestal` ([USER_GUIDE](docs/USER_GUIDE.md#cross-section)) |
 | Rings | Full, half and partial rings; FSR, group index, mode fluxes | `tarang.ring_resonator.RingResonator`, `HalfRingResonator`, `PartialRingResonator` |
 | Ring radius | Bend loss over arc angles, *Q*<sub>int</sub>, FSR | `tarang.ring_resonator.ring_radius_sweep.radius_sweep` |
 | Ring–bus gap | Coupling against gap, critical-coupling gap | `tarang.ring_resonator.ring_gap_sweep.ring_gap_sweep`, `radius_gap_sweep` |
@@ -554,6 +555,10 @@ python -m tarang.migrate path/to/your/scripts --write    # apply
 
   ring's inner side only; the gap is unaffected). It is kept so cached gap results stay
   valid, and noted in the design report and benchmark pack.
+- **Cross-section profiles reach the local mode solves only (v0.2.0 development).** A slab or
+  BOX recess changes the map, the check, the ring's dispersion and the LLE inputs; the 3D
+  cloud simulations of the ring, gap and gratings still use the plain strip, as the
+  assumptions table states. A slab and a recess cannot be combined in one design.
 - The whole-device spectrum is a circuit model: each part comes from its own simulation
 
   and the parts are joined by their scattering matrices. Backscattering inside the ring

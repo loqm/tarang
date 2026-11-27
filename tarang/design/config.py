@@ -66,6 +66,19 @@ class Stack:
                                                "you ordered); leave empty to map heights", "um")
     box_height_um: float = _f(4.0, "Buried oxide thickness", "um")
     cladding_height_um: float = _f(2.0, "Top cladding thickness (ignored for air)", "um")
+    slab_um: float = _f(0.0, "Partial etch: thickness of core material left under and beside "
+                             "the core (a rib or ridge waveguide; 0 = etched through to the "
+                             "BOX). The core film keeps its full thickness", "um")
+    slab_width_um: Optional[float] = _f(None, "Width of that slab, centred under the core "
+                                              "(a pedestal of core material); empty = across "
+                                              "the whole chip", "um")
+    box_recess_um: float = _f(0.0, "BOX etched down this deep beside the core (an oxide window, "
+                                   "as in Applied Nanotools' air-clad process); 0 = flat BOX", "um")
+    box_undercut_um: float = _f(0.0, "How far that etch reaches back under each core edge (the "
+                                     "core stands on a pedestal this much narrower on each side; "
+                                     "an isotropic etch: equal to the recess)", "um")
+    pedestal_material: str = _f("", "Material of that pedestal (media.json key); empty = the BOX "
+                                    "material")
 
 
 @dataclass
@@ -399,6 +412,8 @@ class Device:
 # the legacy value is used (so saved simulations stay valid), and the stage's settings key
 # leaves it out (so the stage is not repeated).
 LEGACY = {"cross_section": {"snap_grid": False, "pump_mode": "TE00", "snap_sides": 1},
+          "stack": {"slab_um": 0.0, "slab_width_um": None, "box_recess_um": 0.0,
+                    "box_undercut_um": 0.0, "pedestal_material": ""},
           "checks": {"angle_sweep_deg": [], "grating_mesh_ladder": [], "sidewall_sweep_deg": [],
                      "sidewall_grating_deg": [], "sidewall_reference": "top",
                      "ladder_boundary": ""},
@@ -600,3 +615,15 @@ def implausible(cfg: "DesignConfig") -> dict[str, str]:
         out["cross_section.pump_mode"] = (f"Pump mode {cfg.cross_section.pump_mode!r}: use "
                                           "TE00 or TM00.")
     return out
+
+
+def profile_of(cfg):
+    """The cross-section profile of the design settings ([stack] slab, recess, undercut,
+    pedestal); the default profile (a plain strip) when none is set."""
+    from tarang.waveguide.dispersion_mapping.profile import Profile
+    st = cfg.stack
+    return Profile(slab_um=float(st.slab_um or 0.0),
+                   slab_width_um=(None if st.slab_width_um in (None, "") else float(st.slab_width_um)),
+                   recess_um=float(st.box_recess_um or 0.0),
+                   undercut_um=float(st.box_undercut_um or 0.0),
+                   pedestal=str(st.pedestal_material or ""))
