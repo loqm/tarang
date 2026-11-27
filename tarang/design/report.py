@@ -56,19 +56,23 @@ def _enrich_cross_section(ctx, xs: dict) -> dict:
     return xs
 
 
-def threshold_mw(xs: dict, ring: dict, n2: float, K: float = 1.0) -> float | None:
+def threshold_mw(xs: dict, ring: dict, n2: float, K: float = 1.0,
+                 gamma: float | None = None) -> float | None:
     """Comparative parametric-oscillation threshold (mW) of the ring at coupling ratio K
-    (1 = critical): 1.54 (pi/2) (Q_c / 2Q_L) n_eff^2 V / (n2 lambda Q_L^2), V = A_eff 2 pi R."""
+    (1 = critical): 1.54 (pi/2) (Q_c / 2Q_L) n_eff^2 V / (n2 lambda Q_L^2), V = A_eff 2 pi R;
+    with ``gamma`` (the vectorial coefficient) n2 / A_eff = gamma lambda / (2 pi)."""
     try:
         qi, aeff, n = ring["q_intrinsic"], xs["aeff_um2"], xs["n_eff"]
-        lam = ring.get("wavelength_um", 1.55)
+        lam = ring["wavelength_um"]
     except (KeyError, TypeError):
         return None
     if not (qi and aeff and n):
         return None
     ql, qc = qi / (1 + K), qi / K
-    V = aeff * 1e-12 * 2 * math.pi * ring["radius_um"] * 1e-6
-    return 1e3 * 1.54 * (math.pi / 2) * (qc / (2 * ql)) * n ** 2 * V / (n2 * lam * 1e-6 * ql ** 2)
+    n2_per_area = gamma * lam * 1e-6 / (2 * math.pi) if gamma else n2 / (aeff * 1e-12)
+    L = 2 * math.pi * ring["radius_um"] * 1e-6
+    return 1e3 * 1.54 * (math.pi / 2) * (qc / (2 * ql)) * n ** 2 * L / (n2_per_area * lam * 1e-6
+                                                                          * ql ** 2)
 
 
 def known_limits(cfg) -> list[str]:
@@ -185,9 +189,11 @@ def write(ctx) -> dict:
             xs = dict(xs, figure=str(fig))
     from tarang.design.assumptions import material_value
     n2 = material_value(cfg, "n2")[0]
-    pth_c = threshold_mw(xs, ring, n2, 1.0) if xs and ring and n2 else None
+    lle_res = (lay or {}).get("lle") or {}
+    g_vec = lle_res.get("gamma_per_W_m") if lle_res.get("gamma_model") == "vectorial" else None
+    pth_c = threshold_mw(xs, ring, n2, 1.0, gamma=g_vec) if xs and ring and n2 else None
     K = gap.get("over_coupling") if gap and not gap.get("skipped") else None
-    pth_o = threshold_mw(xs, ring, n2, K) if K and K != 1 and pth_c else None
+    pth_o = threshold_mw(xs, ring, n2, K, gamma=g_vec) if K and K != 1 and pth_c else None
     gap_ok = gap and not gap.get("skipped")
     gc_ok = gc and not gc.get("skipped")
 
@@ -277,7 +283,9 @@ def write(ctx) -> dict:
               f"| D over the tolerance box | {xs['D_min_tol']:.1f} to {xs['D_max_tol']:.1f} ps/(nm·km) |",
               f"| n_eff / n_g ({pm}) | {xs['n_eff']:.5f} / {xs['n_group']:.4f} |",
               f"| effective area A_eff | {xs.get('aeff_um2')} µm² |",
-              f"| guided TE / TM modes | {xs['guided_TE']} / {xs['guided_TM']} |",
+              f"| guided TE / TM modes | {xs['guided_TE']} / {xs['guided_TM']}"
+              + (f" (by field: {xs['guided_total']}: {', '.join(xs['guided_families'])})"
+                 if xs.get("guided_families") else "") + " |",
               f"| TE00/TM00 index split | {'-' if xs.get('te_tm_split') is None else round(xs['te_tm_split'], 4)} |",
               f"| whole tolerance box anomalous + single-mode | "
               f"{'yes' if xs['tolerance_box_target'] else 'no'} |",
@@ -1081,7 +1089,18 @@ def _lle_section(ctx, lle: dict | None) -> list[str]:
          "a block in pyLLE's names), `pyLLE_dispersion.csv` (mode number, resonance frequency; "
          "pyLLE's dispersion-file format) and `integrated_dispersion.csv` (D_int(μ)).", ""]
     if lle.get("gamma_per_W_m"):
-        L.append(f"- nonlinear coefficient γ = 2π n₂ / (λ A_eff) = {lle['gamma_per_W_m']:.2f} /(W·m)")
+        if lle.get("gamma_model") == "vectorial":
+            sh = lle.get("gamma_shares") or {}
+            L.append(f"- nonlinear coefficient γ = {lle['gamma_per_W_m']:.3f} /(W·m), full-vectorial "
+                     "with each material's n₂ (Afshar and Monro 2009); core-only "
+                     f"2π n₂/(λ A_eff) = {lle['gamma_core_only_per_W_m']:.3f} /(W·m)"
+                     + (" (ratio " + f"{lle['gamma_per_W_m'] / lle['gamma_core_only_per_W_m']:.3f})"
+                        if lle.get("gamma_core_only_per_W_m") else "")
+                     + (". Shares: " + ", ".join(f"{k} {100 * v:.1f} %" for k, v in sh.items()
+                                                 if v == v) if sh else ""))
+        else:
+            L.append(f"- nonlinear coefficient γ = 2π n₂ / (λ A_eff) = {lle['gamma_per_W_m']:.2f} /(W·m)"
+                     " (core-only, `gamma_model = \"core\"`)")
     d = lle.get("dispersion")
     if d:
         L.append(f"- pump mode m = {d['pump_mode_number']} at {d['f_pump_Hz'] / 1e12:.3f} THz; "

@@ -333,6 +333,10 @@ class Assumptions:
     dn_dT_core_per_K: Optional[float] = _f(None, "Thermo-optic coefficient of the core (default: "
                                                  "the core material's published value; Si3N4 "
                                                  "2.45e-5)", "1/K")
+    gamma_model: str = _f("vectorial", "Nonlinear coefficient: 'vectorial' (full-vectorial, "
+                                       "with each material's n2 where the field is: Afshar and "
+                                       "Monro 2009) or 'core' (2 pi n2 / (lambda A_eff) with the "
+                                       "core's n2, as before v0.2.0)")
     dn_dT_box_per_K: Optional[float] = _f(None, "Thermo-optic coefficient of the BOX (default: the "
                                                 "BOX material's published value; SiO2 0.95e-5)",
                                           "1/K")
@@ -614,6 +618,9 @@ def implausible(cfg: "DesignConfig") -> dict[str, str]:
     if pm not in ("TE00", "TM00"):
         out["cross_section.pump_mode"] = (f"Pump mode {cfg.cross_section.pump_mode!r}: use "
                                           "TE00 or TM00.")
+    gm = str(getattr(cfg.assumptions, "gamma_model", "vectorial"))
+    if gm not in ("vectorial", "core"):
+        out["assumptions.gamma_model"] = (f"gamma_model {gm!r}: use 'vectorial' or 'core'.")
     return out
 
 

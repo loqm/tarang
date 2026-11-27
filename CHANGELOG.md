@@ -10,6 +10,24 @@ breaking changes; they are announced here first).
 Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N4 only.
 
 ### Added
+- **Full-vectorial nonlinear coefficient** (`[assumptions] gamma_model = "vectorial"`, the
+  default; `tarang/waveguide/dispersion_mapping/nonlinear.py`): γ of Afshar and Monro,
+  Opt. Express 17, 2298 (2009), Eq. 39, with each material's n₂ where the field is, from one
+  local mode solve of the pump mode at the design's mesh, snapping and profile (saved in
+  `results/nonlinear_overlaps.json`, reused while those stay the same). It sets the LLE
+  inputs (`gamma_per_W_m`, pyLLE's `gamma`) and the threshold (n₂/A_eff = γλ/2π); the
+  core-only 2πn₂/(λA_eff) is written beside it, with each material's share. For the 1550 nm
+  and 780 nm Si₃N₄ designs γ is 1.378 and 1.377 times the core-only value (1.797 and 14.52
+  /(W·m) against 1.304 and 10.55), so their thresholds are 27 % lower; silica's n₂ adds
+  0.08 %. `gamma_model = "core"` reproduces earlier versions. Only the layout, device and
+  report stages are repeated (local); the cross-section, ring, gap and cloud stages keep
+  their keys. The layout stage now also reruns when `n2_m2_w` changes.
+- **Guided modes by family**: each mode at the pump is named from its field (dominant
+  transverse component and its nodes across width and height); records carry
+  `guided_total`, `guided_families` and `guided_one_side`, shown with the TE/TM counts.
+  For the ANT window cross-sections (H 400 nm, 780 nm): W 0.50 um TE00, TM00 and TM10 just
+  at its cutoff (guided on one snapping side only, flagged); 0.55 um TE00, TM00, TM10;
+  0.60 um TE00, TM00, TM10, TE10.
 - **Cross-section profile** (`[stack]`, all optional, default off;
   `tarang/waveguide/dispersion_mapping/profile.py`): a partial-etch slab of core material
   (`slab_um`; across the chip for a rib, or `slab_width_um` wide for a pedestal such as the
@@ -53,6 +71,22 @@ Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N
   the design.
 
 ### Changed
+- **One mesh-index rule for "cells per wavelength in the core"**
+  (`tarang.geometries._modes.mesh_index`): 2.0 for cores up to n = 2.1, the core's own
+  index above it. The ring and gap geometries read an attribute fitted media do not have
+  and always fell back to 2.0, and the focusing check assumed 2.0: right for Si3N4, but a GaP
+  or AlGaAs core got cells about 50 % larger than asked. Si3N4 and Ta2O5 simulations, and
+  their cloud fingerprints, are unchanged.
+- **Default map and gap ranges follow the index contrast**: scaled by
+  sqrt(2² − n_box²) / sqrt(n_core² − n_box²) when that is below 0.85 (GaP 0.51, AlGaAs 0.47),
+  so a high-index core's anomalous region is inside the default map. Si3N4 and Ta2O5 keep
+  the ranges of earlier versions.
+- **Command-line `--n2`** (`report`, `maps`): defaults to the published n₂ of the records'
+  core (`tarang/media/materials.json`) instead of Si3N4's, and asks for it when none is
+  recorded.
+- **No silent fall-backs**: the whole-device stage needs the cross-section's group index
+  (it used 2.0 when missing); the report's threshold needs the ring's wavelength (it used
+  1550 nm).
 - **Designs without a profile are unchanged**: no simulation, settings key, command or
   result record changes (the new settings at their defaults are left out of the keys).
 - **`[assumptions] n2_m2_w`, `dn_dT_core_per_K` and `dn_dT_box_per_K` default to the
@@ -65,6 +99,16 @@ Work towards v0.2.0: TARANG for any isotropic strip-waveguide platform, not Si3N
   assumptions table shows each value's source.
 
 ### Fixed
+- **Two-sided snapping averaged different modes near cutoff.** The mode lists of the two
+  snapping sides were averaged rank by rank; where a mode is just above cutoff on one side
+  and absent on the other, two different modes were averaged into one. For the ANT scan at
+  W 0.50 um, d = 0 (H 400 nm, 780 nm) TM10 (1.4682, one side) and a TE01 below cutoff
+  (1.4513, other side) became a 'second guided TE mode' at 1.4598 (guided_TE 2 against 1
+  at 0.55 um). Modes are now paired by family and nearest n_eff; a mode found on one side
+  keeps its own values and is flagged (`one_side`). Only the higher-order mode lists and
+  guided counts can change; the fundamental modes, D, n_g, A_eff and every other number
+  are computed as before. Maps solved before v0.2.0 keep their records; a new solve (or
+  `--redo cross_section`) uses the pairing.
 - **Mesh-check figures of unsnapped runs said "snapped".** `convergence.py` read the
   snapping flag from the last field of a group's key, which held the number of snap sides
   (never 0), so every run was labelled snapped. It now reads the flag itself; snapped

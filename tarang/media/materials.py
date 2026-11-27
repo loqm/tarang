@@ -10,7 +10,7 @@ to another material's number.
 A material given as your own CSV file has no entry here; its properties come from your
 settings only.
 
-Exposes: info(), known(), two_photon_edge_um(), H_EV_UM.
+Exposes: info(), known(), two_photon_edge_um(), table_index(), H_EV_UM.
 """
 from __future__ import annotations
 
@@ -81,3 +81,33 @@ def two_photon_edge_um(band_gap_ev: float) -> float:
     """Longest wavelength at which two photons together bridge the band gap
     (2 h c / λ >= E_g): two-photon absorption is possible below it."""
     return 2 * H_EV_UM / float(band_gap_ev)
+
+
+def table_index(key, wl_um: float) -> Optional[float]:
+    """Real index of a material at wl_um straight from its table (linear interpolation, no
+    fit): for quick estimates such as default ranges. None for air-like or unreadable keys."""
+    import numpy as np
+    k = str(key or "").strip()
+    if k.lower() in {"air", "none", ""}:
+        return 1.0
+    try:
+        from tarang.media.medium_helper import _material_path
+        data = np.genfromtxt(_material_path(k), delimiter=",", names=True)
+        wl = np.asarray(data[data.dtype.names[0]], dtype=float)
+        n = np.asarray(data["n"], dtype=float)
+        order = np.argsort(wl)
+        return float(np.interp(float(wl_um), wl[order], n[order]))
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
+def n2_of_core(core, given: Optional[float] = None, what: str = "--n2") -> float:
+    """The Kerr index a command-line tool uses: ``given`` if set, else the published value of
+    the core material its records were solved with; SystemExit naming ``what`` otherwise
+    (never another material's value)."""
+    if given is not None:
+        return float(given)
+    inf = info(core)
+    if inf is not None and inf.n2_m2_w:
+        return float(inf.n2_m2_w)
+    raise SystemExit(f"No Kerr index recorded for core {core!r}: give {what} (m^2/W).")

@@ -597,7 +597,10 @@ def cutback_device(ctx) -> dict:
     budget, refl_src = coupler_reflection(ctx)
     use_refl = bool(cfg.device.reflections) and bool(budget.get("reflected"))
     wl0 = cfg.run.wavelength_um
-    n_g = float(xs.get("n_group") or 2.0)
+    if not xs.get("n_group"):
+        ui.say("  Needs the cross-section's group index (cross-section stage); not run.")
+        return dict(skipped=True)
+    n_g = float(xs["n_group"])
     lengths = [(0.0 if x == 0 else float(x)) for x in wg["lengths_cm"]]
     from tarang.design.layout import bus_length_um
     L_ref_cm = bus_length_um(ctx) * 1e-4
