@@ -354,6 +354,7 @@ def test_lle_inputs_are_written_in_pylle_format(tmp_path):
     from tarang.design import lle
     from tarang.waveguide.dispersion_mapping.broadband import analyse
     ctx = _ctx(tmp_path)
+    ctx.cfg.assumptions.gamma_model = "core"      # the core-only form (v0.2.0: test_v020_gamma)
     _broadband(ctx)
     r = lle.export(ctx)
     assert r and len(r["files"]) == 3

@@ -213,6 +213,65 @@ def _te_frac(data, m: int, f: int) -> float:
     return float(ey.sum() / (ey.sum() + ez.sum() + 1e-30))
 
 
+def _nodes(line: np.ndarray, floor: float = 0.1) -> int:
+    """Sign changes of a real field line, counting only samples above ``floor`` of its peak
+    (so the evanescent tails' noise is not counted as nodes)."""
+    peak = float(np.max(np.abs(line))) if line.size else 0.0
+    if peak == 0.0:
+        return 0
+    signs = np.sign(line[np.abs(line) > floor * peak])
+    return int(np.sum(signs[1:] != signs[:-1]))
+
+
+def _family(data, m: int, f: int) -> str:
+    """Mode family from the field itself: the dominant transverse component (Ey: TE, Ez: TM)
+    and its nodes across the width (y) and the height (z) through its peak, e.g. 'TE10'.
+    Unlike the TE/TM fraction alone this keeps a mode's identity where strong hybridisation
+    makes the fraction cross 0.5."""
+    tf = _te_frac(data, m, f)
+    comp = np.squeeze((data.Ey if tf > 0.5 else data.Ez).isel(mode_index=m, f=f).values)
+    if comp.ndim != 2:
+        return ("TE" if tf > 0.5 else "TM") + "??"
+    i, j = np.unravel_index(int(np.argmax(np.abs(comp))), comp.shape)
+    a = np.real(comp * np.exp(-1j * np.angle(comp[i, j])))
+    return f"{'TE' if tf > 0.5 else 'TM'}{_nodes(a[:, j])}{_nodes(a[i, :])}"
+
+
+#: largest |n_eff| difference of one mode between the two snapping sides (the sides move
+#: the core faces by about one cell: 0.01-0.02 at 50 steps per wavelength)
+PAIR_DN = 0.03
+
+
+def _pair_modes(side_modes: list) -> list:
+    """One list of (n_eff, te_frac, family, on_both_sides) from each snapping side's modes
+    [(n_eff, te_frac, family)], pairing the same mode on the two sides by its family and the
+    nearest n_eff (within PAIR_DN) before averaging. Pairing by rank, as before v0.2.0,
+    averaged two different modes where one side has a mode just above cutoff that the other
+    does not (e.g. TM10 of a 400 x 500 nm Si3N4 core at 780 nm: 1.4682 on one side, absent on
+    the other, so a TE01 substrate-like mode at 1.4513 was averaged with it into a 'guided TE'
+    mode at 1.4598). A mode found on one side only keeps that side's values."""
+    if len(side_modes) == 1:
+        return [(n, tf, fam, True) for n, tf, fam in side_modes[0]]
+    a, b = side_modes
+    # tolerance: at least PAIR_DN, and three times the sides' difference of the fundamental
+    # (a coarse mesh moves every mode more)
+    tol = PAIR_DN
+    if a and b:
+        tol = max(PAIR_DN, 3 * abs(max(t[0] for t in a) - max(t[0] for t in b)))
+    free = list(range(len(b)))
+    out = []
+    for n, tf, fam in a:
+        cand = [j for j in free if b[j][2] == fam and abs(b[j][0] - n) <= tol]
+        if cand:
+            j = min(cand, key=lambda k: abs(b[k][0] - n))
+            free.remove(j)
+            out.append(((n + b[j][0]) / 2, (tf + b[j][1]) / 2, fam, True))
+        else:
+            out.append((n, tf, fam, False))
+    out += [(b[j][0], b[j][1], b[j][2], False) for j in free]
+    return sorted(out, key=lambda t: -t[0])
+
+
 def _pol(tf: float) -> str:
     return "TE" if tf > 0.6 else ("TM" if tf < 0.4 else "hybrid")
 
@@ -342,7 +401,8 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
                     float(np.sum(E2 * dA * in_core) / np.sum(E2 * dA)))
 
         modes = sorted(((float(np.real(data.n_eff.isel(f=fc, mode_index=m))),
-                         _te_frac(data, m, fc)) for m in range(num_modes)), key=lambda t: -t[0])
+                         _te_frac(data, m, fc), _family(data, m, fc)) for m in range(num_modes)),
+                       key=lambda t: -t[0])
         return dict(te0=np.array(te0), tm0=np.array(tm0), te_nums=mode_numbers(m_te0),
                     tm_nums=mode_numbers(m_tm0), modes=modes)
 
@@ -358,9 +418,7 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     tm0 = np.mean([s["tm0"] for s in sides], axis=0)
     loss_db_cm, aeff, gamma_core = (mean([s["te_nums"][i] for s in sides]) for i in range(3))
     loss_tm, aeff_tm, gamma_tm = (mean([s["tm_nums"][i] for s in sides]) for i in range(3))
-    n_modes = min(len(s["modes"]) for s in sides)
-    raw_modes = [(mean([s["modes"][i][0] for s in sides]), mean([s["modes"][i][1] for s in sides]))
-                 for i in range(n_modes)]
+    raw_modes = _pair_modes([s["modes"] for s in sides])
     D_te, b2_te, ng_te, res_te = dispersion_from_neff(wls, te0, wl0)
     D_tm, b2_tm, ng_tm, res_tm = dispersion_from_neff(wls, tm0, wl0)
     split = None
@@ -376,9 +434,12 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
     n_top = 1.0 if is_air(cladding) else n_of(medium_for(cladding, lo, hi), wl0)
     n_cut = max(n_sub, n_top)
     modes = []
-    for n, tf in raw_modes:
-        modes.append(dict(neff=round(n, 5), te_frac=round(tf, 3), pol=_pol(tf),
-                          guided=bool(n > n_cut), guided_margin=bool(n > n_cut + margin)))
+    for n, tf, fam, both in raw_modes:
+        d = dict(neff=round(n, 5), te_frac=round(tf, 3), pol=_pol(tf), family=fam,
+                 guided=bool(n > n_cut), guided_margin=bool(n > n_cut + margin))
+        if not both:
+            d["one_side"] = True          # found on one snapping side only (near its cutoff)
+        modes.append(d)
     modes.sort(key=lambda d: -d["neff"])
     te_like = [d for d in modes if d["te_frac"] >= 0.5]
     tm_like = [d for d in modes if d["te_frac"] < 0.5]
@@ -406,6 +467,9 @@ def solve_point(height: float, width: float, *, wl0: float = 1.55, span: float =
         guided_TE_margin=sum(1 for d in te_like if d["guided_margin"]),
         guided_TM_margin=sum(1 for d in tm_like if d["guided_margin"]),
         guided_counts_valid=not bent,
+        guided_total=sum(1 for d in modes if d["guided"]),
+        guided_families=[d["family"] for d in modes if d["guided"]],
+        guided_one_side=[d["family"] for d in modes if d["guided"] and d.get("one_side")],
         te0_gap_to_next=(round(te_like[0]["neff"] - te_like[1]["neff"], 5)
                          if len(te_like) > 1 else None),
         tm0_gap_to_next=(round(tm_like[0]["neff"] - tm_like[1]["neff"], 5)

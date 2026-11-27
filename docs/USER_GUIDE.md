@@ -428,7 +428,25 @@ So quote D as the mesh check's **median ± spread** (report, key numbers and
   D_int panel and listed in the report (to first order: the Kerr shift moves them slightly
   towards the pump).
 - **Effective area and Kerr coefficient over the band:** A_eff(λ) and γ(λ) = 2π n₂ /
-  (λ A_eff) of TE00 (`figures/3_dispersion_profile/gamma_*.png`).
+  (λ A_eff) of TE00 (`figures/3_dispersion_profile/gamma_*.png`), the core-only form, for
+  comparing geometries.
+- **The γ of the design (LLE inputs, threshold).** Since v0.2.0 the full-vectorial
+  coefficient (Afshar and Monro, Opt. Express 17, 2298 (2009), Eq. 39):
+  γ = k₀ (ε₀/μ₀) ∫ n² n₂(r) [2|e|⁴ + |e·e|²] dA / (3 |∫ Re(e × h*)·ẑ dA|²), with each
+  material's n₂ where the field is (core: your value or the published one; BOX and cladding:
+  `tarang/media/materials.json`; air: 0). One local mode solve of the pump mode, at the
+  design's mesh, snapping and cross-section profile, saved in
+  `results/nonlinear_overlaps.json`. For high-contrast cores it is **above** the core-only
+  form: the field's longitudinal part and the power flux of a mode slower than light in the
+  core (n_eff < n_core) concentrate the nonlinear interaction; for the 1550 nm and 780 nm
+  Si₃N₄ designs γ is 1.38 times the core-only value, while silica's n₂ adds only 0.1 %. The
+  core-only value is written beside it in `lle/lle_inputs.json` and the report.
+  `[assumptions] gamma_model = "core"` gives the form of earlier versions. The threshold uses
+  the same γ (n₂ / A_eff = γ λ / 2π).
+- **Guided modes by family.** Each mode at the pump is named from its field (dominant
+  transverse component, nodes across the width and height: TE00, TM00, TM10 ...) and the
+  report gives the total guided count with the families, next to the TE/TM counts. Where a
+  hybrid mode's TE/TM fraction is near one half, the family name is the one to trust.
 - **Resonance shift with temperature,** dλ/dT = (λ / n_g) dn_eff/dT. dn_eff/dT is the
   thermo-optic coefficients weighted by where the mode's power is: Si₃N₄ 2.45 × 10⁻⁵ /K and
   SiO₂ 0.95 × 10⁻⁵ /K (Arbabi and Goddard 2013). Only the core fraction is known, so the

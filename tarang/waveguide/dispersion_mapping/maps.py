@@ -510,7 +510,9 @@ def main():
                     help="also plot D of the other fundamental mode (TM00, or TE00 with --pump TM00)")
     ap.add_argument("--pump", default="TE00", choices=["TE00", "TM00"],
                     help="the pump mode the targets are judged by")
-    ap.add_argument("--n2", type=float, default=2.4e-19, help="Kerr index of the core, m^2/W (default: Si3N4)")
+    ap.add_argument("--n2", type=float, default=None,
+                    help="Kerr index of the core, m^2/W (default: the published value of the "
+                         "records' core material, tarang/media/materials.json)")
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--overwrite", action="store_true",
                     help="reuse the existing plots folder instead of creating _v2, _v3, ...")
@@ -531,6 +533,8 @@ def main():
         print(f"WARNING: {len(errs)} failed points skipped, e.g. {errs[0]}")
     if not rows:
         raise SystemExit("No valid results in " + str(a.data))
+    from tarang.media.materials import n2_of_core
+    a.n2 = n2_of_core(rows[0].get("core", "si3n4"), a.n2)
     out = unique_dir(a.plots_dir or a.data.parent / f"plots_{a.data.stem}", a.overwrite)
     print(f"Writing plots to {out.resolve()}")
     for sub in ("D_vs_width", "D_vs_height", "modes_vs_width", "modes_vs_height"):

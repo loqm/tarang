@@ -174,7 +174,9 @@ def main():
     ap.add_argument("--deg-tol", dest="deg_tol", type=float, default=0.01)
     ap.add_argument("--alpha-scat", type=float, default=0.3, help="dB/cm")
     ap.add_argument("--alpha-abs", type=float, default=0.1, help="dB/cm")
-    ap.add_argument("--n2", type=float, default=2.4e-19, help="Kerr index of the core, m^2/W (default: Si3N4)")
+    ap.add_argument("--n2", type=float, default=None,
+                    help="Kerr index of the core, m^2/W (default: the published value of the "
+                         "records' core material, tarang/media/materials.json)")
     ap.add_argument("--out", default="results/finalist_report")
     ap.add_argument("--pump", default="TE00", choices=["TE00", "TM00"], help="the pump mode")
     ap.add_argument("--overwrite", action="store_true",
@@ -188,6 +190,8 @@ def main():
 
     M1 = "TE1" if PUMP == "TE00" else "TM1"       # the pump's second-order mode
     straight = {k: v for k, v in load(a.straight).items() if k[2] is None}
+    from tarang.media.materials import n2_of_core
+    a.n2 = n2_of_core(next(iter(straight.values()), {}).get("core", "si3n4") if straight else "si3n4", a.n2)
     bends = load(glob.glob(a.bends)) if a.bends else {}
     dW, dH = (float(x) for x in a.tol.split(","))
     fins = [tuple(float(v) for v in t.lower().split("x")) for t in a.finalists.split(",")]

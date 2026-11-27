@@ -146,6 +146,13 @@ def table(cfg, results: Optional[dict] = None) -> list[dict]:
              note="Unannealed LPCVD/PECVD nitride absorbs near 1520 nm (N-H bonds); use a "
                   "larger value for unannealed films."),
         _material_row(cfg, "n2", "Threshold, gamma and the LLE inputs (threshold ±~2x)."),
+        dict(quantity="nonlinear coefficient model",
+             value=str(getattr(cfg.assumptions, "gamma_model", "vectorial")), unit="",
+             source=("Afshar and Monro, Opt. Express 17, 2298 (2009), Eq. 39"
+                     if str(getattr(cfg.assumptions, "gamma_model", "vectorial")) == "vectorial"
+                     else "2 pi n2 / (lambda A_eff), core's n2"),
+             note="vectorial: each material's n2 where the field is, and the field's "
+                  "longitudinal part; core-only as before v0.2.0 is written beside it"),
         _material_row(cfg, "dn_dT_core", "For the resonance shift with temperature only."),
         _material_row(cfg, "dn_dT_box", "PECVD SiOx; thermal oxide is close."
                       if str(cfg.materials.box).lower().startswith("sio2")

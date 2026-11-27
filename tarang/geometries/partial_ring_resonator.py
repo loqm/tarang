@@ -198,10 +198,8 @@ def get_passive_simulation(
     )
 
     freq0 = td.C_0 / wavelength_um
-    try:
-        n_core_approx = float(np.real(core_medium.n_complex(freq0)))
-    except Exception:
-        n_core_approx = 2.0
+    from tarang.geometries._modes import mesh_index
+    n_core_approx = mesh_index(core_medium, freq0)   # 2.0 up to n = 2.1, as before v0.2.0
 
     dl_fine = wavelength_um / (n_core_approx * fine_steps_per_wvl)
 

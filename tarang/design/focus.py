@@ -256,7 +256,9 @@ def focusing_sim(ctx, design: dict):
     plane = td.FieldMonitor(center=((x_min + x_max) / 2, 0, H / 2), size=(td.inf, td.inf, 0),
                             freqs=[f0], name="field_z_plane")
     steps = int(cfg.focus.mesh_steps)
-    dl = cfg.run.wavelength_um / (2.0 * steps)       # cells per wavelength in the core
+    from tarang.geometries._modes import mesh_index
+    # cells per wavelength in the core: index 2 up to n = 2.1 (as before v0.2.0), the core's above
+    dl = cfg.run.wavelength_um / (mesh_index(core, f0) * steps)
     override = td.MeshOverrideStructure(
         geometry=td.Box.from_bounds((x_min, -y_half, -0.5), (x_max, y_half, H + 0.5)),
         dl=[dl, dl, dl], enforce=True)

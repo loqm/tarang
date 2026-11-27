@@ -47,10 +47,14 @@ def test_settings_keys_of_older_designs_are_unchanged():
     from tarang.design.stages import settings_key
     want = {"materials": "43d432ed1a29892c", "cross_section": "f1e466bd665d21f1",
             "ring": "4f09d62c40425764", "gap": "8bef2f354c8f9e4f",
-            "grating": "0c8c636c8ac73586", "focus": "b1fa6c45bdd2b3dc",
-            "device": "8c431494430bbe93"}
+            "grating": "0c8c636c8ac73586", "focus": "b1fa6c45bdd2b3dc"}
     c = DesignConfig()
     assert {s: settings_key(c, s) for s in want} == want
+    # phase C: the vectorial gamma (default) reruns layout, device and report (local, free);
+    # gamma_model = "core" keeps their keys as before
+    c.assumptions.gamma_model = "core"
+    assert settings_key(c, "device") == "8c431494430bbe93"
+    assert settings_key(DesignConfig(), "device") != "8c431494430bbe93"
 
 
 def test_stack_args_and_records_unchanged_for_a_plain_strip():

@@ -554,24 +554,44 @@ def _stack_preview(ctx, H_fixed, heights, widths) -> None:
         raise SettingsError(f"[stack] cross-section profile at {H:g} x {W:g} um: {e}") from None
 
 
+#: index contrast the default ranges were set for (Si3N4 on SiO2); a core whose contrast is
+#: well above it (scale < 0.85: GaP, AlGaAs, Si) gets ranges shrunk with its scale
+_RANGE_SCALE_KEEP = 0.85
+
+
+def _range_scale(cfg) -> float:
+    """Size scale of the default map and gap ranges: sqrt(2^2 - n_box^2) /
+    sqrt(n_core^2 - n_box^2) at the design wavelength (guided modes of a higher-contrast core
+    are smaller in that ratio). 1.0 unless it is below 0.85, so Si3N4 and Ta2O5 keep the
+    ranges of earlier versions."""
+    from tarang.media.materials import table_index
+    wl = cfg.run.wavelength_um
+    nc, nb = table_index(cfg.materials.core, wl), table_index(cfg.materials.box, wl)
+    if not nc or not nb or nc <= nb or 2.0 <= nb:
+        return 1.0
+    s = math.sqrt(2.0 ** 2 - nb ** 2) / math.sqrt(nc ** 2 - nb ** 2)
+    return s if s < _RANGE_SCALE_KEEP else 1.0
+
+
 def _heights_default(cfg) -> list:
     wl, H, dH = cfg.run.wavelength_um, cfg.stack.core_height_um, cfg.cross_section.tolerance_height_um
     if H:
         return [round(H - dH, 4), round(H, 4), round(H + dH, 4)]
-    st = _step(0.032 * wl)
-    return _grid(physics.round_to(0.32 * wl, st), physics.round_to(0.58 * wl, st), st)
+    s = _range_scale(cfg)
+    st = _step(0.032 * wl * s)
+    return _grid(physics.round_to(0.32 * wl * s, st), physics.round_to(0.58 * wl * s, st), st)
 
 
 def _widths_default(cfg) -> list:
-    wl = cfg.run.wavelength_um
-    st = _step(0.065 * wl)
-    return _grid(physics.round_to(0.39 * wl, st), physics.round_to(1.16 * wl, st), st)
+    wl, s = cfg.run.wavelength_um, _range_scale(cfg)
+    st = _step(0.065 * wl * s)
+    return _grid(physics.round_to(0.39 * wl * s, st), physics.round_to(1.16 * wl * s, st), st)
 
 
 def _gaps_default(cfg) -> list:
-    wl = cfg.run.wavelength_um
-    st = _step(0.065 * wl)
-    return _grid(physics.round_to(0.19 * wl, st), physics.round_to(0.52 * wl, st), st)
+    wl, s = cfg.run.wavelength_um, _range_scale(cfg)
+    st = _step(0.065 * wl * s)
+    return _grid(physics.round_to(0.19 * wl * s, st), physics.round_to(0.52 * wl * s, st), st)
 
 
 def _material_ok(key: str) -> str:
@@ -842,7 +862,10 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
     robust = str(rep.get("all_neighbours_target")).lower() == "true"
     ui.say(f"\nCross-section {H*1e3:.0f} x {W*1e3:.0f} nm at {dsteps} steps/λ, pump {mode}: "
            f"D = {centre[F['D']]:.1f} ps/(nm km), n_g = {centre[F['ng']]:.4f}, "
-           f"guided TE/TM = {centre['guided_TE']}/{centre['guided_TM']}; worst-case D within the "
+           f"guided TE/TM = {centre['guided_TE']}/{centre['guided_TM']}"
+           + (f" (by field: {centre['guided_total']} modes, {', '.join(centre['guided_families'])})"
+              if centre.get("guided_families") else "")
+           + "; worst-case D within the "
            f"tolerance = {float(rep['D_min_tol']):.1f}; whole tolerance box target: "
            f"{'yes' if robust else 'NO'}")
     if not robust:
@@ -889,6 +912,8 @@ def _cross_section_decision(ctx, H, W, cands, dW, dH, steps=None, recommend=None
                     dict(steps=r["steps"], D=r[F["D"]]) for r in conv],
                 te_tm_split=other_split(centre, mode) if centre.get("neff_TM") else None,
                 n_eff=centre[F["neff"]][0], n_cut=centre["n_cut"], guided_TE=centre["guided_TE"],
+                guided_total=centre.get("guided_total"),
+                guided_families=centre.get("guided_families"),
                 core_fraction=centre.get(F["gamma"]),
                 guided_TM=centre["guided_TM"], aeff_um2=centre.get(F["aeff"]),
                 D_min_tol=float(rep["D_min_tol"]), D_max_tol=float(rep["D_max_tol"]),
@@ -1815,7 +1840,7 @@ DEPENDS = {
     "apodise": ("apodise",),
     "focus": ("focus",),
     "edge": ("run.coupling", "edge"),
-    "layout": ("layout",),
+    "layout": ("layout", "assumptions.gamma_model", "assumptions.n2_m2_w"),
     "device": ("device",),
     "report": (),
 }
@@ -1863,7 +1888,9 @@ def settings_key(cfg: DesignConfig, stage: str) -> str:
             val = getattr(cfg, sec)
             if (dep == "run.goal" and getattr(val, key) == "comb_ring") or \
                     (dep == "run.coupling" and getattr(val, key) == "grating") or \
-                    (sec == "measured" and getattr(val, key) is None):
+                    (sec == "measured" and getattr(val, key) is None) or \
+                    (dep == "assumptions.gamma_model" and getattr(val, key) == "core") or \
+                    (dep == "assumptions.n2_m2_w" and getattr(val, key) is None):
                 continue                              # the default: keys of older runs unchanged
             parts[dep] = getattr(val, key) if key else {
                 k: v for k, v in val.__dict__.items() if k not in KEY_IGNORE.get(sec, ())}
